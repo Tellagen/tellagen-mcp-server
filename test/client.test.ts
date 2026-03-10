@@ -4,7 +4,7 @@ import { TellagenAPIError } from "../src/errors.js";
 
 describe("TellagenClient", () => {
   const client = new TellagenClient({
-    apiUrl: "https://test.api.tellagen.dev",
+    apiUrl: "https://test.api.tellagen.com",
     apiKey: "tllg_test123",
   });
 
@@ -29,7 +29,7 @@ describe("TellagenClient", () => {
     const result = await client.get("/api/v1/incidents/1");
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "https://test.api.tellagen.dev/api/v1/incidents/1",
+      "https://test.api.tellagen.com/api/v1/incidents/1",
       expect.objectContaining({
         method: "GET",
         headers: expect.objectContaining({
@@ -54,7 +54,7 @@ describe("TellagenClient", () => {
     });
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "https://test.api.tellagen.dev/api/v1/incidents/1/investigations",
+      "https://test.api.tellagen.com/api/v1/incidents/1/investigations",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
@@ -158,7 +158,7 @@ describe("TellagenClient", () => {
 
   it("strips trailing slashes from baseUrl", async () => {
     const c = new TellagenClient({
-      apiUrl: "https://test.api.tellagen.dev///",
+      apiUrl: "https://test.api.tellagen.com///",
       apiKey: "tllg_key",
     });
 
@@ -169,7 +169,7 @@ describe("TellagenClient", () => {
     await c.get("/api/v1/incidents");
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "https://test.api.tellagen.dev/api/v1/incidents",
+      "https://test.api.tellagen.com/api/v1/incidents",
       expect.anything(),
     );
   });

@@ -10,7 +10,7 @@ import { registerAllTools } from "../src/tools/index.js";
  */
 function createTestSetup() {
   const client = new TellagenClient({
-    apiUrl: "https://test.api.tellagen.dev",
+    apiUrl: "https://test.api.tellagen.com",
     apiKey: "tllg_test",
   });
   const server = new McpServer({ name: "test", version: "0.0.1" });
@@ -36,7 +36,7 @@ describe("Tool integration via client", () => {
   describe("tellagen_get_incident", () => {
     it("calls GET /api/v1/incidents/{id}", async () => {
       const client = new TellagenClient({
-        apiUrl: "https://test.api.tellagen.dev",
+        apiUrl: "https://test.api.tellagen.com",
         apiKey: "tllg_test",
       });
 
@@ -56,7 +56,7 @@ describe("Tool integration via client", () => {
       const result = await client.get("/api/v1/incidents/42");
       expect(result).toEqual(mockIncident);
       expect(fetchSpy).toHaveBeenCalledWith(
-        "https://test.api.tellagen.dev/api/v1/incidents/42",
+        "https://test.api.tellagen.com/api/v1/incidents/42",
         expect.anything(),
       );
     });
@@ -65,7 +65,7 @@ describe("Tool integration via client", () => {
   describe("tellagen_list_incidents", () => {
     it("calls GET /api/v1/incidents", async () => {
       const client = new TellagenClient({
-        apiUrl: "https://test.api.tellagen.dev",
+        apiUrl: "https://test.api.tellagen.com",
         apiKey: "tllg_test",
       });
 
@@ -81,7 +81,7 @@ describe("Tool integration via client", () => {
   describe("tellagen_get_incident_timeline", () => {
     it("calls GET /api/v1/incidents/{id}/timeline", async () => {
       const client = new TellagenClient({
-        apiUrl: "https://test.api.tellagen.dev",
+        apiUrl: "https://test.api.tellagen.com",
         apiKey: "tllg_test",
       });
 
@@ -103,7 +103,7 @@ describe("Tool integration via client", () => {
   describe("tellagen_start_investigation", () => {
     it("calls POST /api/v1/incidents/{id}/investigations", async () => {
       const client = new TellagenClient({
-        apiUrl: "https://test.api.tellagen.dev",
+        apiUrl: "https://test.api.tellagen.com",
         apiKey: "tllg_test",
       });
 
@@ -130,7 +130,7 @@ describe("Tool integration via client", () => {
 
       expect(result).toEqual(mockRun);
       expect(fetchSpy).toHaveBeenCalledWith(
-        "https://test.api.tellagen.dev/api/v1/incidents/42/investigations",
+        "https://test.api.tellagen.com/api/v1/incidents/42/investigations",
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
@@ -146,7 +146,7 @@ describe("Tool integration via client", () => {
   describe("tellagen_post_finding", () => {
     it("calls POST /api/v1/incidents/{id}/findings", async () => {
       const client = new TellagenClient({
-        apiUrl: "https://test.api.tellagen.dev",
+        apiUrl: "https://test.api.tellagen.com",
         apiKey: "tllg_test",
       });
 
@@ -185,7 +185,7 @@ describe("Tool integration via client", () => {
 
     it("includes screenshots in evidence_refs and top-level", async () => {
       const client = new TellagenClient({
-        apiUrl: "https://test.api.tellagen.dev",
+        apiUrl: "https://test.api.tellagen.com",
         apiKey: "tllg_test",
       });
 
@@ -228,7 +228,7 @@ describe("Tool integration via client", () => {
       await client.post("/api/v1/incidents/42/findings", body);
 
       expect(fetchSpy).toHaveBeenCalledWith(
-        "https://test.api.tellagen.dev/api/v1/incidents/42/findings",
+        "https://test.api.tellagen.com/api/v1/incidents/42/findings",
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify(body),
@@ -240,7 +240,7 @@ describe("Tool integration via client", () => {
   describe("tellagen_complete_investigation", () => {
     it("calls PATCH /api/v1/investigations/{id}", async () => {
       const client = new TellagenClient({
-        apiUrl: "https://test.api.tellagen.dev",
+        apiUrl: "https://test.api.tellagen.com",
         apiKey: "tllg_test",
       });
 
@@ -262,7 +262,7 @@ describe("Tool integration via client", () => {
 
     it("includes failure_reason when status is failed", async () => {
       const client = new TellagenClient({
-        apiUrl: "https://test.api.tellagen.dev",
+        apiUrl: "https://test.api.tellagen.com",
         apiKey: "tllg_test",
       });
 
@@ -293,7 +293,7 @@ describe("Tool integration via client", () => {
   describe("tellagen_promote_finding", () => {
     it("calls POST /api/v1/findings/{id}/promote", async () => {
       const client = new TellagenClient({
-        apiUrl: "https://test.api.tellagen.dev",
+        apiUrl: "https://test.api.tellagen.com",
         apiKey: "tllg_test",
       });
 
@@ -320,7 +320,7 @@ describe("Tool integration via client", () => {
 
     it("includes screenshots when promoting to timeline", async () => {
       const client = new TellagenClient({
-        apiUrl: "https://test.api.tellagen.dev",
+        apiUrl: "https://test.api.tellagen.com",
         apiKey: "tllg_test",
       });
 
@@ -353,7 +353,7 @@ describe("Tool integration via client", () => {
       await client.post("/api/v1/findings/3/promote", body);
 
       expect(fetchSpy).toHaveBeenCalledWith(
-        "https://test.api.tellagen.dev/api/v1/findings/3/promote",
+        "https://test.api.tellagen.com/api/v1/findings/3/promote",
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify(body),
@@ -365,7 +365,7 @@ describe("Tool integration via client", () => {
   describe("tellagen_promote_finding with duration and evidence fields", () => {
     it("forwards started_at, ended_at, is_ongoing, tags, and evidence_links", async () => {
       const client = new TellagenClient({
-        apiUrl: "https://test.api.tellagen.dev",
+        apiUrl: "https://test.api.tellagen.com",
         apiKey: "tllg_test",
       });
 
@@ -411,7 +411,7 @@ describe("Tool integration via client", () => {
       });
 
       expect(fetchSpy).toHaveBeenCalledWith(
-        "https://test.api.tellagen.dev/api/v1/findings/5/promote",
+        "https://test.api.tellagen.com/api/v1/findings/5/promote",
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify(body),
@@ -423,7 +423,7 @@ describe("Tool integration via client", () => {
   describe("tellagen_create_incident", () => {
     it("calls POST /api/v1/incidents", async () => {
       const client = new TellagenClient({
-        apiUrl: "https://test.api.tellagen.dev",
+        apiUrl: "https://test.api.tellagen.com",
         apiKey: "tllg_test",
       });
 
@@ -447,7 +447,7 @@ describe("Tool integration via client", () => {
 
       expect(result).toEqual(mockIncident);
       expect(fetchSpy).toHaveBeenCalledWith(
-        "https://test.api.tellagen.dev/api/v1/incidents",
+        "https://test.api.tellagen.com/api/v1/incidents",
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
@@ -462,7 +462,7 @@ describe("Tool integration via client", () => {
   describe("error handling", () => {
     it("returns structured error on API failure", async () => {
       const client = new TellagenClient({
-        apiUrl: "https://test.api.tellagen.dev",
+        apiUrl: "https://test.api.tellagen.com",
         apiKey: "tllg_test",
       });
 

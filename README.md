@@ -24,7 +24,7 @@ In Tellagen, go to **Settings > API Keys** and create a key with both `incidents
       "args": ["@tellagen/mcp-server"],
       "env": {
         "TELLAGEN_API_KEY": "tllg_...",
-        "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.dev"
+        "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.com"
       }
     }
   }
@@ -41,7 +41,7 @@ In Tellagen, go to **Settings > API Keys** and create a key with both `incidents
       "args": ["@tellagen/mcp-server"],
       "env": {
         "TELLAGEN_API_KEY": "tllg_...",
-        "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.dev"
+        "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.com"
       }
     }
   }
@@ -87,7 +87,7 @@ The Tellagen MCP server is designed to work alongside vendor MCP servers for obs
       "args": ["@tellagen/mcp-server"],
       "env": {
         "TELLAGEN_API_KEY": "tllg_...",
-        "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.dev"
+        "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.com"
       }
     },
     "grafana": {
@@ -165,7 +165,7 @@ npm test
          "args": ["/absolute/path/to/tellagen-mcp-server/dist/index.js"],
          "env": {
            "TELLAGEN_API_KEY": "tllg_...",
-           "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.dev"
+           "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.com"
          }
        }
      }
@@ -182,7 +182,7 @@ npm test
          "args": ["/absolute/path/to/tellagen-mcp-server/dist/index.js"],
          "env": {
            "TELLAGEN_API_KEY": "tllg_...",
-           "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.dev"
+           "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.com"
          }
        }
      }
@@ -214,4 +214,4 @@ npm run lint    # tsc --noEmit
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `TELLAGEN_API_KEY` | Yes | API key (format: `tllg_...`) |
-| `TELLAGEN_API_URL` | Yes | API base URL (e.g., `https://yourcompany.api.tellagen.dev`) |
+| `TELLAGEN_API_URL` | Yes | API base URL (e.g., `https://yourcompany.api.tellagen.com`) |
