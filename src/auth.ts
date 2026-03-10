@@ -4,10 +4,10 @@ interface AuthMeResponse {
   user: {
     id: number;
     email: string;
-  };
-  company: {
-    id: number;
-    name: string;
+    company?: {
+      id: number;
+      name: string;
+    };
   };
 }
 
@@ -18,8 +18,9 @@ interface AuthMeResponse {
 export async function validateAuth(client: TellagenClient): Promise<void> {
   try {
     const resp = await client.get<AuthMeResponse>("/api/v1/auth/me");
+    const companyName = resp.user.company?.name ?? "unknown";
     process.stderr.write(
-      `Tellagen MCP: authenticated as ${resp.user.email} (${resp.company.name})\n`,
+      `Tellagen MCP: authenticated as ${resp.user.email} (${companyName})\n`,
     );
   } catch (err) {
     if (err instanceof Error) {

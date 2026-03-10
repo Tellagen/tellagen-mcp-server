@@ -182,6 +182,59 @@ describe("Tool integration via client", () => {
 
       expect(result).toEqual(mockFinding);
     });
+
+    it("includes screenshots in evidence_refs and top-level", async () => {
+      const client = new TellagenClient({
+        apiUrl: "https://test.api.tellagen.dev",
+        apiKey: "tllg_test",
+      });
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ finding: { id: 2, status: "draft" } }),
+          { status: 201 },
+        ),
+      );
+
+      const body = {
+        investigation_run_id: "run-abc",
+        finding_type: "observation",
+        claim: "HTTP 5xx rate spiked",
+        evidence_summary: "5xx errors jumped from 0.1% to 5%",
+        confidence: 0.95,
+        confidence_reason: "Clear spike visible in Grafana",
+        evidence_refs: [
+          {
+            source: "grafana",
+            result_summary: "5xx panel shows spike at 14:32 UTC",
+            url: "https://grafana.example.com/d/abc/checkout?panelId=4",
+            screenshots: [
+              {
+                url: "https://grafana.example.com/render/d-solo/abc/checkout?panelId=4&from=now-1h",
+                caption: "Grafana 5xx panel showing the spike",
+              },
+            ],
+          },
+        ],
+        screenshots: [
+          {
+            base64: "iVBORw0KGgoAAAANSUhEUg==",
+            media_type: "image/png",
+            caption: "Error rate overview dashboard",
+          },
+        ],
+      };
+
+      await client.post("/api/v1/incidents/42/findings", body);
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.dev/api/v1/incidents/42/findings",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+      );
+    });
   });
 
   describe("tellagen_complete_investigation", () => {
@@ -264,6 +317,146 @@ describe("Tool integration via client", () => {
         timeline_event: { id: 200 },
       });
     });
+
+    it("includes screenshots when promoting to timeline", async () => {
+      const client = new TellagenClient({
+        apiUrl: "https://test.api.tellagen.dev",
+        apiKey: "tllg_test",
+      });
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            finding: { id: 3, status: "promoted" },
+            timeline_event: { id: 201 },
+          }),
+          { status: 200 },
+        ),
+      );
+
+      const body = {
+        title: "5xx spike confirmed",
+        is_key: true,
+        screenshots: [
+          {
+            url: "https://grafana.example.com/render/d-solo/abc/checkout?panelId=4",
+            caption: "Grafana 5xx panel at time of incident",
+          },
+          {
+            base64: "iVBORw0KGgoAAAANSUhEUg==",
+            media_type: "image/png",
+            caption: "Error breakdown by endpoint",
+          },
+        ],
+      };
+
+      await client.post("/api/v1/findings/3/promote", body);
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.dev/api/v1/findings/3/promote",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+      );
+    });
+  });
+
+  describe("tellagen_promote_finding with duration and evidence fields", () => {
+    it("forwards started_at, ended_at, is_ongoing, tags, and evidence_links", async () => {
+      const client = new TellagenClient({
+        apiUrl: "https://test.api.tellagen.dev",
+        apiKey: "tllg_test",
+      });
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            finding: { id: 5, status: "promoted" },
+            timeline_event: { id: 300 },
+            auto_tags: ["latency", "database"],
+            suggested_workstream: "Database",
+          }),
+          { status: 200 },
+        ),
+      );
+
+      const body = {
+        title: "DB latency spike during deploy",
+        is_key: true,
+        started_at: "2026-03-08T23:06:00Z",
+        ended_at: "2026-03-08T23:17:00Z",
+        is_ongoing: false,
+        tags: ["latency", "database"],
+        evidence_links: [
+          {
+            source: "grafana-loki",
+            url: "https://grafana.example.com/explore?query=db_latency",
+            label: "Loki query",
+          },
+          {
+            source: "github",
+            url: "https://github.com/org/repo/commit/abc123",
+          },
+        ],
+      };
+
+      const result = await client.post("/api/v1/findings/5/promote", body);
+
+      expect(result).toEqual({
+        finding: { id: 5, status: "promoted" },
+        timeline_event: { id: 300 },
+        auto_tags: ["latency", "database"],
+        suggested_workstream: "Database",
+      });
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.dev/api/v1/findings/5/promote",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+      );
+    });
+  });
+
+  describe("tellagen_create_incident", () => {
+    it("calls POST /api/v1/incidents", async () => {
+      const client = new TellagenClient({
+        apiUrl: "https://test.api.tellagen.dev",
+        apiKey: "tllg_test",
+      });
+
+      const mockIncident = {
+        incident: {
+          id: 99,
+          service: "payments",
+          severity: "sev2",
+          status: "active",
+        },
+      };
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(JSON.stringify(mockIncident), { status: 201 }),
+      );
+
+      const result = await client.post("/api/v1/incidents", {
+        service: "payments",
+        severity: "sev2",
+      });
+
+      expect(result).toEqual(mockIncident);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.dev/api/v1/incidents",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            service: "payments",
+            severity: "sev2",
+          }),
+        }),
+      );
+    });
   });
 
   describe("error handling", () => {
@@ -297,7 +490,7 @@ describe("Tool integration via client", () => {
 });
 
 describe("Tool registration", () => {
-  it("registers all 11 tools on the server", () => {
+  it("registers all 12 tools on the server", () => {
     const { server } = createTestSetup();
     // McpServer doesn't expose a public tool list, but if registration
     // fails it throws. No error = all tools registered successfully.

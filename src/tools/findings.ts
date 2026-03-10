@@ -3,6 +3,28 @@ import { z } from "zod";
 import { TellagenClient } from "../client.js";
 import { formatError } from "../errors.js";
 
+const screenshotSchema = z.object({
+  url: z
+    .string()
+    .url()
+    .optional()
+    .describe(
+      "URL to a hosted screenshot (e.g., Grafana render URL, uploaded image link)",
+    ),
+  base64: z
+    .string()
+    .optional()
+    .describe("Base64-encoded image data (e.g., PNG screenshot captured by a tool)"),
+  media_type: z
+    .string()
+    .optional()
+    .describe('Image media type (e.g., "image/png", "image/jpeg"). Defaults to "image/png"'),
+  caption: z
+    .string()
+    .optional()
+    .describe("Description of what the screenshot shows"),
+});
+
 const evidenceRefSchema = z.object({
   source: z
     .string()
@@ -22,6 +44,12 @@ const evidenceRefSchema = z.object({
     .string()
     .optional()
     .describe("Deep link to the source (e.g., Grafana explore URL, GitHub commit)"),
+  screenshots: z
+    .array(screenshotSchema)
+    .optional()
+    .describe(
+      "Screenshots related to this evidence (e.g., Grafana dashboard panel showing the spike)",
+    ),
 });
 
 export function registerFindingTools(
@@ -78,6 +106,12 @@ export function registerFindingTools(
           .describe(
             "References to evidence sources consulted. Include deep links in url where possible.",
           ),
+        screenshots: z
+          .array(screenshotSchema)
+          .optional()
+          .describe(
+            "Standalone screenshots for this finding (e.g., Grafana dashboard panels, error traces). Use evidence_refs[].screenshots for source-specific screenshots.",
+          ),
       },
     },
     async ({
@@ -89,19 +123,22 @@ export function registerFindingTools(
       confidence,
       confidence_reason,
       evidence_refs,
+      screenshots,
     }) => {
       try {
+        const reqBody: Record<string, unknown> = {
+          investigation_run_id,
+          finding_type,
+          claim,
+          evidence_summary,
+          confidence,
+          confidence_reason,
+          evidence_refs: evidence_refs ?? [],
+        };
+        if (screenshots !== undefined) reqBody.screenshots = screenshots;
         const data = await client.post(
           `/api/v1/incidents/${incident_id}/findings`,
-          {
-            investigation_run_id,
-            finding_type,
-            claim,
-            evidence_summary,
-            confidence,
-            confidence_reason,
-            evidence_refs: evidence_refs ?? [],
-          },
+          reqBody,
         );
         return {
           content: [{ type: "text" as const, text: JSON.stringify(data) }],
@@ -218,14 +255,76 @@ export function registerFindingTools(
           .boolean()
           .optional()
           .describe("Mark as a key event on the timeline"),
+        started_at: z
+          .string()
+          .datetime()
+          .optional()
+          .describe(
+            "ISO 8601 timestamp for when this event started on the timeline (defaults to now)",
+          ),
+        ended_at: z
+          .string()
+          .datetime()
+          .optional()
+          .describe(
+            "ISO 8601 timestamp for when this event ended (omit for point events or ongoing)",
+          ),
+        is_ongoing: z
+          .boolean()
+          .optional()
+          .describe(
+            "Mark as an ongoing duration event (ended_at should be omitted)",
+          ),
+        tags: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Tags for the timeline event (e.g., 'latency', 'database'). Auto-suggested if omitted.",
+          ),
+        evidence_links: z
+          .array(
+            z.object({
+              source: z.string(),
+              url: z.string().url(),
+              label: z.string().optional(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Evidence source links. Auto-extracted from finding evidence_refs if omitted.",
+          ),
+        screenshots: z
+          .array(screenshotSchema)
+          .optional()
+          .describe(
+            "Screenshots to attach to the timeline event (e.g., Grafana panels, error dashboards)",
+          ),
       },
     },
-    async ({ finding_id, title, body, is_key }) => {
+    async ({
+      finding_id,
+      title,
+      body,
+      is_key,
+      started_at,
+      ended_at,
+      is_ongoing,
+      tags,
+      evidence_links,
+      screenshots,
+    }) => {
       try {
         const reqBody: Record<string, unknown> = {};
         if (title !== undefined) reqBody.title = title;
         if (body !== undefined) reqBody.body = body;
         if (is_key !== undefined) reqBody.is_key = is_key;
+        if (started_at !== undefined) reqBody.started_at = started_at;
+        if (ended_at !== undefined) reqBody.ended_at = ended_at;
+        if (is_ongoing !== undefined) reqBody.is_ongoing = is_ongoing;
+        if (tags !== undefined) reqBody.tags = tags;
+        if (evidence_links !== undefined)
+          reqBody.evidence_links = evidence_links;
+        if (screenshots !== undefined) reqBody.screenshots = screenshots;
         const data = await client.post(
           `/api/v1/findings/${finding_id}/promote`,
           reqBody,

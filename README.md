@@ -135,10 +135,78 @@ The API key needs both scopes:
 
 ## Development
 
+### Setup
+
 ```bash
 npm install
 npm run build
 npm test
+```
+
+### Running the dev server locally
+
+1. **Build the project** (or use watch mode):
+
+   ```bash
+   npm run build
+   # or, to rebuild on every change:
+   npm run dev
+   ```
+
+2. **Point your MCP client at the local build** instead of the published npm package.
+
+   **Claude Code** — add to `~/.claude.json` (global) or `.mcp.json` (per-project):
+
+   ```json
+   {
+     "mcpServers": {
+       "tellagen": {
+         "command": "node",
+         "args": ["/absolute/path/to/tellagen-mcp-server/dist/index.js"],
+         "env": {
+           "TELLAGEN_API_KEY": "tllg_...",
+           "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.dev"
+         }
+       }
+     }
+   }
+   ```
+
+   **Cursor** — add to `.cursor/mcp.json`:
+
+   ```json
+   {
+     "mcpServers": {
+       "tellagen": {
+         "command": "node",
+         "args": ["/absolute/path/to/tellagen-mcp-server/dist/index.js"],
+         "env": {
+           "TELLAGEN_API_KEY": "tllg_...",
+           "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.dev"
+         }
+       }
+     }
+   }
+   ```
+
+   Replace `/absolute/path/to/tellagen-mcp-server` with the actual path to your clone.
+
+3. **Restart the MCP client** so it picks up the new config. In Claude Code, run `/mcp` to verify the server is connected.
+
+4. **Iterate:** if you're running `npm run dev`, every save recompiles. Restart the MCP connection (or restart your client) to pick up changes.
+
+### Running tests
+
+```bash
+npm test                              # all tests
+npx vitest run test/client.test.ts    # single file
+npx vitest                            # watch mode
+```
+
+### Type-checking
+
+```bash
+npm run lint    # tsc --noEmit
 ```
 
 ## Environment variables
