@@ -21,7 +21,7 @@ In Tellagen, go to **Settings > API Keys** and create a key with both `incidents
   "mcpServers": {
     "tellagen": {
       "command": "npx",
-      "args": ["@tellagen/mcp-server"],
+      "args": ["-y", "@tellagen/mcp-server"],
       "env": {
         "TELLAGEN_API_KEY": "tllg_...",
         "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.com"
@@ -38,7 +38,7 @@ In Tellagen, go to **Settings > API Keys** and create a key with both `incidents
   "mcpServers": {
     "tellagen": {
       "command": "npx",
-      "args": ["@tellagen/mcp-server"],
+      "args": ["-y", "@tellagen/mcp-server"],
       "env": {
         "TELLAGEN_API_KEY": "tllg_...",
         "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.com"
@@ -84,7 +84,7 @@ The Tellagen MCP server is designed to work alongside vendor MCP servers for obs
   "mcpServers": {
     "tellagen": {
       "command": "npx",
-      "args": ["@tellagen/mcp-server"],
+      "args": ["-y", "@tellagen/mcp-server"],
       "env": {
         "TELLAGEN_API_KEY": "tllg_...",
         "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.com"
