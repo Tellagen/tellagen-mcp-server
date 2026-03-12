@@ -1,6 +1,6 @@
 {
   "name": "@tellagen/mcp-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Tellagen MCP server — investigate incidents with AI agents",
   "license": "MIT",
   "type": "module",
