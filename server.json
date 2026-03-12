@@ -1,0 +1,35 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.tellagen/mcp-server",
+  "description": "Tellagen MCP server — investigate incidents with AI agents, post structured findings, and build incident timelines.",
+  "repository": {
+    "url": "https://github.com/tellagen/tellagen-mcp-server",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@tellagen/mcp-server",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "description": "Tellagen API key (starts with tllg_). Generate one in Settings > API Keys.",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": true,
+          "name": "TELLAGEN_API_KEY"
+        },
+        {
+          "description": "Tellagen API base URL (e.g., https://mycompany.api.tellagen.com)",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": false,
+          "name": "TELLAGEN_API_URL"
+        }
+      ]
+    }
+  ]
+}
