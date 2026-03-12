@@ -26,7 +26,7 @@ export function createServer(client: TellagenClient): McpServer {
   const server = new McpServer(
     {
       name: "tellagen",
-      version: "0.1.0",
+      version: "0.1.1",
     },
     {
       instructions: INSTRUCTIONS,
