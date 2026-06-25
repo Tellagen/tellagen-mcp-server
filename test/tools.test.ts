@@ -110,8 +110,14 @@ describe("Tool integration via client", () => {
       const mockRun = {
         run: {
           id: "run-abc",
-          agent_name: "Claude Code",
-          status: "running",
+          agent_name: "local-mcp",
+          status: "awaiting_agent",
+        },
+        pickup: {
+          investigation_run_id: "run-abc",
+          incident_id: 42,
+          incident_human_id: "INC-42",
+          mcp_server_name: "tellagen",
         },
       };
 
@@ -122,9 +128,10 @@ describe("Tool integration via client", () => {
       const result = await client.post(
         "/api/v1/incidents/42/investigations",
         {
-          agent_name: "Claude Code",
-          model_used: "claude-opus-4-6",
+          agent_name: "local-mcp",
+          model_used: "local-llm",
           data_sources: ["codebase", "grafana-loki"],
+          execution_mode: "local",
         },
       );
 
@@ -134,10 +141,115 @@ describe("Tool integration via client", () => {
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
-            agent_name: "Claude Code",
-            model_used: "claude-opus-4-6",
+            agent_name: "local-mcp",
+            model_used: "local-llm",
             data_sources: ["codebase", "grafana-loki"],
+            execution_mode: "local",
           }),
+        }),
+      );
+    });
+  });
+
+  describe("tellagen_get_incident_context", () => {
+    it("calls GET /api/v1/investigations/{id}/context", async () => {
+      const client = new TellagenClient({
+        apiUrl: "https://test.api.tellagen.com",
+        apiKey: "tllg_test",
+      });
+
+      const mockContext = {
+        run: { id: "run-abc", status: "awaiting_agent" },
+        incident: { id: 42, human_id: "INC-42" },
+        request: { skills: [] },
+      };
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(JSON.stringify(mockContext), { status: 200 }),
+      );
+
+      const result = await client.get(
+        "/api/v1/investigations/run-abc/context",
+      );
+
+      expect(result).toEqual(mockContext);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/investigations/run-abc/context",
+        expect.objectContaining({ method: "GET" }),
+      );
+    });
+  });
+
+  describe("tellagen_pick_up_investigation", () => {
+    it("calls POST /api/v1/investigations/{id}/pickup", async () => {
+      const client = new TellagenClient({
+        apiUrl: "https://test.api.tellagen.com",
+        apiKey: "tllg_test",
+      });
+
+      const mockContext = {
+        run: { id: "run-abc", status: "running" },
+        incident: { id: 42, human_id: "INC-42" },
+      };
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(JSON.stringify(mockContext), { status: 200 }),
+      );
+
+      const result = await client.post(
+        "/api/v1/investigations/run-abc/pickup",
+        {},
+      );
+
+      expect(result).toEqual(mockContext);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/investigations/run-abc/pickup",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({}),
+        }),
+      );
+    });
+  });
+
+  describe("tellagen_post_trace_step", () => {
+    it("calls POST /api/v1/investigation-runs/{id}/trace", async () => {
+      const client = new TellagenClient({
+        apiUrl: "https://test.api.tellagen.com",
+        apiKey: "tllg_test",
+      });
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            steps: [
+              {
+                investigation_run_id: "run-abc",
+                step_id: "logs-1",
+                status: "done",
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+
+      const body = {
+        step_id: "logs-1",
+        step_index: 1,
+        status: "done",
+        tool_name: "grafana-loki",
+        title: "Queried checkout error logs",
+        result_summary: "502 errors started at 14:32 UTC",
+      };
+
+      await client.post("/api/v1/investigation-runs/run-abc/trace", body);
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/investigation-runs/run-abc/trace",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify(body),
         }),
       );
     });
@@ -251,13 +363,50 @@ describe("Tool integration via client", () => {
         ),
       );
 
+      const resultSummary = {
+        conclusion: {
+          tone: "success",
+          eyebrow: "Investigation complete",
+          sentence: "Deploy abc123 introduced checkout 502s.",
+          show_new_investigation_cta: true,
+        },
+        likely_cause_label: "Deploy abc123 changed checkout upstream routing.",
+        customer_impact: {
+          status: "degraded",
+          verified: true,
+          label: "Checkout degraded",
+        },
+        confidence_percent: 88,
+        signals_checked: { checked: 3, total: 3, by_source: { github: 1 } },
+        takeaways: [
+          {
+            id: "deploy-correlation",
+            title: "Deploy abc123 preceded the 502 spike",
+            severity: "high",
+            finding_id: "7",
+          },
+        ],
+        outcome_state: "successful",
+      };
+
       const result = await client.patch("/api/v1/investigations/run-abc", {
         status: "completed",
+        result_summary: resultSummary,
       });
 
       expect(result).toEqual({
         run: { id: "run-abc", status: "completed" },
       });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/investigations/run-abc",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({
+            status: "completed",
+            result_summary: resultSummary,
+          }),
+        }),
+      );
     });
 
     it("includes failure_reason when status is failed", async () => {

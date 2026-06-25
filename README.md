@@ -50,7 +50,9 @@ In Tellagen, go to **Settings > API Keys** and create a key with both `incidents
 
 ### 3. Investigate
 
-Ask your AI agent: *"Investigate incident #42 on Tellagen"*
+From a Tellagen incident, click **Investigate with AI**, then copy the Codex or Claude command. The command includes an `investigation_run_id`; your local agent should call `tellagen_pick_up_investigation` with that ID before doing any evidence work.
+
+If you are starting outside the Tellagen UI, ask your AI agent: *"Start a local Tellagen investigation for incident #42"*.
 
 ## Tools
 
@@ -62,6 +64,8 @@ Ask your AI agent: *"Investigate incident #42 on Tellagen"*
 | `tellagen_list_incidents` | List all incidents, optionally filtered by status |
 | `tellagen_get_incident_timeline` | Get the timeline of events for an incident |
 | `tellagen_list_investigation_runs` | List investigation runs for an incident |
+| `tellagen_get_incident_context` | Get the full context bundle for an existing investigation run |
+| `tellagen_list_runbooks` | List matched runbooks/skills for a run |
 | `tellagen_list_findings` | List findings for an incident, optionally filtered by run |
 | `tellagen_get_finding` | Get a single finding with full details |
 
@@ -69,9 +73,11 @@ Ask your AI agent: *"Investigate incident #42 on Tellagen"*
 
 | Tool | Description |
 |------|-------------|
-| `tellagen_start_investigation` | Start a new investigation run on an incident |
+| `tellagen_start_investigation` | Start a local investigation run when no UI-created run ID was provided |
+| `tellagen_pick_up_investigation` | Attach the local agent to a UI-created awaiting run |
+| `tellagen_post_trace_step` | Post live investigation progress steps |
 | `tellagen_post_finding` | Post a structured finding to an active investigation |
-| `tellagen_complete_investigation` | Mark an investigation as completed or failed |
+| `tellagen_complete_investigation` | Mark an investigation as completed or failed, with RCA summary support |
 | `tellagen_update_finding` | Update a finding's status (dismiss or restore) |
 | `tellagen_promote_finding` | Promote a finding to the incident timeline |
 
@@ -111,11 +117,13 @@ The Tellagen MCP server is designed to work alongside vendor MCP servers for obs
 
 The agent uses Tellagen tools to manage the investigation lifecycle and vendor tools to gather evidence:
 
-1. **Read** the incident from Tellagen
-2. **Query** Grafana Loki for error logs, Prometheus for metrics
-3. **Check** GitHub for recent deploys and code changes
-4. **Post** findings back to Tellagen as they're discovered
-5. **Complete** the investigation run
+1. **Pick up** the Tellagen run if the UI command included `investigation_run_id`
+2. **Read** the returned context bundle, including runbooks and investigation scope
+3. **Post trace steps** before and after meaningful checks
+4. **Query** Grafana Loki for error logs, Prometheus for metrics
+5. **Check** GitHub for recent deploys and code changes
+6. **Post** findings back to Tellagen as they're discovered
+7. **Complete** the investigation run with a concise RCA summary
 
 ## Authentication
 

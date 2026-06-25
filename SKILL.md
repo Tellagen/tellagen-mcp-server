@@ -6,7 +6,7 @@ You have access to the Tellagen MCP server. This guide teaches you how to use it
 
 Tellagen is an incident investigation platform. Your role is to act as an on-call AI investigator: read incidents, gather evidence from observability and source control systems, post structured findings, and promote key findings to the incident timeline so human responders see them in the war room.
 
-## Tools available (12 total)
+## Tools available (16 total)
 
 ### Incidents
 | Tool | Method | What it does |
@@ -19,9 +19,13 @@ Tellagen is an incident investigation platform. Your role is to act as an on-cal
 ### Investigations
 | Tool | Method | What it does |
 |------|--------|-------------|
-| `tellagen_start_investigation` | POST | Open an investigation run — returns a `run_id` you must use for all findings |
+| `tellagen_start_investigation` | POST | Open a local investigation run only when the UI did not provide a run ID |
+| `tellagen_get_incident_context` | GET | Read the full context bundle for a run: incident, timeline, scope, connectors, runbooks, prior findings, output schema |
+| `tellagen_pick_up_investigation` | POST | Attach this local agent to a UI-created run and move it from `awaiting_agent` to `running` |
+| `tellagen_post_trace_step` | POST | Write live progress steps so responders can watch what you checked |
+| `tellagen_list_runbooks` | GET | List matched runbooks/skills for a run; guidance only, not executable code |
 | `tellagen_list_investigation_runs` | GET | List runs for an incident (shows status, agent info, finding counts) |
-| `tellagen_complete_investigation` | PATCH | Close a run as `completed` or `failed` (with `failure_reason`) |
+| `tellagen_complete_investigation` | PATCH | Close a run as `completed` or `failed` and include an RCA `result_summary` when possible |
 
 ### Findings
 | Tool | Method | What it does |
@@ -37,18 +41,22 @@ Tellagen is an incident investigation platform. Your role is to act as an on-cal
 Every investigation follows this sequence. Do not skip steps.
 
 ```
-1. tellagen_get_incident          → understand what happened
-2. tellagen_start_investigation   → open a run, get run_id
-3. [gather evidence]              → use Grafana, GitHub, codebase, PagerDuty, etc.
-4. tellagen_post_finding          → post each finding as you discover it (do NOT batch)
-5. tellagen_promote_finding       → promote key findings to the timeline
-6. tellagen_complete_investigation → close the run
+1. tellagen_pick_up_investigation  → if the prompt includes investigation_run_id, attach to that run first
+2. tellagen_start_investigation    → only if no run ID was provided; then pick up the created run
+3. tellagen_get_incident_context   → read incident scope, prior findings, connectors, runbooks, and output expectations
+4. tellagen_post_trace_step        → post readable progress before/after meaningful checks
+5. [gather evidence]               → use Grafana, GitHub, codebase, PagerDuty, kubectl, etc.
+6. tellagen_post_finding           → post each finding as you discover it (do NOT batch)
+7. tellagen_promote_finding        → promote key findings to the timeline
+8. tellagen_complete_investigation → close the run with an RCA result_summary
 ```
 
 ### Rules
+- **Pick up the current run when one is provided.** If the user pasted a Tellagen command with `investigation_run_id`, do not call `tellagen_start_investigation`.
 - **Post findings incrementally.** Every meaningful observation, correlation, or hypothesis gets its own finding posted immediately. Do not wait until the end.
 - **One run per investigation session.** Start one run, post all findings to it, then complete it.
 - **Always complete the run.** Even if you hit errors, call `tellagen_complete_investigation` with `status: "failed"` and a `failure_reason`.
+- **Use runbooks as guidance.** Runbooks/skills are RCA instructions and checklists, not executable code.
 
 ## Posting findings
 
