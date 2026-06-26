@@ -6,7 +6,7 @@
     "url": "https://github.com/tellagen/tellagen-mcp-server",
     "source": "github"
   },
-  "version": "0.1.1",
+  "version": "0.1.3",
   "packages": [
     {
       "registryType": "npm",

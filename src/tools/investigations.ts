@@ -51,6 +51,25 @@ const traceJsonSchema = z
   .optional()
   .describe("Optional JSON object captured as tool input or result metadata");
 
+const investigationScopeSchema = z
+  .object({
+    services: z
+      .array(
+        z.object({
+          name: z.string().min(1),
+          observability_names: z.array(z.string()).optional(),
+        }),
+      )
+      .optional(),
+    time_range: z
+      .object({
+        from: z.string().datetime().optional(),
+        to: z.string().datetime().optional(),
+      })
+      .optional(),
+  })
+  .describe("Incident-local scope used to guide local investigation tools");
+
 function generatedStepId(title: string): string {
   const slug =
     title
@@ -294,6 +313,89 @@ export function registerInvestigationTools(
         const data = await client.post(
           `/api/v1/investigation-runs/${investigation_run_id}/trace`,
           body,
+        );
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(data) }],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text" as const, text: formatError(err) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "tellagen_list_trace_steps",
+    {
+      description:
+        "List trace steps already posted for an investigation run. Use this when resuming a run to avoid duplicate work.",
+      inputSchema: {
+        investigation_run_id: z
+          .string()
+          .min(1)
+          .describe("Investigation run ID whose trace should be listed"),
+      },
+    },
+    async ({ investigation_run_id }) => {
+      try {
+        const data = await client.get(
+          `/api/v1/investigation-runs/${investigation_run_id}/trace`,
+        );
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(data) }],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text" as const, text: formatError(err) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "tellagen_get_investigation_workspace",
+    {
+      description:
+        "Get the incident-level investigation workspace: runs, findings, trace, and review state for an incident.",
+      inputSchema: {
+        incident_id: z.number().int().positive().describe("Incident ID"),
+      },
+    },
+    async ({ incident_id }) => {
+      try {
+        const data = await client.get(
+          `/api/v1/incidents/${incident_id}/investigations/workspace`,
+        );
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(data) }],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text" as const, text: formatError(err) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "tellagen_update_investigation_scope",
+    {
+      description:
+        "Update the investigation scope for an incident, including target services, observability aliases, and time range.",
+      inputSchema: {
+        incident_id: z.number().int().positive().describe("Incident ID"),
+        scope: investigationScopeSchema,
+      },
+    },
+    async ({ incident_id, scope }) => {
+      try {
+        const data = await client.patch(
+          `/api/v1/incidents/${incident_id}/investigations/scope`,
+          { scope },
         );
         return {
           content: [{ type: "text" as const, text: JSON.stringify(data) }],

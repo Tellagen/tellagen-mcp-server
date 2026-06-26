@@ -6,7 +6,7 @@ You have access to the Tellagen MCP server. This guide teaches you how to use it
 
 Tellagen is an incident investigation platform. Your role is to act as an on-call AI investigator: read incidents, gather evidence from observability and source control systems, post structured findings, and promote key findings to the incident timeline so human responders see them in the war room.
 
-## Tools available (16 total)
+## Tools available (30 total)
 
 ### Incidents
 | Tool | Method | What it does |
@@ -14,7 +14,8 @@ Tellagen is an incident investigation platform. Your role is to act as an on-cal
 | `tellagen_get_incident` | GET | Read incident details — severity, status, services, timestamps, manager |
 | `tellagen_list_incidents` | GET | List incidents, optionally filter by `active` / `resolved` / `all` |
 | `tellagen_get_incident_timeline` | GET | Read the incident timeline — status changes, decisions, promoted findings |
-| `tellagen_create_incident` | POST | Declare a new incident (all fields optional: service, severity, regions, gist, team_id, etc.) |
+| `tellagen_create_incident` | POST | Declare a new incident (all fields optional: service, severity, regions, short_title, team_id, etc.; `gist` is accepted as a legacy alias) |
+| `tellagen_update_incident` | PATCH | Update incident metadata, status, timestamps, impact summary, links, service, severity, or regions |
 
 ### Investigations
 | Tool | Method | What it does |
@@ -23,8 +24,11 @@ Tellagen is an incident investigation platform. Your role is to act as an on-cal
 | `tellagen_get_incident_context` | GET | Read the full context bundle for a run: incident, timeline, scope, connectors, runbooks, prior findings, output schema |
 | `tellagen_pick_up_investigation` | POST | Attach this local agent to a UI-created run and move it from `awaiting_agent` to `running` |
 | `tellagen_post_trace_step` | POST | Write live progress steps so responders can watch what you checked |
+| `tellagen_list_trace_steps` | GET | Read prior trace steps for a run before resuming work or completing the investigation |
 | `tellagen_list_runbooks` | GET | List matched runbooks/skills for a run; guidance only, not executable code |
 | `tellagen_list_investigation_runs` | GET | List runs for an incident (shows status, agent info, finding counts) |
+| `tellagen_get_investigation_workspace` | GET | Read the incident investigation workspace: current scope, runs, findings, and related work context |
+| `tellagen_update_investigation_scope` | PATCH | Refine investigation scope as evidence narrows or broadens the suspected blast radius |
 | `tellagen_complete_investigation` | PATCH | Close a run as `completed` or `failed` and include an RCA `result_summary` when possible |
 
 ### Findings
@@ -36,6 +40,24 @@ Tellagen is an incident investigation platform. Your role is to act as an on-cal
 | `tellagen_update_finding` | PATCH | Dismiss or restore a finding |
 | `tellagen_promote_finding` | POST | Promote a finding to the incident timeline (creates a visible timeline event) |
 
+### Timeline
+| Tool | Method | What it does |
+|------|--------|-------------|
+| `tellagen_post_timeline_event` | POST | Add a timestamped incident fact, decision, mitigation, recovery marker, or evidence-backed event |
+| `tellagen_get_timeline_event` | GET | Read one timeline event, including attached evidence and AI context |
+| `tellagen_update_timeline_event` | PATCH | Correct or enrich a timeline event as better evidence arrives |
+| `tellagen_add_timeline_comment` | POST | Add a comment to a timeline event for responder context or follow-up |
+| `tellagen_list_timeline_comments` | GET | Read comments on a timeline event |
+
+### Context and reference data
+| Tool | Method | What it does |
+|------|--------|-------------|
+| `tellagen_get_impact_summary` | GET | Read the current customer/business impact summary for an incident |
+| `tellagen_list_affected_customers` | GET | List affected customers for an incident, optionally filtered by status or email |
+| `tellagen_search` | GET | Search Tellagen incidents, timeline entries, findings, and related records |
+| `tellagen_list_services` | GET | List configured services so agents use canonical service identifiers |
+| `tellagen_get_service` | GET | Read one service and its metadata |
+
 ## Investigation lifecycle
 
 Every investigation follows this sequence. Do not skip steps.
@@ -44,11 +66,14 @@ Every investigation follows this sequence. Do not skip steps.
 1. tellagen_pick_up_investigation  → if the prompt includes investigation_run_id, attach to that run first
 2. tellagen_start_investigation    → only if no run ID was provided; then pick up the created run
 3. tellagen_get_incident_context   → read incident scope, prior findings, connectors, runbooks, and output expectations
-4. tellagen_post_trace_step        → post readable progress before/after meaningful checks
-5. [gather evidence]               → use Grafana, GitHub, codebase, PagerDuty, kubectl, etc.
-6. tellagen_post_finding           → post each finding as you discover it (do NOT batch)
-7. tellagen_promote_finding        → promote key findings to the timeline
-8. tellagen_complete_investigation → close the run with an RCA result_summary
+4. tellagen_list_trace_steps       → if resuming, read what the agent already checked
+5. tellagen_get_impact_summary     → check customer/business impact when available
+6. tellagen_post_trace_step        → post readable progress before/after meaningful checks
+7. [gather evidence]               → use Grafana, GitHub, codebase, PagerDuty, kubectl, etc.
+8. tellagen_post_finding           → post each finding as you discover it (do NOT batch)
+9. tellagen_promote_finding        → promote key findings to the timeline
+10. tellagen_post_timeline_event   → add timestamped facts, decisions, mitigations, and recovery markers when needed
+11. tellagen_complete_investigation → close the run with an RCA result_summary
 ```
 
 ### Rules
@@ -279,7 +304,7 @@ When you detect something wrong (e.g., while monitoring dashboards), you can dec
 tellagen_create_incident(
   service="payments",
   severity="sev2",
-  gist="5xx-spike",
+  short_title="5xx-spike",
   regions=["us-east-1"],
   create_slack_channel=true
 )

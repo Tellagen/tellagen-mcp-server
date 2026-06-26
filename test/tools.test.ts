@@ -18,6 +18,47 @@ function createTestSetup() {
   return { client, server };
 }
 
+type RegisteredTool = {
+  config: { inputSchema?: Record<string, unknown> };
+  handler: (input: Record<string, unknown>) => Promise<{
+    content: Array<{ type: "text"; text: string }>;
+    isError?: boolean;
+  }>;
+};
+
+function createToolHarness() {
+  const client = new TellagenClient({
+    apiUrl: "https://test.api.tellagen.com",
+    apiKey: "tllg_test",
+  });
+  const tools = new Map<string, RegisteredTool>();
+  const server = {
+    registerTool: (
+      name: string,
+      config: RegisteredTool["config"],
+      handler: RegisteredTool["handler"],
+    ) => {
+      tools.set(name, { config, handler });
+    },
+  } as unknown as McpServer;
+
+  registerAllTools(server, client);
+
+  return {
+    getTool(name: string) {
+      const tool = tools.get(name);
+      if (!tool) throw new Error(`tool not registered: ${name}`);
+      return tool;
+    },
+    async callTool(name: string, input: Record<string, unknown>) {
+      return this.getTool(name).handler(input);
+    },
+    toolNames() {
+      return [...tools.keys()].sort();
+    },
+  };
+}
+
 // We test the tools by calling the client methods they use and verifying behavior.
 // Since McpServer doesn't expose a simple "call tool" API outside of transport,
 // we test the client integration directly with mocked fetch.
@@ -97,6 +138,171 @@ describe("Tool integration via client", () => {
 
       const result = await client.get("/api/v1/incidents/42/timeline");
       expect(result).toEqual(mockTimeline);
+    });
+  });
+
+  describe("timeline MCP tools", () => {
+    it("tellagen_post_timeline_event calls POST /api/v1/incidents/{id}/timeline", async () => {
+      const harness = createToolHarness();
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            event: { id: 200, title: "Rollback started", type: "mitigation" },
+          }),
+          { status: 201 },
+        ),
+      );
+
+      const result = await harness.callTool("tellagen_post_timeline_event", {
+        incident_id: 42,
+        title: "Rollback started",
+        body: "Started rollback of deploy abc123 after 502 spike.",
+        type: "mitigation",
+        source: "local-mcp",
+        is_key: true,
+        started_at: "2026-06-25T14:22:00Z",
+        tags: ["rollback", "backend"],
+        evidence_links: [
+          {
+            source: "github",
+            url: "https://github.com/acme/api/commit/abc123",
+            label: "Deploy abc123",
+          },
+        ],
+      });
+
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        event: { id: 200, title: "Rollback started", type: "mitigation" },
+      });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/incidents/42/timeline",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            title: "Rollback started",
+            body: "Started rollback of deploy abc123 after 502 spike.",
+            type: "mitigation",
+            source: "local-mcp",
+            is_key: true,
+            started_at: "2026-06-25T14:22:00Z",
+            tags: ["rollback", "backend"],
+            evidence_links: [
+              {
+                source: "github",
+                url: "https://github.com/acme/api/commit/abc123",
+                label: "Deploy abc123",
+              },
+            ],
+          }),
+        }),
+      );
+    });
+
+    it("tellagen_get_timeline_event calls GET /api/v1/timeline/{id}", async () => {
+      const harness = createToolHarness();
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ event: { id: 200, title: "Rollback started" } }),
+          { status: 200 },
+        ),
+      );
+
+      const result = await harness.callTool("tellagen_get_timeline_event", {
+        timeline_event_id: 200,
+      });
+
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        event: { id: 200, title: "Rollback started" },
+      });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/timeline/200",
+        expect.objectContaining({ method: "GET" }),
+      );
+    });
+
+    it("tellagen_update_timeline_event calls PATCH /api/v1/timeline/{id}", async () => {
+      const harness = createToolHarness();
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ event: { id: 200, title: "Rollback completed" } }),
+          { status: 200 },
+        ),
+      );
+
+      const result = await harness.callTool("tellagen_update_timeline_event", {
+        timeline_event_id: 200,
+        title: "Rollback completed",
+        ended_at: "2026-06-25T14:37:00Z",
+        is_ongoing: false,
+      });
+
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        event: { id: 200, title: "Rollback completed" },
+      });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/timeline/200",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({
+            title: "Rollback completed",
+            ended_at: "2026-06-25T14:37:00Z",
+            is_ongoing: false,
+          }),
+        }),
+      );
+    });
+
+    it("tellagen_add_timeline_comment calls POST /api/v1/timeline/{id}/comments", async () => {
+      const harness = createToolHarness();
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ comment: { id: 10, body: "Verified by logs." } }),
+          { status: 201 },
+        ),
+      );
+
+      const result = await harness.callTool("tellagen_add_timeline_comment", {
+        timeline_event_id: 200,
+        body: "Verified by logs.",
+      });
+
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        comment: { id: 10, body: "Verified by logs." },
+      });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/timeline/200/comments",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ body: "Verified by logs." }),
+        }),
+      );
+    });
+
+    it("tellagen_list_timeline_comments calls GET /api/v1/timeline/{id}/comments", async () => {
+      const harness = createToolHarness();
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ comments: [{ id: 10, body: "Verified by logs." }] }),
+          { status: 200 },
+        ),
+      );
+
+      const result = await harness.callTool("tellagen_list_timeline_comments", {
+        timeline_event_id: 200,
+      });
+
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        comments: [{ id: 10, body: "Verified by logs." }],
+      });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/timeline/200/comments",
+        expect.objectContaining({ method: "GET" }),
+      );
     });
   });
 
@@ -250,6 +456,121 @@ describe("Tool integration via client", () => {
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify(body),
+        }),
+      );
+    });
+  });
+
+  describe("tellagen_list_trace_steps", () => {
+    it("calls GET /api/v1/investigation-runs/{id}/trace", async () => {
+      const harness = createToolHarness();
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            steps: [
+              {
+                investigation_run_id: "run-abc",
+                step_id: "logs-1",
+                status: "done",
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+
+      const result = await harness.callTool("tellagen_list_trace_steps", {
+        investigation_run_id: "run-abc",
+      });
+
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        steps: [
+          {
+            investigation_run_id: "run-abc",
+            step_id: "logs-1",
+            status: "done",
+          },
+        ],
+      });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/investigation-runs/run-abc/trace",
+        expect.objectContaining({ method: "GET" }),
+      );
+    });
+  });
+
+  describe("tellagen_get_investigation_workspace", () => {
+    it("calls GET /api/v1/incidents/{id}/investigations/workspace", async () => {
+      const harness = createToolHarness();
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            incident: { id: 42 },
+            investigation_runs: [{ id: "run-abc" }],
+            findings: [],
+            trace_steps: [],
+          }),
+          { status: 200 },
+        ),
+      );
+
+      const result = await harness.callTool(
+        "tellagen_get_investigation_workspace",
+        {
+          incident_id: 42,
+        },
+      );
+
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        incident: { id: 42 },
+        investigation_runs: [{ id: "run-abc" }],
+        findings: [],
+        trace_steps: [],
+      });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/incidents/42/investigations/workspace",
+        expect.objectContaining({ method: "GET" }),
+      );
+    });
+  });
+
+  describe("tellagen_update_investigation_scope", () => {
+    it("calls PATCH /api/v1/incidents/{id}/investigations/scope", async () => {
+      const harness = createToolHarness();
+
+      const scope = {
+        services: [
+          {
+            name: "backend",
+            observability_names: ["api", "tellagen-backend"],
+          },
+        ],
+        time_range: {
+          from: "2026-06-25T13:13:00Z",
+          to: "2026-06-25T14:13:00Z",
+        },
+      };
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(JSON.stringify({ scope }), { status: 200 }),
+      );
+
+      const result = await harness.callTool(
+        "tellagen_update_investigation_scope",
+        {
+          incident_id: 42,
+          scope,
+        },
+      );
+
+      expect(JSON.parse(result.content[0].text)).toEqual({ scope });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/incidents/42/investigations/scope",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ scope }),
         }),
       );
     });
@@ -606,6 +927,216 @@ describe("Tool integration via client", () => {
         }),
       );
     });
+
+    it("maps gist alias to backend short_title", async () => {
+      const harness = createToolHarness();
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(JSON.stringify({ incident: { id: 99 } }), {
+          status: 201,
+        }),
+      );
+
+      expect(
+        harness.getTool("tellagen_create_incident").config.inputSchema,
+      ).toHaveProperty("short_title");
+
+      await harness.callTool("tellagen_create_incident", {
+        service: "payments",
+        severity: "sev2",
+        gist: "pay-lag",
+      });
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/incidents",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            service: "payments",
+            severity: "sev2",
+            short_title: "pay-lag",
+          }),
+        }),
+      );
+    });
+  });
+
+  describe("tellagen_update_incident", () => {
+    it("calls PATCH /api/v1/incidents/{id}", async () => {
+      const harness = createToolHarness();
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            incident: {
+              id: 42,
+              status: "monitoring",
+              impact_summary: "Checkout latency degraded for EU users",
+            },
+          }),
+          { status: 200 },
+        ),
+      );
+
+      const result = await harness.callTool("tellagen_update_incident", {
+        incident_id: 42,
+        status: "monitoring",
+        severity: "sev2",
+        impact_summary: "Checkout latency degraded for EU users",
+        recovered_at: "2026-06-25T14:55:00Z",
+      });
+
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        incident: {
+          id: 42,
+          status: "monitoring",
+          impact_summary: "Checkout latency degraded for EU users",
+        },
+      });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/incidents/42",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({
+            status: "monitoring",
+            severity: "sev2",
+            impact_summary: "Checkout latency degraded for EU users",
+            recovered_at: "2026-06-25T14:55:00Z",
+          }),
+        }),
+      );
+    });
+  });
+
+  describe("context MCP tools", () => {
+    it("tellagen_get_impact_summary calls GET /api/v1/incidents/{id}/impact-summary", async () => {
+      const harness = createToolHarness();
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            summary: { total: 3, by_status: { affected: 2, monitoring: 1 } },
+          }),
+          { status: 200 },
+        ),
+      );
+
+      const result = await harness.callTool("tellagen_get_impact_summary", {
+        incident_id: 42,
+      });
+
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        summary: { total: 3, by_status: { affected: 2, monitoring: 1 } },
+      });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/incidents/42/impact-summary",
+        expect.objectContaining({ method: "GET" }),
+      );
+    });
+
+    it("tellagen_list_affected_customers forwards filters and pagination", async () => {
+      const harness = createToolHarness();
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            customers: [{ id: 1, email: "ops@example.com" }],
+            next_cursor: "cursor-2",
+          }),
+          { status: 200 },
+        ),
+      );
+
+      const result = await harness.callTool("tellagen_list_affected_customers", {
+        incident_id: 42,
+        status: "affected",
+        email: "ops@example.com",
+        limit: 25,
+        cursor: "cursor-1",
+      });
+
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        customers: [{ id: 1, email: "ops@example.com" }],
+        next_cursor: "cursor-2",
+      });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/incidents/42/affected-customers?status=affected&email=ops%40example.com&limit=25&cursor=cursor-1",
+        expect.objectContaining({ method: "GET" }),
+      );
+    });
+
+    it("tellagen_search calls GET /api/v1/search with query params", async () => {
+      const harness = createToolHarness();
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            results: [{ type: "incident", id: "42", title: "Checkout lag" }],
+          }),
+          { status: 200 },
+        ),
+      );
+
+      const result = await harness.callTool("tellagen_search", {
+        q: "checkout",
+        types: ["incident", "timeline"],
+        incident_id: 42,
+        limit: 5,
+      });
+
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        results: [{ type: "incident", id: "42", title: "Checkout lag" }],
+      });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/search?q=checkout&types=incident%2Ctimeline&incident_id=42&limit=5",
+        expect.objectContaining({ method: "GET" }),
+      );
+    });
+
+    it("tellagen_list_services calls GET /api/v1/services", async () => {
+      const harness = createToolHarness();
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ services: [{ id: 7, name: "backend" }] }),
+          { status: 200 },
+        ),
+      );
+
+      const result = await harness.callTool("tellagen_list_services", {
+        include_archived: true,
+      });
+
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        services: [{ id: 7, name: "backend" }],
+      });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/services?include_archived=true",
+        expect.objectContaining({ method: "GET" }),
+      );
+    });
+
+    it("tellagen_get_service calls GET /api/v1/services/{id}", async () => {
+      const harness = createToolHarness();
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(JSON.stringify({ service: { id: 7, name: "backend" } }), {
+          status: 200,
+        }),
+      );
+
+      const result = await harness.callTool("tellagen_get_service", {
+        service_id: 7,
+      });
+
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        service: { id: 7, name: "backend" },
+      });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://test.api.tellagen.com/api/v1/services/7",
+        expect.objectContaining({ method: "GET" }),
+      );
+    });
   });
 
   describe("error handling", () => {
@@ -639,7 +1170,7 @@ describe("Tool integration via client", () => {
 });
 
 describe("Tool registration", () => {
-  it("registers all 12 tools on the server", () => {
+  it("registers all MCP tools on the server", () => {
     const { server } = createTestSetup();
     // McpServer doesn't expose a public tool list, but if registration
     // fails it throws. No error = all tools registered successfully.

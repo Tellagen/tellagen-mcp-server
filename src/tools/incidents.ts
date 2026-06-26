@@ -114,11 +114,16 @@ export function registerIncidentTools(
           .string()
           .optional()
           .describe('Severity key (e.g. "sev1", "sev2")'),
+        short_title: z
+          .string()
+          .max(12)
+          .optional()
+          .describe("Short incident slug used in the Tellagen human ID"),
         gist: z
           .string()
           .max(12)
           .optional()
-          .describe("Short slug summary"),
+          .describe("Deprecated alias for short_title"),
         doc_url: z
           .string()
           .url()
@@ -144,11 +149,79 @@ export function registerIncidentTools(
       try {
         const body: Record<string, unknown> = {};
         for (const [key, value] of Object.entries(params)) {
+          if (value === undefined || key === "gist") {
+            continue;
+          }
+          if (key === "short_title") {
+            body.short_title = value;
+          } else {
+            body[key] = value;
+          }
+        }
+        if (body.short_title === undefined && params.gist !== undefined) {
+          body.short_title = params.gist;
+        }
+        const data = await client.post("/api/v1/incidents", body);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(data) }],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text" as const, text: formatError(err) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "tellagen_update_incident",
+    {
+      description:
+        "Update incident fields that are useful during investigation: status, severity, impact summary, links, and key timestamps.",
+      inputSchema: {
+        incident_id: z.number().int().positive().describe("Incident ID"),
+        service: z.string().optional(),
+        regions: z.array(z.string()).optional(),
+        severity: z.string().optional(),
+        slack_channel_id: z.string().optional(),
+        meet_url: z.string().url().optional(),
+        doc_url: z.string().url().optional(),
+        status: z.string().optional(),
+        issue_type: z.string().optional(),
+        severity_mode: z.string().optional(),
+        impact_summary: z.string().optional(),
+        impact_started_at: z
+          .string()
+          .datetime()
+          .optional()
+          .describe("ISO timestamp when customer impact started"),
+        first_reported_at: z
+          .string()
+          .datetime()
+          .optional()
+          .describe("ISO timestamp when the incident was first reported"),
+        first_responded_at: z
+          .string()
+          .datetime()
+          .optional()
+          .describe("ISO timestamp when response began"),
+        recovered_at: z
+          .string()
+          .datetime()
+          .optional()
+          .describe("ISO timestamp when impact recovered"),
+      },
+    },
+    async ({ incident_id, ...params }) => {
+      try {
+        const body: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(params)) {
           if (value !== undefined) {
             body[key] = value;
           }
         }
-        const data = await client.post("/api/v1/incidents", body);
+        const data = await client.patch(`/api/v1/incidents/${incident_id}`, body);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(data) }],
         };
