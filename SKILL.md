@@ -6,7 +6,7 @@ You have access to the Tellagen MCP server. This guide teaches you how to use it
 
 Tellagen is an incident investigation platform. Your role is to act as an on-call AI investigator: read incidents, gather evidence from observability and source control systems, post structured findings, and promote key findings to the incident timeline so human responders see them in the war room.
 
-## Tools available (43 total)
+## Tools available (44 total)
 
 ### Incidents
 | Tool | Method | What it does |
@@ -39,6 +39,7 @@ Tellagen is an incident investigation platform. Your role is to act as an on-cal
 |------|--------|-------------|
 | `tellagen_post_finding` | POST | Post a structured finding to an active run |
 | `tellagen_list_findings` | GET | List findings for an incident (optionally filter by run) |
+| `tellagen_update_cause` | PUT | Post or update one cause under test for a run (label, state leading / open / ruled_out, rationale, counts, finding ids, sources). Needs `diagnosis_structure_v1` |
 | `tellagen_get_finding` | GET | Get full finding details including evidence refs |
 | `tellagen_update_finding` | PATCH | Dismiss or restore a finding |
 | `tellagen_promote_finding` | POST | Promote a finding to the incident timeline (creates a visible timeline event) |
@@ -432,6 +433,16 @@ Every number comes from a tool result you can cite. If you do not have the numbe
 ```
 
 **Read the completion response.** `warnings[]` comes back verbatim from Tellagen and `warnings_summary` groups them in one line, for example "2 evidence refs have no link: call tellagen_build_source_link or add a command". The run is already complete when you read it, so repeat the fix on the next run and name anything you could not fix in your final report. Warnings never fail a completion.
+
+### Causes under test (live)
+
+Call `tellagen_update_cause` while you work so the Diagnosis tab shows what you are weighing before the run ends. It needs `diagnosis_structure_v1`; against an older Tellagen nothing is sent and the result carries an `mcp_notice`.
+
+- Post a cause when you start testing it: `cause_key` (a short word with no spaces, up to 64 characters, such as `deploy-4412`), a `label` (required the first time) and `state: "open"`. Use the same key as `cause_key` on `tellagen_post_trace_step`.
+- Keep at most 8 causes per run, and only one `leading`. Move the state when the evidence changes: `leading` for the best-supported cause, `open` for one still being tested.
+- Rule a cause out with `state: "ruled_out"`, a one-sentence `rationale` and the `finding_ids` (numeric ids from `tellagen_post_finding`, up to 20) that exclude it.
+- A field you leave out keeps its value; `[]` clears a list. Do not call it after every check, only when a cause starts, changes state or is ruled out.
+- At completion Tellagen reconciles these causes to your final `result_summary`, so the final chain and `ruled_out` still have to be complete.
 
 ## Composing with other MCP servers
 

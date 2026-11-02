@@ -503,7 +503,7 @@ describe("postmortem runbook candidate contract", () => {
 
       expect(mcpClient.getServerCapabilities()?.experimental).toMatchObject({ "tellagen/postmortem-analysis": { protocol_version: 2 } });
       const tools = await mcpClient.listTools();
-      expect(tools.tools).toHaveLength(44);
+      expect(tools.tools).toHaveLength(45);
       const candidateTool = tools.tools.find(
         (tool) =>
           tool.name === "tellagen_submit_postmortem_runbook_candidates",

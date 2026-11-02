@@ -87,6 +87,9 @@ async function startBackend(options: { capable: boolean }): Promise<FakeBackend>
       if (key === "POST /api/v1/incidents/42/findings") {
         return send(201, { finding: { id: nextFindingId++ } });
       }
+      if (key === "PUT /api/v1/investigation-runs/run-1/causes/deploy-4412") {
+        return send(200, { cause: { investigation_run_id: "run-1", key: "deploy-4412", ...JSON.parse(raw) } });
+      }
       if (key === "PATCH /api/v1/investigations/run-1") {
         return send(
           200,
@@ -174,6 +177,16 @@ async function replayRun(call: Awaited<ReturnType<typeof connect>>["call"]) {
       },
     ],
   });
+  const cause = await call("tellagen_update_cause", {
+    investigation_run_id: "run-1",
+    cause_key: "deploy-4412",
+    label: "Deploy 4412 changed checkout routing",
+    state: "leading",
+    rationale: "5xx started right after the deploy",
+    evidence_for: 1,
+    finding_ids: [10],
+    sources: ["github"],
+  });
   const errorFinding = await call("tellagen_post_finding", {
     incident_id: 42,
     investigation_run_id: "run-1",
@@ -259,7 +272,7 @@ async function replayRun(call: Awaited<ReturnType<typeof connect>>["call"]) {
       unknowns: [{ label: "Why staging did not show it", why: "No staging metrics" }],
     },
   });
-  return { links, deployId, errorId, complete };
+  return { links, deployId, errorId, complete, cause };
 }
 
 describe("a replayed run against a fake Tellagen REST server (CORE-778)", () => {
@@ -278,7 +291,7 @@ describe("a replayed run against a fake Tellagen REST server (CORE-778)", () => 
   it("sends the exact structured bodies to a backend that advertises diagnosis_structure_v1", async () => {
     backend = await startBackend({ capable: true });
     const agent = await connect(backend.url);
-    const { links, deployId, errorId, complete } = await replayRun(agent.call);
+    const { links, deployId, errorId, complete, cause } = await replayRun(agent.call);
     await agent.close();
 
     // The finding ids are the ones the backend returned.
@@ -295,12 +308,23 @@ describe("a replayed run against a fake Tellagen REST server (CORE-778)", () => 
       "GET /api/v1/investigations/run-1/context",
       "POST /api/v1/investigation-runs/run-1/trace",
       "POST /api/v1/incidents/42/findings",
+      "PUT /api/v1/investigation-runs/run-1/causes/deploy-4412",
       "POST /api/v1/incidents/42/findings",
       "PATCH /api/v1/investigations/run-1",
     ]);
     expect(new Set(backend.requests.map((r) => r.auth))).toEqual(new Set(["Bearer tllg_test"]));
 
-    const [pickup, , , trace, finding1, finding2, patch] = backend.requests;
+    const [pickup, , , trace, finding1, causeReq, finding2, patch] = backend.requests;
+    expect(causeReq.body).toEqual({
+      label: "Deploy 4412 changed checkout routing",
+      state: "leading",
+      rationale: "5xx started right after the deploy",
+      evidence_for: 1,
+      finding_ids: [10],
+      sources: ["github"],
+    });
+    expect(cause.isError).toBe(false);
+    expect(cause.json().cause.key).toBe("deploy-4412");
     expect(pickup.body.protocol_capabilities).toEqual([
       "runbook_plan_v2",
       "trace_check_id_v2",
@@ -387,8 +411,12 @@ describe("a replayed run against a fake Tellagen REST server (CORE-778)", () => 
   it("an older backend without server_capabilities receives the old payload shape", async () => {
     backend = await startBackend({ capable: false });
     const agent = await connect(backend.url);
-    const { complete } = await replayRun(agent.call);
+    const { complete, cause } = await replayRun(agent.call);
     await agent.close();
+
+    expect(cause.isError).toBe(false);
+    expect(cause.json().mcp_notice).toContain("does not support live causes");
+    expect(backend.requests.some((r) => r.path.includes("/causes/"))).toBe(false);
 
     const trace = backend.requests.find((r) => r.path.endsWith("/trace"))!;
     expect(trace.body.outcome).toBeUndefined();

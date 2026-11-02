@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TellagenClient } from "../client.js";
 import { registerIncidentTools } from "./incidents.js";
 import { registerInvestigationTools } from "./investigations.js";
+import { registerCauseTools } from "./causes.js";
 import { registerFindingTools } from "./findings.js";
 import { registerTimelineTools } from "./timeline.js";
 import { registerContextTools } from "./context.js";
@@ -19,6 +20,7 @@ export function registerAllTools(
   registerIncidentTools(server, client);
   registerInvestigationTools(server, client);
   registerFindingTools(server, client);
+  registerCauseTools(server, client);
   registerTimelineTools(server, client);
   registerContextTools(server, client);
   registerDatasourceTools(server, client);

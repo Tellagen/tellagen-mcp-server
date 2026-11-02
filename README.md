@@ -105,6 +105,7 @@ From Settings → AI diagnostics, click **Check MCP tools**, then copy the diagn
 | `tellagen_post_trace_step` | Post live progress with a stable step ID and immutable runbook/non-runbook guidance basis |
 | `tellagen_update_investigation_scope` | Update the investigation scope as evidence changes |
 | `tellagen_post_finding` | Post a structured finding to an active investigation |
+| `tellagen_update_cause` | Post or update a cause under test (state, rationale, finding ids) for a run; needs `diagnosis_structure_v1` |
 | `tellagen_complete_investigation` | Mark an investigation as completed or failed, with RCA summary support |
 | `tellagen_update_finding` | Update a finding's status (dismiss or restore) |
 | `tellagen_promote_finding` | Promote a finding to the incident timeline |
@@ -244,7 +245,7 @@ Tellagen shows a source on every proof in the Diagnosis tab. Evidence refs (`tel
 
 `tellagen_build_source_link` takes the Grafana address from `GRAFANA_URL` in the MCP client environment, else from the Tellagen Grafana datasource `base_url` (Tellagen shows connector settings to settings managers only, so everyone else sets `GRAFANA_URL`). Explore links use Grafana's `left` parameter and the same builder as the Tellagen web app (shared test vectors keep them identical). The time range defaults to the incident window when you pass `investigation_run_id`. It never puts credentials in a link and makes no network call except to the Tellagen API.
 
-`tellagen_complete_investigation` also accepts the causal chain with `finding_ids` (the numeric ids that `tellagen_post_finding` returns), one `figure` per step (a timeline `stats`, `compare` or `trend` block, validated before the request is sent), `ruled_out[]`, `coverage[]` and `unknowns[]`. `tellagen_post_trace_step` accepts `outcome` (supports, rules_out, nothing_notable, inconclusive, unavailable) and `cause_key`. The response carries the backend `warnings[]` verbatim and a one-line `warnings_summary` the agent can act on.
+`tellagen_complete_investigation` also accepts the causal chain with `finding_ids` (the numeric ids that `tellagen_post_finding` returns), one `figure` per step (a timeline `stats`, `compare` or `trend` block, validated before the request is sent), `ruled_out[]`, `coverage[]` and `unknowns[]`. `tellagen_post_trace_step` accepts `outcome` (supports, rules_out, nothing_notable, inconclusive, unavailable) and `cause_key`. `tellagen_update_cause` posts the causes you are testing while the run is live (`PUT /api/v1/investigation-runs/{id}/causes/{key}`, at most 8 per run); it is sent only when the run advertises `diagnosis_structure_v1`, otherwise the result carries an `mcp_notice` and nothing is sent. The response carries the backend `warnings[]` verbatim and a one-line `warnings_summary` the agent can act on.
 
 ### Capability negotiation
 
