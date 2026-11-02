@@ -91,6 +91,7 @@ From Settings → AI diagnostics, click **Check MCP tools**, then copy the diagn
 | `tellagen_get_service` | Get one service and its metadata |
 | `tellagen_probe_datasource` | Diagnose a local datasource setup; for Grafana, checks required env vars and `/api/health` reachability without returning credentials |
 | `tellagen_get_diagnostic_session` | Read a `diag_*` MCP diagnostic session from Settings → AI diagnostics |
+| `tellagen_build_source_link` | Build the clickable link for an evidence ref: Grafana Explore / logs / trace / panel, GitHub compare / commit / pull request. Kubernetes and sources without a browser URL return a copyable command or guidance. Calls only the Tellagen API |
 
 ### Write tools
 
@@ -231,6 +232,24 @@ The agent uses Tellagen tools to manage the investigation lifecycle and vendor t
 
 `tellagen_probe_datasource` reads Tellagen's metadata-only datasource catalog, checks that required local env vars such as `GRAFANA_URL` and `GRAFANA_SERVICE_ACCOUNT_TOKEN` are present, and calls Grafana `/api/health`. It returns statuses, missing env var names, and HTTP status only; it does not store or return token values.
 
+## Source links and the diagnosis structure
+
+Tellagen shows a source on every proof in the Diagnosis tab. Evidence refs (`tellagen_post_finding` and the refs nested in `tellagen_complete_investigation`) accept three extra fields:
+
+| Field | Use |
+|-------|-----|
+| `links[]` | Up to 4 `{kind, label, url}` entries (`kind`: explore, panel, diff, commit, pr, logs, trace; http or https; label up to 60 characters). Build them with `tellagen_build_source_link` and copy its `links[]` unchanged. |
+| `command` | A copyable read-only command (up to 1000 characters) for Kubernetes and other local sources that have no browser link. Tellagen redacts credentials and drops a longer command. |
+| `datasource` | The data source name or uid the evidence came from. |
+
+`tellagen_build_source_link` takes the Grafana address from `GRAFANA_URL` in the MCP client environment, else from the Tellagen Grafana datasource `base_url` (Tellagen shows connector settings to settings managers only, so everyone else sets `GRAFANA_URL`). Explore links use Grafana's `left` parameter and the same builder as the Tellagen web app (shared test vectors keep them identical). The time range defaults to the incident window when you pass `investigation_run_id`. It never puts credentials in a link and makes no network call except to the Tellagen API.
+
+`tellagen_complete_investigation` also accepts the causal chain with `finding_ids` (the numeric ids that `tellagen_post_finding` returns), one `figure` per step (a timeline `stats`, `compare` or `trend` block, validated before the request is sent), `ruled_out[]`, `coverage[]` and `unknowns[]`. `tellagen_post_trace_step` accepts `outcome` (supports, rules_out, nothing_notable, inconclusive, unavailable) and `cause_key`. The response carries the backend `warnings[]` verbatim and a one-line `warnings_summary` the agent can act on.
+
+### Capability negotiation
+
+The MCP server always advertises `diagnosis_structure_v1` in `protocol_capabilities` at pickup. It sends the fields above **only** when the pickup (or `tellagen_get_incident_context`) response lists `diagnosis_structure_v1` in the top-level `server_capabilities`. Against an older Tellagen the fields are removed before the request leaves, the call still succeeds, and the tool result carries an `mcp_notice` naming what was not sent. A run this process did not pick up is checked once through `GET /api/v1/investigations/{id}/context`.
+
 ## Authentication
 
 - API key is passed via `TELLAGEN_API_KEY` environment variable (never in args)
@@ -333,3 +352,4 @@ npm run lint    # tsc --noEmit
 | `TELLAGEN_API_URL` | Yes | API base URL (e.g., `https://yourcompany.api.tellagen.com`) |
 | `TELLAGEN_MCP_CLIENT` | No | Local host identity: `codex` or `claude` (defaults to `codex`) |
 | `TELLAGEN_MCP_PROFILE_ID` | No | Stable opaque profile ID used to scope local MCP access observations |
+| `GRAFANA_URL` | No | Grafana address; used by `tellagen_probe_datasource` and by `tellagen_build_source_link` (wins over the Tellagen datasource `base_url`) |

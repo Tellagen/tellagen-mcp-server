@@ -1,0 +1,98 @@
+--- a/skills/investigate/SKILL.md	2026-11-02 07:20:20.609155809 +0200
++++ b/skills/investigate/SKILL.md	2026-11-02 07:20:20.636974089 +0200
+@@ -88,10 +88,14 @@
+   status: "running" | "done" | "error",
+   tool_name: "grafana-loki",
+   title: "Queried checkout error logs",
+-  result_summary: "502 errors began at 14:32 UTC"
++  result_summary: "502 errors began at 14:32 UTC",
++  outcome: "supports" | "rules_out" | "nothing_notable" | "inconclusive" | "unavailable",  // on a finished check
++  cause_key: "deploy-4412"  // the same short key on every check of one cause
+ )
+ ```
+ 
++`outcome` says what the finished check did to the cause it tested (`unavailable` = the source could not be read; send it with `status: "error"`). Reuse one `cause_key` for every check of the same cause.
++
+ ### 4. POST — Report findings as you go
+ 
+ Post each finding incrementally — do not batch them at the end.
+@@ -116,7 +120,17 @@
+ )
+ ```
+ 
+-Include deep links in `evidence_refs.url` where possible — engineers will use these to verify your findings.
++Give every proof a source, so responders can open it from the Diagnosis tab:
++
++- For Grafana and GitHub evidence, call `tellagen_build_source_link` and copy its `links[]` into the evidence ref unchanged. Do not write the address yourself.
++  - `tellagen_build_source_link(kind: "explore" | "logs" | "trace" | "panel", datasource, query, dashboard_uid, panel_id, investigation_run_id)`
++  - `tellagen_build_source_link(kind: "commit" | "pr" | "diff", repo: "owner/name", sha | pr_number | base + head)`
++- For kubectl and other local sources with no browser address, add a read-only `command` (up to 1000 characters, no credentials).
++- Add `datasource` (the Grafana data source name or uid) when you have it.
++
++**Keep the numeric `id` of every finding** (the response is `{finding: {id}}`). The completion summary cites findings by `finding_ids`.
++
++Finding types matter for the structure: `negative` = ruled out, `gap` = a required source could not be read or satisfied, and each step of the cause chain gets its own `evidence` finding. `observation` and other `evidence` are context.
+ 
+ ### 5. COMPLETE — Close the run
+ 
+@@ -138,11 +152,41 @@
+     confidence_percent: 0-100,
+     signals_checked: { checked: 3, total: 3, by_source: { "grafana-loki": 1, "github": 1 } },
+     takeaways: [{ id: "root-cause", title: "Key takeaway", severity: "high", finding_id: "7" }],
+-    outcome_state: "successful" | "inconclusive" | "partial-failure"
++    outcome_state: "successful" | "inconclusive" | "partial-failure",
++    assessment: { diagnosis_state: "confirmed" | "likely" | "incomplete" | "inconclusive" | "unknown" },
++    causal_paths: [{
++      id: "primary", kind: "primary",
++      steps: [  // 2 to 4 steps, trigger to customer impact
++        { id: "deploy", claim: "Deploy 4412 shipped at 09:02", verification: "confirmed",
++          finding_ids: [11], links: [<from tellagen_build_source_link>] },
++        { id: "errors", claim: "5xx rose from 0.2% to 8.1% right after", relation_to_previous: "causes",
++          verification: "confirmed", finding_ids: [12],
++          figure: { type: "compare", metric: "5xx rate", unit: "%", better: "lower",
++                    threshold: { value: 1, label: "SLO" },
++                    rows: [{ label: "checkout-api", before: 0.2, after: 8.1 }] } }
++      ]
++    }],
++    ruled_out: [{ label: "Database saturation", explanation: "Pool stayed under 40%", finding_ids: [14], confidence_percent: 80 }],
++    coverage: [
++      { source: "Grafana", state: "checked", step_ids: ["errors"], finding_ids: [12] },
++      { source: "Kubernetes", state: "gap", summary: "No cluster access", finding_ids: [15] }
++    ],
++    unknowns: [{ label: "Why staging did not show it", why: "No staging metrics" }]
+   }
+ )
+ ```
+ 
++### Diagnosis structure
++
++Tellagen builds the Diagnosis tab from this summary. Send it when the pickup response lists `diagnosis_structure_v1` in `server_capabilities` (the MCP removes it for an older Tellagen and says so in `mcp_notice`; do not retry).
++
++- **Chain (`causal_paths`)**: one primary path of 2 to 4 steps. Each step: one-sentence `claim`, `verification`, numeric `finding_ids` from `tellagen_post_finding`, optional `links`, optional `figure`. A confirmed or likely diagnosis with no chain is rejected.
++- **Figure**: ONE block per step, only with numbers you read from a tool result. `compare` for a before and after (with a `threshold` for the SLO), `trend` for a series (`series` of 2 to 500 numbers, `start` with `step_seconds`, and `source` with the query that produced it), `stats` for 2 to 4 key numbers. No number, no figure.
++- **`ruled_out`** (up to 5): the causes you checked and excluded, from your `negative` findings.
++- **`coverage`** (up to 8): one entry per source with `state` `checked`, `gap` (could not read it) or `not_configured`, and the chain `step_ids` it proved.
++- **`unknowns`** (up to 5): what you could not establish and why.
++- **Read the response**: `warnings[]` and a one-line `warnings_summary` come back (for example "2 evidence refs have no link: call tellagen_build_source_link or add a command"). The run is already complete; name anything you could not fix in your report.
++
+ If the investigation fails or times out:
+ 
+ ```
+@@ -158,12 +202,16 @@
+ | `hypothesis` | A proposed explanation | "Null check was removed in PR #456" |
+ | `evidence` | Concrete proof supporting a hypothesis | "Stack trace shows NPE at line 42" |
+ | `recommendation` | Suggested action | "Roll back deployment abc123" |
+-| `negative` | Something you ruled out | "Database performance is normal" |
++| `negative` | Something you ruled out; also one `ruled_out` entry at completion | "Database performance is normal" |
++| `gap` | A required source or check could not be read or satisfied; also a `coverage` entry with state `gap` | "Kubernetes events were unavailable: no namespace access" |
+ 
+ ## Tips
+ 
+ - Start with observations, then look for correlations, form hypotheses, and find evidence
+ - Post negative findings too — knowing what's NOT the cause is valuable
++- Post a `gap` finding for every source you could not read instead of staying silent
++- Call `tellagen_build_source_link` right after a Grafana or GitHub query; a proof with no `links` and no `command` shows "No source link" to responders
++- Cite findings by their numeric `id` in `finding_ids`, never by claim or key
+ - Use confidence levels honestly: 0.9+ for near-certain, 0.5-0.7 for plausible, <0.5 for speculative
+ - Each finding should be atomic — one claim per finding
+ - If no vendor MCP tools are available, use the codebase, logs, and any accessible documentation

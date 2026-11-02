@@ -6,7 +6,7 @@ You have access to the Tellagen MCP server. This guide teaches you how to use it
 
 Tellagen is an incident investigation platform. Your role is to act as an on-call AI investigator: read incidents, gather evidence from observability and source control systems, post structured findings, and promote key findings to the incident timeline so human responders see them in the war room.
 
-## Tools available (39 total)
+## Tools available (43 total)
 
 ### Incidents
 | Tool | Method | What it does |
@@ -24,7 +24,7 @@ Tellagen is an incident investigation platform. Your role is to act as an on-cal
 | `tellagen_get_incident_context` | GET | Read the full context bundle for a run: incident, timeline, scope, connectors, runbooks, prior findings, output schema |
 | `tellagen_pick_up_investigation` | POST | Attach this local agent to a UI-created run and move it from `awaiting_agent` to `running` |
 | `tellagen_post_runbook_check_attempt` | POST | Execute and report one exact check from a negotiated structured v2 runbook plan |
-| `tellagen_post_trace_step` | POST | Write live progress with an immutable exact runbook reference or explicit non-runbook basis |
+| `tellagen_post_trace_step` | POST | Write live progress with an immutable exact runbook reference or explicit non-runbook basis; a finished check also carries `outcome` and `cause_key` |
 | `tellagen_list_trace_steps` | GET | Read prior trace steps for a run before resuming work or completing the investigation |
 | `tellagen_list_runbooks` | GET | List matched runbooks/skills for a run; guidance only, not executable code |
 | `tellagen_list_investigation_runs` | GET | List runs for an incident (shows status, agent info, finding counts) |
@@ -32,7 +32,7 @@ Tellagen is an incident investigation platform. Your role is to act as an on-cal
 | `tellagen_list_investigation_runbook_waivers` | GET | List responder-created check waivers for a run |
 | `tellagen_get_investigation_workspace` | GET | Read the incident investigation workspace: current scope, runs, findings, and related work context |
 | `tellagen_update_investigation_scope` | PATCH | Refine investigation scope as evidence narrows or broadens the suspected blast radius |
-| `tellagen_complete_investigation` | PATCH | Close a run as `completed` or `failed` and include an RCA `result_summary` when possible |
+| `tellagen_complete_investigation` | PATCH | Close a run as `completed` or `failed` and include an RCA `result_summary` when possible: the cause chain, `ruled_out`, `coverage` and `unknowns` (see Diagnosis structure). Returns the backend `warnings[]` and a one-line `warnings_summary` |
 
 ### Findings
 | Tool | Method | What it does |
@@ -67,6 +67,7 @@ Tellagen is an incident investigation platform. Your role is to act as an on-cal
 | `tellagen_list_services` | GET | List configured services so agents use canonical service identifiers |
 | `tellagen_get_service` | GET | Read one service and its metadata |
 | `tellagen_probe_datasource` | GET | Probe a registered metadata-only datasource using local credentials without returning secrets |
+| `tellagen_build_source_link` | GET | Turn a Grafana, GitHub or Kubernetes reference into `links[]` (or a copyable `command`) for an evidence ref; calls only the Tellagen API |
 
 ### MCP diagnostics
 | Tool | Method | What it does |
@@ -127,6 +128,8 @@ Every investigation follows this sequence. Do not skip steps.
 - **Respect the frozen protocol.** Use `tellagen_post_runbook_check_attempt` only for exact checks in a `runbook_plan_v2` pickup. Never turn runbook prose into arbitrary shell execution.
 - **Attribute every trace step.** Copy exact frozen runbook identifiers from `request.skills`, or declare the honest non-runbook origin. Never invent a citation.
 - **Keep a step's basis immutable.** Reuse the same `guidance` object when changing a step from `running` to `done` or `error`.
+- **Keep every finding's numeric `id`.** `tellagen_post_finding` returns `{finding:{id,...}}`. The cause chain, `ruled_out`, `coverage` and `unknowns` cite findings by `finding_ids`, so note the id of each finding as you post it (see Diagnosis structure).
+- **Give every proof a source.** Call `tellagen_build_source_link` for Grafana and GitHub evidence and send the result as `links`; send a `command` for kubectl and other local sources.
 
 When a terminal read-only check reveals a repeatable diagnostic pattern, attach reuse_hint to the done trace/check attempt. Generalize the diagnostic intent and trigger, choose confirmed or falsified, and list parameter names without values. Never hint remediation, mutation, failed/skipped work, incident-specific one-offs, secrets, customer identifiers, URLs, commands, or a check already fully covered by the frozen runbook unless the evidence supports a specific extension. Copy the returned stable evidence identifiers into a qualifying finding when the result materially changes confidence.
 
@@ -300,6 +303,14 @@ Each evidence ref links to a specific data source you queried:
   "truncated": false,
   "verified": true,
   "url": "https://grafana.example.com/explore?...",
+  "links": [
+    {
+      "kind": "logs",
+      "label": "Logs in Grafana Explore",
+      "url": "https://grafana.example.com/explore?left=..."
+    }
+  ],
+  "datasource": "loki-prod",
   "screenshots": [
     {
       "url": "https://grafana.example.com/render/d-solo/abc/checkout?panelId=4&from=now-1h",
@@ -310,6 +321,31 @@ Each evidence ref links to a specific data source you queried:
 ```
 
 Copy lineage identifiers from the completed trace-step response. Always reuse at least one stable shared identifier—`artifact_id`, `artifact_digest`, or `tool_use_id`—and also copy `evidence_fact_key` when returned. Tellagen recomputes the finding fact key from stable evidence fields, then joins the finding to its completed trace step in this order: `evidence_fact_key`, `artifact_id`, `tool_use_id`, `artifact_digest`. Copying `evidence_fact_key` alone is not reliable. Tellagen derives the runbook/non-runbook lineage server-side; do not add an independent guidance claim to a finding, and do not invent identifiers.
+
+#### Links, command and datasource (diagnosis_structure_v1)
+
+Responders open the source of every proof from the Diagnosis tab. Three fields make that possible:
+
+| Field | When to use | Rules |
+|-------|-------------|-------|
+| `links[]` | Whenever the source has a browser address: Grafana Explore, panel or trace, GitHub commit, compare or pull request | Up to 4 `{kind, label, url}`; `kind` is `explore`, `panel`, `diff`, `commit`, `pr`, `logs` or `trace`; `url` is http or https without credentials; `label` is up to 60 characters |
+| `command` | Kubernetes and any local source with no browser address (kubectl, a SQL client, a local script) | A read-only command that reproduces the evidence, up to 1000 characters, no credentials (Tellagen redacts what it finds and drops a longer command) |
+| `datasource` | A Grafana or similar source | The data source name or uid the query ran against |
+
+**Always call `tellagen_build_source_link`** for Grafana and GitHub instead of writing the address yourself, and copy the `links[]` it returns into the ref unchanged:
+
+```
+tellagen_build_source_link(kind: "logs", datasource: "<loki uid>", query: '{app="checkout"} |= "error"', investigation_run_id: <run_id>)
+  → {"links":[{"kind":"logs","label":"Logs in Grafana Explore","url":"https://..."}]}
+tellagen_build_source_link(kind: "commit", repo: "acme/checkout", sha: "abc1234")
+tellagen_build_source_link(kind: "pr", repo: "acme/checkout", pr_number: 4412)
+tellagen_build_source_link(kind: "diff", repo: "acme/checkout", base: "v1.4.0", head: "v1.5.0")
+tellagen_build_source_link(kind: "panel", dashboard_uid: "<uid>", panel_id: 4, investigation_run_id: <run_id>)
+```
+
+With `investigation_run_id` the time range defaults to the incident window; otherwise pass `from` and `to`. For Kubernetes pass `source: "kubernetes"` and a `k8s_url` (or your kubectl text in `query`) and it returns a `command`; it never returns a Kubernetes link. If it reports no Grafana address, say so in `coverage` instead of inventing a link. Keep the older `url` field only for an address you already have from the vendor tool.
+
+The MCP sends these fields only when the pickup response lists `diagnosis_structure_v1` in `server_capabilities`. For an older Tellagen it removes them and adds an `mcp_notice` to the tool result; do not retry.
 
 ### Screenshots
 
@@ -341,6 +377,61 @@ Screenshots are also supported on `tellagen_promote_finding` — attach them so 
 | `gap` | A required source, check, or evidence contract could not be satisfied | "Kubernetes events were unavailable because the local profile lacks namespace access" |
 
 Post early and often. A `hypothesis` with 0.4 confidence is still valuable — it tells responders what you're thinking and what to check.
+
+How the types feed the diagnosis structure:
+
+- **`negative` = ruled out.** Every negative finding that matters becomes one `ruled_out` entry at completion, citing the finding id.
+- **`gap` = you could not see it or could not satisfy it.** Use it for a source you could not read (no access, tool failed, not configured). It becomes a `coverage` entry with state `gap`; a missing integration is `not_configured`.
+- **One finding per chain step.** Post the proof of each step of the cause chain as its own `evidence` finding (with `role: "confirms"` or `"supports"`) and cite its id in that step's `finding_ids`.
+- **`observation` and `evidence` that are not part of the chain are context.** They stay in the evidence ledger; they are not chain steps.
+
+## Diagnosis structure
+
+The Diagnosis tab is built from the `result_summary` you send to `tellagen_complete_investigation`: a verdict, the chain of causes with proof on every step, what was ruled out, which sources were covered, and what stays unknown. Send the structure whenever the pickup response lists `diagnosis_structure_v1` in `server_capabilities`; the MCP removes it for an older Tellagen and says so in `mcp_notice`.
+
+**Cause chain: `causal_paths`.** One primary path of 2 to 4 steps, from the trigger to the customer impact (for example deploy, then pool exhaustion, then 5xx). Each step is one sentence of `claim`, a `verification` (`confirmed`, `likely` or `unknown`), the numeric `finding_ids` that prove it (from `tellagen_post_finding`, never made-up keys), `links` for the whole step when useful, and a `figure`. A confirmed or likely diagnosis with no chain is rejected with a 400, so send the chain.
+
+**Figure: one block per step, only with real numbers.** It is one timeline block object (`resource://tellagen/contracts/runbooks/v2/timeline-event-blocks.schema.json`), validated before the request is sent:
+
+| Use | Block | Rules |
+|-----|-------|-------|
+| A value before and after, with a threshold | `compare` | `rows` of `{label, before, after}` (up to 8), `unit`, `better` (`lower` or `higher`), `threshold` `{value, label}` for the SLO or alert line |
+| A series over time | `trend` | `series` of 2 to 500 numbers, `start` with `step_seconds` together, up to 3 `marks`, and `source` `{kind, datasource, query, step}` naming the query that produced it |
+| 2 to 4 key numbers | `stats` | `items` of `{label, value, caption, tone}`; `value` is text such as `8.1%`; tone is `good`, `warn`, `bad` or `neutral` |
+
+Every number comes from a tool result you can cite. If you do not have the number, leave the `figure` out. A figure is at most 16 KB. Put the unit in `unit`, not in the number.
+
+**Ruled out: `ruled_out`** (up to 5). `{label, explanation, finding_ids, links, confidence_percent}` for each cause you checked and excluded, taken from your `negative` findings.
+
+**Coverage: `coverage`** (up to 8). One entry per source: `{source, state, summary, step_ids, finding_ids, links}`. `state` is `checked` (read and used), `gap` (configured but you could not read it) or `not_configured`. `step_ids` are the ids of the chain steps that source proved.
+
+**Unknowns: `unknowns`** (up to 5). `{label, why, finding_ids}` for what you could not establish, such as "why staging did not show it".
+
+**Trace steps.** When a check finishes, send `outcome` on `tellagen_post_trace_step`: `supports` (it backs the cause), `rules_out`, `nothing_notable`, `inconclusive`, or `unavailable` (the source could not be read; use it with `status: "error"`). Use the same `cause_key` (a short word such as `deploy-4412`) on every check of one cause.
+
+```json
+{
+  "causal_paths": [{
+    "id": "primary", "kind": "primary",
+    "steps": [
+      {"id": "deploy", "claim": "Deploy 4412 shipped at 09:02", "verification": "confirmed",
+       "finding_ids": [11], "links": [{"kind": "commit", "label": "Commit abc1234 on GitHub", "url": "https://github.com/acme/checkout/commit/abc1234"}]},
+      {"id": "errors", "claim": "Checkout 5xx rose from 0.2% to 8.1% right after", "relation_to_previous": "causes", "verification": "confirmed",
+       "finding_ids": [12, 13],
+       "figure": {"type": "compare", "metric": "5xx rate", "unit": "%", "better": "lower", "threshold": {"value": 1, "label": "SLO"},
+                  "rows": [{"label": "checkout-api", "before": 0.2, "after": 8.1}]}}
+    ]
+  }],
+  "ruled_out": [{"label": "Database saturation", "explanation": "Connections stayed under 40% of the pool.", "finding_ids": [14], "confidence_percent": 80}],
+  "coverage": [
+    {"source": "Grafana", "state": "checked", "step_ids": ["errors"], "finding_ids": [12]},
+    {"source": "Kubernetes", "state": "gap", "summary": "No cluster access in this profile", "finding_ids": [15]}
+  ],
+  "unknowns": [{"label": "Why staging did not show it", "why": "No staging metrics are configured"}]
+}
+```
+
+**Read the completion response.** `warnings[]` comes back verbatim from Tellagen and `warnings_summary` groups them in one line, for example "2 evidence refs have no link: call tellagen_build_source_link or add a command". The run is already complete when you read it, so repeat the fix on the next run and name anything you could not fix in your final report. Warnings never fail a completion.
 
 ## Composing with other MCP servers
 
@@ -464,6 +555,8 @@ For a typical sev1/sev2, query sources in this order:
 
 Post findings after each source, not at the end. Your first finding might just be "error rate is elevated" — that's fine. Build the picture incrementally.
 
+For every source in the list: call `tellagen_build_source_link` right after a Grafana or GitHub query and put the result in the finding's `evidence_refs[].links`; add a `command` for kubectl and other local reads; keep the numeric `id` of each posted finding; post a `gap` finding when a source could not be read. At the end send the cause chain, `ruled_out`, `coverage` and `unknowns` (see Diagnosis structure).
+
 ## Promoting to timeline
 
 Not every finding belongs on the timeline. Promote findings that:
@@ -515,3 +608,9 @@ Then immediately start investigating it.
 - **Promoting everything.** The timeline is for key events. A speculative hypothesis with 0.3 confidence doesn't belong there.
 - **Skipping screenshots.** When you have access to Grafana render URLs or captured dashboard images, attach them. A panel screenshot showing the spike is worth more than a text description to a human responder in the war room.
 - **Not using negative findings.** When you rule something out, post a `negative` finding. It prevents other investigators from re-checking the same thing.
+- **Proofs with no source.** An evidence ref for Grafana or GitHub with no `links`, or a Kubernetes check with no `command`, shows "No source link" to responders. Call `tellagen_build_source_link`; do not paste a hand-built address.
+- **Citing keys instead of ids.** `finding_ids` are the numeric ids `tellagen_post_finding` returned. Keys, claims or titles are dropped.
+- **Inventing a figure.** A figure with a number you did not read from a tool result is worse than no figure.
+- **A chain with one step per finding.** Keep the chain to 2 to 4 steps that tell the story; put the rest in the evidence ledger as context findings.
+- **Hiding gaps.** A source you could not read belongs in `coverage` with state `gap` and in a `gap` finding, not in silence.
+- **Retrying because of `mcp_notice`.** It means this Tellagen does not support the diagnosis structure yet; the call already went through without it.
