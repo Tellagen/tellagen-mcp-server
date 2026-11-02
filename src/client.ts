@@ -42,18 +42,25 @@ export class TellagenClient {
     if (!res.ok) {
       let code = "unknown";
       let message = `HTTP ${res.status}`;
+      let payload: Record<string, unknown> | undefined;
       try {
-        const errBody = (await res.json()) as {
-          error?: string;
-          message?: string;
-        };
-        code = errBody.error ?? code;
-        message = errBody.message ?? message;
+        const candidate = (await res.json()) as unknown;
+        if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+          payload = candidate as Record<string, unknown>;
+          if (typeof payload.code === "string") {
+            code = payload.code;
+          } else if (typeof payload.error === "string") {
+            code = payload.error;
+          }
+          if (typeof payload.message === "string") {
+            message = payload.message;
+          }
+        }
       } catch {
         // Response was not JSON — use status text.
         message = res.statusText || message;
       }
-      throw new TellagenAPIError(res.status, code, message);
+      throw new TellagenAPIError(res.status, code, message, payload);
     }
 
     return (await res.json()) as T;

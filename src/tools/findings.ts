@@ -25,32 +25,90 @@ const screenshotSchema = z.object({
     .describe("Description of what the screenshot shows"),
 });
 
-const evidenceRefSchema = z.object({
-  source: z
-    .string()
-    .min(1)
-    .describe(
-      'System name (e.g., "grafana-loki", "github", "pagerduty", "codebase")',
-    ),
-  query: z
-    .string()
-    .optional()
-    .describe("Query or command used to gather this evidence"),
-  result_summary: z
-    .string()
-    .min(1)
-    .describe("What the query returned — summarize the key data"),
-  url: z
-    .string()
-    .optional()
-    .describe("Deep link to the source (e.g., Grafana explore URL, GitHub commit)"),
-  screenshots: z
-    .array(screenshotSchema)
-    .optional()
-    .describe(
-      "Screenshots related to this evidence (e.g., Grafana dashboard panel showing the spike)",
-    ),
-});
+const evidenceRefSchema = z
+  .object({
+    source: z
+      .string()
+      .min(1)
+      .describe(
+        'System name (e.g., "grafana-loki", "github", "pagerduty", "codebase")',
+      ),
+    query: z
+      .string()
+      .optional()
+      .describe("Query or command used to gather this evidence"),
+    result_summary: z
+      .string()
+      .min(1)
+      .describe("What the query returned — summarize the key data"),
+    result_sample: z
+      .string()
+      .optional()
+      .describe(
+        "Short redacted sample output or log lines that support the summary; keep it safe to show inline in Tellagen",
+      ),
+    url: z
+      .string()
+      .optional()
+      .describe(
+        "Deep link to the source (e.g., Grafana explore URL, GitHub commit)",
+      ),
+    tool_use_id: z
+      .string()
+      .optional()
+      .describe("Exact tool_use_id returned by the completed trace step"),
+    artifact_id: z
+      .string()
+      .optional()
+      .describe("Exact artifact_id returned by the completed trace step"),
+    artifact_digest: z
+      .string()
+      .optional()
+      .describe("Exact artifact_digest returned by the completed trace step"),
+    evidence_fact_key: z
+      .string()
+      .optional()
+      .describe(
+        "Exact evidence_fact_key returned by the completed trace step; copy it together with artifact_id, artifact_digest, or tool_use_id",
+      ),
+    captured_at: z
+      .string()
+      .datetime()
+      .optional()
+      .describe("ISO timestamp when the evidence was captured"),
+    result_bytes: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Size in bytes of the underlying result"),
+    truncated: z
+      .boolean()
+      .optional()
+      .describe("Whether the evidence result was truncated"),
+    verified: z
+      .boolean()
+      .optional()
+      .describe("Whether the evidence was independently verified"),
+    screenshots: z
+      .array(screenshotSchema)
+      .optional()
+      .describe(
+        "Screenshots related to this evidence (e.g., Grafana dashboard panel showing the spike)",
+      ),
+  })
+  .refine(
+    (ref) =>
+      !ref.evidence_fact_key ||
+      [ref.artifact_id, ref.artifact_digest, ref.tool_use_id].some(
+        (value) => typeof value === "string" && value.trim().length > 0,
+      ),
+    {
+      message:
+        "evidence_fact_key must be accompanied by artifact_id, artifact_digest, or tool_use_id",
+      path: ["evidence_fact_key"],
+    },
+  );
 
 export function registerFindingTools(
   server: McpServer,
@@ -75,9 +133,16 @@ export function registerFindingTools(
             "evidence",
             "recommendation",
             "negative",
+            "gap",
           ])
           .describe(
-            "Type of finding: observation (notable data), correlation (two related things), hypothesis (proposed cause), evidence (proof), recommendation (suggested action), negative (ruled out)",
+            "Type of finding: observation (notable data), correlation (two related things), hypothesis (proposed cause), evidence (proof), recommendation (suggested action), negative (ruled out), gap (required evidence or source was unavailable)",
+          ),
+        role: z
+          .enum(["confirms", "supports", "contradicts", "gap"])
+          .optional()
+          .describe(
+            "How this finding relates to the current diagnosis. Use gap when a required source, check, or evidence contract could not be satisfied.",
           ),
         claim: z
           .string()
@@ -104,7 +169,7 @@ export function registerFindingTools(
           .array(evidenceRefSchema)
           .optional()
           .describe(
-            "References to evidence sources consulted. Include deep links in url where possible.",
+            "References to evidence sources consulted. Reuse artifact_id, artifact_digest, or tool_use_id returned by the completed trace step, together with evidence_fact_key when returned, so Tellagen can derive finding-to-runbook lineage. Do not submit evidence_fact_key alone. Include deep links in url where possible.",
           ),
         screenshots: z
           .array(screenshotSchema)
@@ -118,6 +183,7 @@ export function registerFindingTools(
       incident_id,
       investigation_run_id,
       finding_type,
+      role,
       claim,
       evidence_summary,
       confidence,
@@ -135,6 +201,7 @@ export function registerFindingTools(
           confidence_reason,
           evidence_refs: evidence_refs ?? [],
         };
+        if (role !== undefined) reqBody.role = role;
         if (screenshots !== undefined) reqBody.screenshots = screenshots;
         const data = await client.post(
           `/api/v1/incidents/${incident_id}/findings`,

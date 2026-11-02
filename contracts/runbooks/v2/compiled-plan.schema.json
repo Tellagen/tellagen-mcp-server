@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tellagen.dev/contracts/runbooks/v2/compiled-plan.schema.json",
+  "title": "Tellagen compiled investigation runbook plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "entry_check_ids",
+    "source_requirements",
+    "checks",
+    "escalation",
+    "completion"
+  ],
+  "properties": {
+    "schema_version": {"const": "v2"},
+    "entry_check_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {"$ref": "runbook-definition.schema.json#/$defs/stableID"}
+    },
+    "source_requirements": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {"$ref": "runbook-definition.schema.json#/$defs/sourceRequirement"}
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {"$ref": "runbook-definition.schema.json#/$defs/check"}
+    },
+    "escalation": {"$ref": "runbook-definition.schema.json#/$defs/escalation"},
+    "remediation": {"$ref": "runbook-definition.schema.json#/$defs/remediation"},
+    "completion": {"$ref": "runbook-definition.schema.json#/$defs/completion"}
+  }
+}

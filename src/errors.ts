@@ -4,6 +4,7 @@ export class TellagenAPIError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
+    public readonly payload?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "TellagenAPIError";
@@ -14,6 +15,7 @@ export class TellagenAPIError extends Error {
 export function formatError(err: unknown): string {
   if (err instanceof TellagenAPIError) {
     return JSON.stringify({
+      ...(err.payload ?? {}),
       error: true,
       status: err.status,
       code: err.code,

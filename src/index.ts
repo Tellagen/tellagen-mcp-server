@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { TellagenClient } from "./client.js";
-import { validateAuth } from "./auth.js";
-import { createServer } from "./server.js";
+import { startTellagenServer } from "./start.js";
 
 async function main(): Promise<void> {
   const apiKey = process.env.TELLAGEN_API_KEY;
@@ -22,13 +21,8 @@ async function main(): Promise<void> {
   }
 
   const client = new TellagenClient({ apiUrl, apiKey });
-
-  // Validate credentials before starting the server.
-  await validateAuth(client);
-
-  const server = createServer(client);
   const transport = new StdioServerTransport();
-  await server.connect(transport);
+  await startTellagenServer(client, transport);
 }
 
 main().catch((err) => {

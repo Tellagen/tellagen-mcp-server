@@ -99,8 +99,17 @@ export function registerIncidentTools(
     "tellagen_create_incident",
     {
       description:
-        "Create a new incident in Tellagen. Returns the created incident with its ID and details.",
+        "Create a new incident in Tellagen. Use title for the editable display title, short_title only for the ID/Slack slug, and impact_summary for the separate impact narrative. Returns the created incident with its ID and details.",
       inputSchema: {
+        title: z
+          .string()
+          .trim()
+          .min(1)
+          .max(160)
+          .optional()
+          .describe(
+            "Canonical editable incident display title. Recommended for every new incident",
+          ),
         service: z
           .string()
           .max(128)
@@ -118,7 +127,9 @@ export function registerIncidentTools(
           .string()
           .max(12)
           .optional()
-          .describe("Short incident slug used in the Tellagen human ID"),
+          .describe(
+            "Short slug used in the Tellagen human ID and Slack channel name; not the display title",
+          ),
         gist: z
           .string()
           .max(12)
@@ -129,12 +140,32 @@ export function registerIncidentTools(
           .url()
           .optional()
           .describe("Runbook or postmortem URL"),
+        impact_summary: z
+          .string()
+          .optional()
+          .describe(
+            "Customer or operational impact narrative, distinct from the incident title",
+          ),
         team_id: z
           .number()
           .int()
           .positive()
           .optional()
           .describe("Owning team ID"),
+        issue_type: z
+          .string()
+          .optional()
+          .describe(
+            "Lifecycle classification, for example incident, ticket, or postmortem",
+          ),
+        status: z
+          .string()
+          .optional()
+          .describe("Initial configured workflow status"),
+        severity_mode: z
+          .enum(["auto", "manual"])
+          .optional()
+          .describe("Whether severity is automatic or manually selected"),
         create_slack_channel: z
           .boolean()
           .optional()
@@ -152,7 +183,9 @@ export function registerIncidentTools(
           if (value === undefined || key === "gist") {
             continue;
           }
-          if (key === "short_title") {
+          if (key === "title" && typeof value === "string") {
+            body.title = value.trim();
+          } else if (key === "short_title") {
             body.short_title = value;
           } else {
             body[key] = value;
@@ -178,9 +211,16 @@ export function registerIncidentTools(
     "tellagen_update_incident",
     {
       description:
-        "Update incident fields that are useful during investigation: status, severity, impact summary, links, and key timestamps.",
+        "Update incident fields that are useful during investigation: display title, status, severity, impact summary, links, and key timestamps.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
+        title: z
+          .string()
+          .trim()
+          .min(1)
+          .max(160)
+          .optional()
+          .describe("Editable incident display title"),
         service: z.string().optional(),
         regions: z.array(z.string()).optional(),
         severity: z.string().optional(),
@@ -189,6 +229,13 @@ export function registerIncidentTools(
         doc_url: z.string().url().optional(),
         status: z.string().optional(),
         issue_type: z.string().optional(),
+        team_id: z
+          .number()
+          .int()
+          .positive()
+          .nullable()
+          .optional()
+          .describe("Owning team ID, or null to remove the assignment"),
         severity_mode: z.string().optional(),
         impact_summary: z.string().optional(),
         impact_started_at: z
