@@ -2,6 +2,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { TellagenClient } from "../client.js";
 import { formatError } from "../errors.js";
+import {
+  evidenceRefStructureShape,
+  stripFindingEvidenceStructure,
+  supportsDiagnosisStructure,
+  unsupportedNotice,
+} from "../diagnosis-structure.js";
 
 const screenshotSchema = z.object({
   url: z
@@ -90,6 +96,7 @@ const evidenceRefSchema = z
       .boolean()
       .optional()
       .describe("Whether the evidence was independently verified"),
+    ...evidenceRefStructureShape,
     screenshots: z
       .array(screenshotSchema)
       .optional()
@@ -118,7 +125,7 @@ export function registerFindingTools(
     "tellagen_post_finding",
     {
       description:
-        "Post a structured finding to an active investigation run on a Tellagen incident. Post findings incrementally as you discover them — do not batch.",
+        "Post a structured finding to an active investigation run on a Tellagen incident. Post findings incrementally as you discover them — do not batch. The response is {finding:{id,...}}: keep the numeric id, because causal_paths steps, ruled_out, coverage and unknowns cite findings by finding_ids when you complete the run.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
         investigation_run_id: z
@@ -169,7 +176,7 @@ export function registerFindingTools(
           .array(evidenceRefSchema)
           .optional()
           .describe(
-            "References to evidence sources consulted. Reuse artifact_id, artifact_digest, or tool_use_id returned by the completed trace step, together with evidence_fact_key when returned, so Tellagen can derive finding-to-runbook lineage. Do not submit evidence_fact_key alone. Include deep links in url where possible.",
+            "References to evidence sources consulted. Reuse artifact_id, artifact_digest, or tool_use_id returned by the completed trace step, together with evidence_fact_key when returned, so Tellagen can derive finding-to-runbook lineage. Do not submit evidence_fact_key alone. Add links (from tellagen_build_source_link) for Grafana and GitHub sources and a command for kubectl and other local sources, so every ref opens its source.",
           ),
         screenshots: z
           .array(screenshotSchema)
@@ -203,12 +210,32 @@ export function registerFindingTools(
         };
         if (role !== undefined) reqBody.role = role;
         if (screenshots !== undefined) reqBody.screenshots = screenshots;
+        // links, command and datasource go only to a backend that advertises
+        // diagnosis_structure_v1; an older one would drop them silently.
+        let notice: string | undefined;
+        const stripped = stripFindingEvidenceStructure(reqBody.evidence_refs);
+        if (
+          stripped.removed.length > 0 &&
+          !(await supportsDiagnosisStructure(client, investigation_run_id))
+        ) {
+          reqBody.evidence_refs = stripped.refs;
+          notice = unsupportedNotice(stripped.removed);
+        }
         const data = await client.post(
           `/api/v1/incidents/${incident_id}/findings`,
           reqBody,
         );
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(data) }],
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(
+                notice && data && typeof data === "object" && !Array.isArray(data)
+                  ? { ...(data as Record<string, unknown>), mcp_notice: notice }
+                  : data,
+              ),
+            },
+          ],
         };
       } catch (err) {
         return {

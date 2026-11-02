@@ -6,4 +6,5 @@ export const INVESTIGATION_PROTOCOL_CAPABILITIES = [
   "finding_roles_v2",
   "gap_findings_v2",
   "completion_coverage_v2",
+  "diagnosis_structure_v1",
 ] as const;

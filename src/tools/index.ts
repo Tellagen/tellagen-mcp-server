@@ -9,6 +9,7 @@ import { registerDatasourceTools } from "./datasources.js";
 import { registerDiagnosticTools } from "./diagnostics.js";
 import { registerPostmortemRunbookTools } from "./postmortem-runbooks.js";
 import { registerFigureTools } from "./figures.js";
+import { registerSourceLinkTools } from "./source-links.js";
 
 /** Register all Tellagen MCP tools on the server. */
 export function registerAllTools(
@@ -24,4 +25,5 @@ export function registerAllTools(
   registerDiagnosticTools(server, client);
   registerPostmortemRunbookTools(server, client);
   registerFigureTools(server);
+  registerSourceLinkTools(server, client);
 }
