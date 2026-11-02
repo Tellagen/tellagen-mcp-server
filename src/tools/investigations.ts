@@ -6,6 +6,18 @@ import {
   INVESTIGATION_PROTOCOL_CAPABILITIES,
   MCP_SERVER_VERSION,
 } from "../version.js";
+import {
+  evidenceRefStructureShape,
+  rememberServerCapabilities,
+  resultStructureShape,
+  stepStructureShape,
+  stripResultStructure,
+  stripTraceStructure,
+  summarizeWarnings,
+  supportsDiagnosisStructure,
+  traceStructureShape,
+  unsupportedNotice,
+} from "../diagnosis-structure.js";
 
 const resultEvidenceRefSchema = z.object({
   source: z.string().min(1),
@@ -22,6 +34,7 @@ const resultEvidenceRefSchema = z.object({
   truncated: z.boolean().optional(),
   captured_at: z.string().datetime().optional(),
   verified: z.boolean().optional(),
+  ...evidenceRefStructureShape,
 });
 
 const resultAssessmentSchema = z.object({
@@ -82,6 +95,7 @@ const resultCausalPathSchema = z.object({
       verification: z.enum(["confirmed", "likely", "unknown"]),
       confidence_percent: z.number().int().min(0).max(100).optional(),
       evidence_refs: z.array(resultEvidenceRefSchema).optional(),
+      ...stepStructureShape,
     }),
   ),
 });
@@ -150,6 +164,7 @@ const resultSummarySchema = z
     impact: resultImpactSchema.optional(),
     causal_paths: z.array(resultCausalPathSchema).optional(),
     recommended_actions: z.array(resultRecommendedActionSchema).optional(),
+    ...resultStructureShape,
   })
   .describe("Structured RCA summary shown in Tellagen when the run completes");
 
@@ -248,6 +263,14 @@ function requireReuseHintEcho(
       "Tellagen did not persist the submitted reuse_hint; update the backend before retrying",
     );
   }
+}
+
+/** Adds a one-line `mcp_notice` to an object response when fields were dropped. */
+function withNotice(data: unknown, notice: string | undefined): unknown {
+  if (!notice || typeof data !== "object" || data === null || Array.isArray(data)) {
+    return data;
+  }
+  return { ...(data as Record<string, unknown>), mcp_notice: notice };
 }
 
 function pickupClientName() {
@@ -498,6 +521,7 @@ export function registerInvestigationTools(
         const data = await client.get(
           `/api/v1/investigations/${investigation_run_id}/context`,
         );
+        rememberServerCapabilities(client, investigation_run_id, data);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(data) }],
         };
@@ -539,6 +563,7 @@ export function registerInvestigationTools(
             protocol_capabilities: [...INVESTIGATION_PROTOCOL_CAPABILITIES],
           },
         );
+        rememberServerCapabilities(client, investigation_run_id, data);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(data) }],
         };
@@ -674,6 +699,7 @@ export function registerInvestigationTools(
         result_bytes: z.number().int().min(0).optional(),
         truncated: z.boolean().optional(),
         guidance: investigationGuidanceSchema,
+        ...traceStructureShape,
         error: z.string().optional(),
         started_at: z
           .string()
@@ -705,6 +731,8 @@ export function registerInvestigationTools(
       result_bytes,
       truncated,
       guidance,
+      outcome,
+      cause_key,
       error,
       started_at,
       completed_at,
@@ -741,15 +769,30 @@ export function registerInvestigationTools(
         if (started_at !== undefined) body.started_at = started_at;
         if (completed_at !== undefined) body.completed_at = completed_at;
         if (duration_ms !== undefined) body.duration_ms = duration_ms;
+        if (outcome !== undefined) body.outcome = outcome;
+        if (cause_key !== undefined) body.cause_key = cause_key;
+        // outcome and cause_key go only to a backend that advertises
+        // diagnosis_structure_v1; an older one would drop them silently.
+        let sendBody = body;
+        let notice: string | undefined;
+        if (outcome !== undefined || cause_key !== undefined) {
+          if (!(await supportsDiagnosisStructure(client, investigation_run_id))) {
+            const stripped = stripTraceStructure(body);
+            sendBody = stripped.body;
+            notice = unsupportedNotice(stripped.removed);
+          }
+        }
         const data = await client.post<{
           steps?: Array<{ reuse_hint?: unknown }>;
         }>(
           `/api/v1/investigation-runs/${investigation_run_id}/trace`,
-          body,
+          sendBody,
         );
         requireReuseHintEcho(reuse_hint, data.steps?.[0]?.reuse_hint);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(data) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(withNotice(data, notice)) },
+          ],
         };
       } catch (err) {
         return {
@@ -969,7 +1012,7 @@ export function registerInvestigationTools(
     "tellagen_complete_investigation",
     {
       description:
-        'Complete or fail an investigation run. Set status to "completed" when done, or "failed" with a failure_reason if the investigation could not finish. Include result_summary for the shared RCA record whenever possible.',
+        'Complete or fail an investigation run. Set status to "completed" when done, or "failed" with a failure_reason if the investigation could not finish. Include result_summary for the shared RCA record whenever possible: causal_paths (2 to 4 steps, each citing finding_ids and a figure), ruled_out, coverage and unknowns. The response carries the backend warnings[] verbatim plus a one-line warnings_summary; read it and name anything you could not fix in your report.',
       inputSchema: {
         run_id: z.string().min(1).describe("Investigation run ID"),
         status: z
@@ -1003,15 +1046,31 @@ export function registerInvestigationTools(
         if (mitigation_state) {
           body.mitigation_state = mitigation_state;
         }
+        let notice: string | undefined;
         if (result_summary !== undefined) {
           body.result_summary = result_summary;
+          // The chain, ruled out, coverage and unknowns go only to a backend
+          // that advertises diagnosis_structure_v1.
+          const stripped = stripResultStructure(result_summary);
+          if (
+            stripped.removed.length > 0 &&
+            !(await supportsDiagnosisStructure(client, run_id))
+          ) {
+            body.result_summary = stripped.summary;
+            notice = unsupportedNotice(stripped.removed);
+          }
         }
-        const data = await client.patch(
+        const data = await client.patch<Record<string, unknown>>(
           `/api/v1/investigations/${run_id}`,
           body,
         );
+        const out: Record<string, unknown> = { ...data };
+        const summary = summarizeWarnings(data.warnings);
+        if (summary) out.warnings_summary = summary;
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(data) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(withNotice(out, notice)) },
+          ],
         };
       } catch (err) {
         return {
