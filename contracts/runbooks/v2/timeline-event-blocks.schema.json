@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tellagen.dev/contracts/timeline/v2/timeline-event-blocks.schema.json",
+  "title": "Tellagen timeline event blocks",
+  "description": "The blocks field of a timeline event: typed widgets that hold the numbers behind a note. Send it with the REST timeline create (POST /api/v1/incidents/{id}/timeline) or update (PATCH /api/v1/timeline/{id}); the MCP tools tellagen_post_timeline_event and tellagen_update_timeline_event pass it through. The server validates every block and answers one bad block with 400 invalid_block, a message, the path of the first bad field in field and up to ten bad fields in details.errors. An update that sends blocks replaces the whole array; [] removes them; leaving the field out keeps them. Strings are trimmed, one line and free of control characters (only source.query may hold line breaks). Numbers are finite and between -1e12 and 1e12. An event carries at most 12 blocks and 64 KB of block JSON.",
+  "x-guidance": [
+    "Put the few numbers a responder scans for in one stats block: at most four, each with a short label, a value, a caption that says what it is measured on, and a tone.",
+    "Use a compare block for a metric that has a value before, a value after and a threshold (an SLO or alert line). Give the unit, say which direction is better, and put one row per host, route or query.",
+    "Use a trend block for a series over time. Send start and step_seconds together, reduce the range to at most 500 points, add at most three marks for the events that explain the shape, and fill source with the query that produced the series (kind, datasource, query, step, and artifact_id when you have it).",
+    "Use a table block for a ranked list (top queries, failing routes), a checks block for a recovery checklist with a result per check, and a changes block for a value that moved from one thing to another.",
+    "Tone is a meaning, not decoration: good for a figure that is healthy or recovered, warn for one that needs attention, bad for one that is failing, neutral or no tone for a plain fact. Never use tone to emphasise.",
+    "A block owns its numbers. Do not repeat in the note a number that a block already shows; the note says what happened and why, the block says how much.",
+    "Never invent a number. Every value comes from a tool result you can cite; if you do not have it, leave that figure, row or block out. Write values as measured and keep units in the unit field, not in the number.",
+    "Place a block above the note with slot: summary, or under a heading of the note with anchor: the exact heading text (for example Verified outcome). Do not send both. Leave both out to place the block after the note.",
+    "Set postmortem: false only for a block that should stay out of the postmortem; leave the field out otherwise.",
+    "When the API answers 400 invalid_block, read field and details.errors, fix exactly those fields and send the event again once. Do not drop a block to get past an error unless the data it holds is not real."
+  ],
+  "type": "array",
+  "maxItems": 12,
+  "items": {"$ref": "#/$defs/block"},
+  "$defs": {
+    "block": {
+      "oneOf": [
+        {"$ref": "#/$defs/stats"},
+        {"$ref": "#/$defs/compare"},
+        {"$ref": "#/$defs/trend"},
+        {"$ref": "#/$defs/table"},
+        {"$ref": "#/$defs/checks"},
+        {"$ref": "#/$defs/changes"}
+      ]
+    },
+    "slot": {"const": "summary", "description": "Draws the block above the note. Not together with anchor."},
+    "anchor": {"type": "string", "maxLength": 80, "description": "The text of a heading in the note; the block sits under it, or after the note when the heading is missing. Not together with slot."},
+    "postmortem": {"type": "boolean", "description": "false keeps the block out of the postmortem; absent means included."},
+    "number": {"type": "number", "minimum": -1000000000000, "maximum": 1000000000000},
+    "threshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value"],
+      "properties": {
+        "value": {"$ref": "#/$defs/number"},
+        "label": {"type": "string", "maxLength": 80}
+      }
+    },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "items"],
+      "properties": {
+        "type": {"const": "stats"},
+        "slot": {"$ref": "#/$defs/slot"},
+        "anchor": {"$ref": "#/$defs/anchor"},
+        "postmortem": {"$ref": "#/$defs/postmortem"},
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "value"],
+            "properties": {
+              "label": {"type": "string", "minLength": 1, "maxLength": 48},
+              "value": {"type": "string", "minLength": 1, "maxLength": 32},
+              "caption": {"type": "string", "maxLength": 64},
+              "tone": {"enum": ["good", "warn", "bad", "neutral"]}
+            }
+          }
+        }
+      }
+    },
+    "compare": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "rows"],
+      "properties": {
+        "type": {"const": "compare"},
+        "slot": {"$ref": "#/$defs/slot"},
+        "anchor": {"$ref": "#/$defs/anchor"},
+        "postmortem": {"$ref": "#/$defs/postmortem"},
+        "title": {"type": "string", "maxLength": 80},
+        "metric": {"type": "string", "maxLength": 32},
+        "unit": {"type": "string", "maxLength": 12},
+        "better": {"enum": ["lower", "higher"]},
+        "delta": {"enum": ["rel", "abs"]},
+        "max": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000000000000},
+        "threshold": {"$ref": "#/$defs/threshold"},
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "before", "after"],
+            "properties": {
+              "label": {"type": "string", "minLength": 1, "maxLength": 80},
+              "mono": {"type": "boolean"},
+              "before": {"$ref": "#/$defs/number"},
+              "after": {"$ref": "#/$defs/number"},
+              "details": {
+                "type": "array",
+                "maxItems": 3,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["label", "before", "after"],
+                  "properties": {
+                    "label": {"type": "string", "minLength": 1, "maxLength": 32},
+                    "before": {"type": "string", "minLength": 1, "maxLength": 32},
+                    "after": {"type": "string", "minLength": 1, "maxLength": 32}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "trend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "series"],
+      "dependentRequired": {"start": ["step_seconds"], "step_seconds": ["start"]},
+      "properties": {
+        "type": {"const": "trend"},
+        "slot": {"$ref": "#/$defs/slot"},
+        "anchor": {"$ref": "#/$defs/anchor"},
+        "postmortem": {"$ref": "#/$defs/postmortem"},
+        "title": {"type": "string", "maxLength": 80},
+        "unit": {"type": "string", "maxLength": 12},
+        "series": {"type": "array", "minItems": 2, "maxItems": 500, "items": {"$ref": "#/$defs/number"}},
+        "start": {"type": "string", "format": "date-time"},
+        "step_seconds": {"type": "integer", "minimum": 1, "maximum": 86400},
+        "max": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000000000000},
+        "threshold": {"$ref": "#/$defs/threshold"},
+        "marks": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["i", "label"],
+            "properties": {
+              "i": {"type": "integer", "minimum": 0, "description": "An index into series."},
+              "label": {"type": "string", "minLength": 1, "maxLength": 48}
+            }
+          }
+        },
+        "source": {
+          "type": "object",
+          "description": "Provenance only. The series stays in series.",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {"type": "string", "maxLength": 80},
+            "datasource": {"type": "string", "maxLength": 80},
+            "query": {"type": "string", "maxLength": 2000},
+            "from": {"type": "string", "maxLength": 80},
+            "to": {"type": "string", "maxLength": 80},
+            "step": {"type": "string", "maxLength": 80},
+            "artifact_id": {"type": "string", "maxLength": 80}
+          }
+        }
+      }
+    },
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "columns", "rows"],
+      "properties": {
+        "type": {"const": "table"},
+        "slot": {"$ref": "#/$defs/slot"},
+        "anchor": {"$ref": "#/$defs/anchor"},
+        "postmortem": {"$ref": "#/$defs/postmortem"},
+        "title": {"type": "string", "maxLength": 80},
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label"],
+            "properties": {"label": {"type": "string", "minLength": 1, "maxLength": 80}}
+          }
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["cells"],
+            "properties": {
+              "cells": {
+                "type": "array",
+                "description": "Exactly one text per column; a cell may be an empty string.",
+                "items": {"type": "string", "maxLength": 64}
+              }
+            }
+          }
+        }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "items"],
+      "properties": {
+        "type": {"const": "checks"},
+        "slot": {"$ref": "#/$defs/slot"},
+        "anchor": {"$ref": "#/$defs/anchor"},
+        "postmortem": {"$ref": "#/$defs/postmortem"},
+        "title": {"type": "string", "maxLength": 80},
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "state"],
+            "properties": {
+              "label": {"type": "string", "minLength": 1, "maxLength": 80},
+              "state": {"enum": ["pass", "fail", "pending", "skipped"]},
+              "detail": {"type": "string", "maxLength": 160}
+            }
+          }
+        }
+      }
+    },
+    "changes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "rows"],
+      "properties": {
+        "type": {"const": "changes"},
+        "slot": {"$ref": "#/$defs/slot"},
+        "anchor": {"$ref": "#/$defs/anchor"},
+        "postmortem": {"$ref": "#/$defs/postmortem"},
+        "title": {"type": "string", "maxLength": 80},
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label"],
+            "anyOf": [{"required": ["from"]}, {"required": ["to"]}],
+            "properties": {
+              "label": {"type": "string", "minLength": 1, "maxLength": 80},
+              "from": {"type": "string", "maxLength": 80},
+              "to": {"type": "string", "maxLength": 80},
+              "note": {"type": "string", "maxLength": 160}
+            }
+          }
+        }
+      }
+    }
+  }
+}

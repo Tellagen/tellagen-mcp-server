@@ -107,5 +107,38 @@ export function createServer(client: TellagenClient): McpServer {
 
   registerFigureResource(server);
 
+  // The figure of a causal step is one timeline block; the contract (with its
+  // x-guidance for stats, compare and trend) is readable by the agent.
+  const timelineBlocksContract = readFileSync(
+    join(
+      dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "contracts",
+      "runbooks",
+      "v2",
+      "timeline-event-blocks.schema.json",
+    ),
+    "utf-8",
+  );
+  server.registerResource(
+    "timeline-event-blocks-v2",
+    "resource://tellagen/contracts/runbooks/v2/timeline-event-blocks.schema.json",
+    {
+      title: "Tellagen Timeline Event Blocks Contract",
+      description:
+        "JSON Schema for timeline blocks (stats, compare, trend, ...). A causal step figure in tellagen_complete_investigation is one stats, compare or trend block of this contract.",
+      mimeType: "application/schema+json",
+    },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "application/schema+json",
+          text: timelineBlocksContract,
+        },
+      ],
+    }),
+  );
+
   return server;
 }

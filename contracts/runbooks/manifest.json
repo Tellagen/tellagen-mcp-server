@@ -1,6 +1,6 @@
 {
-  "contract_version": "2026-08-29.1",
-  "bundle_sha256": "ebc34f238671403c2350ed796c9048f97aad2999c26c6943d697a5d719c9b39b",
+  "contract_version": "2026-11-01.1",
+  "bundle_sha256": "a93a6c62a169c0d10ccefccf53e582bf593aa71c61af2666cd82880b05911b45",
   "bundle_digest_algorithm": "sha256(sorted(path + NUL + file_sha256 + LF))",
   "files": [
     {
@@ -24,9 +24,24 @@
       "bytes": 1885
     },
     {
+      "path": "v2/fixtures/timeline-event-blocks-rejected.json",
+      "sha256": "059d4c82802c86984222a55b7bc2dc404aaa63a0dc9713fe91af8fc24bb15362",
+      "bytes": 2744
+    },
+    {
+      "path": "v2/fixtures/timeline-event-with-blocks.json",
+      "sha256": "944f8fcaaaacd81c2f2b0d42bd5e3baa32c26c33ce04d71a0187968158d2a7fe",
+      "bytes": 3361
+    },
+    {
       "path": "v2/runbook-definition.schema.json",
       "sha256": "d6db0e9e0f2cfd1ab79ab98927a2be905353937d443c8bb780b7b85f9682cecc",
       "bytes": 14750
+    },
+    {
+      "path": "v2/timeline-event-blocks.schema.json",
+      "sha256": "f4557475589c86a3f98e4e02479c013c34eafe9277367209b6fb5658a69f5a3b",
+      "bytes": 12055
     }
   ]
 }
