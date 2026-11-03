@@ -1,0 +1,58 @@
+{
+  "schema_version": "v2",
+  "match": {
+    "scope": "service",
+    "services": ["checkout-api"],
+    "tags": ["payments"],
+    "symptoms": ["5xx", "latency"],
+    "severities": ["sev1", "sev2"],
+    "priority": 80
+  },
+  "source_requirements": [
+    {
+      "id": "runtime-errors",
+      "source_key": "grafana",
+      "capabilities": ["prometheus:query"],
+      "required": true,
+      "on_unavailable": {"action": "record_gap"}
+    }
+  ],
+  "entry_check_ids": ["check-error-rate"],
+  "checks": [
+    {
+      "id": "check-error-rate",
+      "intent": "Determine whether user-facing 5xx increased",
+      "source_requirement_id": "runtime-errors",
+      "safety": "read_only",
+      "invocation": {
+        "kind": "query",
+        "capability": "prometheus:query",
+        "template": "sum(rate(http_requests_total{service=\"{{service}}\",status_class=\"5xx\"}[{{rate_window}}]))",
+        "parameters": {
+          "service": {"type": "string", "source": "incident.service"},
+          "rate_window": {"type": "duration", "value": "5m"},
+          "time_range": {"type": "time_range", "source": "incident.time_range", "target": "request.range"}
+        },
+        "bounds": {"lookback": "30m", "step": "30s", "max_points": 1000}
+      },
+      "evidence_contract": {
+        "kind": "timeseries",
+        "required_fields": ["query", "time_range", "result_summary"]
+      },
+      "confirms_when": "5xx exceeds baseline and aligns with incident start",
+      "falsifies_when": "5xx remains at baseline",
+      "on_confirm": [],
+      "on_falsify": [],
+      "on_error": {"action": "record_gap"}
+    }
+  ],
+  "escalation": {
+    "when": "Required evidence is unavailable or customer impact increases",
+    "target": "service owner"
+  },
+  "completion": {
+    "required_check_ids": ["check-error-rate"],
+    "allow_inconclusive": true,
+    "require_gap_reason_for_skips": true
+  }
+}

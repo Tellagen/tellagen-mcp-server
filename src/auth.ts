@@ -12,7 +12,8 @@ interface AuthMeResponse {
 }
 
 /**
- * Validate the API key on startup by calling /api/v1/auth/me.
+ * Validate the API key explicitly by calling /api/v1/auth/me.
+ * MCP startup intentionally does not call this function.
  * Throws if the key is invalid or the API is unreachable.
  */
 export async function validateAuth(client: TellagenClient): Promise<void> {

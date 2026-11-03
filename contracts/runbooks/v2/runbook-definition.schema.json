@@ -1,0 +1,377 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tellagen.dev/contracts/runbooks/v2/runbook-definition.schema.json",
+  "title": "Tellagen structured investigation runbook definition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "match",
+    "source_requirements",
+    "entry_check_ids",
+    "checks",
+    "escalation",
+    "completion"
+  ],
+  "properties": {
+    "schema_version": {"const": "v2"},
+    "match": {"$ref": "#/$defs/matcher"},
+    "source_requirements": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {"$ref": "#/$defs/sourceRequirement"}
+    },
+    "entry_check_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/stableID"}
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {"$ref": "#/$defs/check"}
+    },
+    "escalation": {"$ref": "#/$defs/escalation"},
+    "remediation": {"$ref": "#/$defs/remediation"},
+    "completion": {"$ref": "#/$defs/completion"},
+    "notes": {"type": "string", "maxLength": 16384}
+  },
+  "$defs": {
+    "stableID": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "maxLength": 64
+    },
+    "tokenArray": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 128}
+    },
+    "matcher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope"],
+      "properties": {
+        "scope": {"enum": ["global", "service", "context"]},
+        "services": {"$ref": "#/$defs/tokenArray"},
+        "tags": {"$ref": "#/$defs/tokenArray"},
+        "symptoms": {"$ref": "#/$defs/tokenArray"},
+        "severities": {"$ref": "#/$defs/tokenArray"},
+        "priority": {"type": "integer", "minimum": 0, "maximum": 100}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"scope": {"const": "global"}}, "required": ["scope"]},
+          "then": {
+            "properties": {
+              "services": {"maxItems": 0},
+              "tags": {"maxItems": 0},
+              "symptoms": {"maxItems": 0},
+              "severities": {"maxItems": 0}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"scope": {"const": "service"}}, "required": ["scope"]},
+          "then": {"required": ["services"], "properties": {"services": {"minItems": 1}}}
+        },
+        {
+          "if": {"properties": {"scope": {"const": "context"}}, "required": ["scope"]},
+          "then": {
+            "properties": {"services": {"maxItems": 0}},
+            "anyOf": [
+              {"required": ["tags"], "properties": {"tags": {"minItems": 1}}},
+              {"required": ["symptoms"], "properties": {"symptoms": {"minItems": 1}}},
+              {"required": ["severities"], "properties": {"severities": {"minItems": 1}}}
+            ]
+          }
+        }
+      ]
+    },
+    "sourceRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source_key", "capabilities", "required", "on_unavailable"],
+      "properties": {
+        "id": {"$ref": "#/$defs/stableID"},
+        "source_key": {"enum": ["grafana", "kubernetes", "github"]},
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "dashboards:list",
+              "prometheus:query",
+              "loki:query",
+              "explore:link",
+              "datasources:list",
+              "pods:list",
+              "logs:read",
+              "events:list",
+              "deployments:list",
+              "namespaces:list",
+              "repos:read",
+              "pull_requests:read",
+              "commits:read",
+              "actions:read"
+            ]
+          }
+        },
+        "required": {"type": "boolean"},
+        "binding_selector": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["connector_id"],
+          "properties": {"connector_id": {"type": "integer", "minimum": 1}}
+        },
+        "on_unavailable": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action"],
+          "properties": {"action": {"enum": ["fail", "record_gap", "use_fallback"]}}
+        },
+        "fallback_requirement_ids": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/stableID"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"source_key": {"const": "grafana"}}, "required": ["source_key"]},
+          "then": {"properties": {"capabilities": {"items": {"enum": ["dashboards:list", "prometheus:query", "loki:query", "explore:link", "datasources:list"]}}}}
+        },
+        {
+          "if": {"properties": {"source_key": {"const": "kubernetes"}}, "required": ["source_key"]},
+          "then": {"properties": {"capabilities": {"items": {"enum": ["pods:list", "logs:read", "events:list", "deployments:list", "namespaces:list"]}}}}
+        },
+        {
+          "if": {"properties": {"source_key": {"const": "github"}}, "required": ["source_key"]},
+          "then": {"properties": {"capabilities": {"items": {"enum": ["repos:read", "pull_requests:read", "commits:read", "actions:read"]}}}}
+        },
+        {
+          "if": {"properties": {"on_unavailable": {"properties": {"action": {"const": "use_fallback"}}, "required": ["action"]}}, "required": ["on_unavailable"]},
+          "then": {"required": ["fallback_requirement_ids"], "properties": {"fallback_requirement_ids": {"minItems": 1}}}
+        },
+        {
+          "if": {"properties": {"on_unavailable": {"properties": {"action": {"enum": ["fail", "record_gap"]}}, "required": ["action"]}}, "required": ["on_unavailable"]},
+          "then": {"properties": {"fallback_requirement_ids": {"maxItems": 0}}}
+        }
+      ]
+    },
+    "parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {"enum": ["boolean", "duration", "integer", "string", "string_list", "time_range"]},
+        "source": {
+          "enum": [
+            "incident.service",
+            "incident.services",
+            "incident.severity",
+            "incident.symptoms",
+            "incident.tags",
+            "incident.time_range"
+          ]
+        },
+        "value": {
+          "oneOf": [
+            {"type": "boolean"},
+            {"type": "integer", "minimum": -1000000000, "maximum": 1000000000},
+            {"type": "string", "minLength": 1, "maxLength": 1024},
+            {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "items": {"type": "string", "minLength": 1, "maxLength": 256}
+            }
+          ]
+        },
+        "target": {"type": "string", "pattern": "^request\\.[a-z][a-z0-9_.-]*$"}
+      },
+      "oneOf": [
+        {"required": ["source"], "not": {"required": ["value"]}},
+        {"required": ["value"], "not": {"required": ["source"]}}
+      ],
+      "allOf": [
+        {
+          "if": {"properties": {"type": {"const": "boolean"}}, "required": ["type", "value"]},
+          "then": {"properties": {"value": {"type": "boolean"}}}
+        },
+        {
+          "if": {"properties": {"type": {"const": "integer"}}, "required": ["type", "value"]},
+          "then": {"properties": {"value": {"type": "integer", "minimum": -1000000000, "maximum": 1000000000}}}
+        },
+        {
+          "if": {"properties": {"type": {"const": "duration"}}, "required": ["type", "value"]},
+          "then": {"properties": {"value": {"type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:ns|us|µs|ms|s|m|h)(?:[0-9]+(?:\\.[0-9]+)?(?:ns|us|µs|ms|s|m|h))*$"}}}
+        },
+        {
+          "if": {"properties": {"type": {"const": "string"}}, "required": ["type", "value"]},
+          "then": {"properties": {"value": {"type": "string", "minLength": 1, "maxLength": 1024}}}
+        },
+        {
+          "if": {"properties": {"type": {"const": "string_list"}}, "required": ["type", "value"]},
+          "then": {"properties": {"value": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 256}}}}
+        },
+        {
+          "if": {"properties": {"source": {"enum": ["incident.service", "incident.severity"]}}, "required": ["source"]},
+          "then": {"properties": {"type": {"const": "string"}}}
+        },
+        {
+          "if": {"properties": {"source": {"enum": ["incident.services", "incident.symptoms", "incident.tags"]}}, "required": ["source"]},
+          "then": {"properties": {"type": {"const": "string_list"}}}
+        },
+        {
+          "if": {"properties": {"source": {"const": "incident.time_range"}}, "required": ["source"]},
+          "then": {"properties": {"type": {"const": "time_range"}}}
+        }
+      ]
+    },
+    "parameters": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"},
+      "additionalProperties": {"$ref": "#/$defs/parameter"}
+    },
+    "queryBounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lookback", "step", "max_points"],
+      "properties": {
+        "lookback": {"type": "string", "minLength": 2, "maxLength": 64},
+        "step": {"type": "string", "minLength": 2, "maxLength": 64},
+        "max_points": {"type": "integer", "minimum": 1, "maximum": 10000}
+      }
+    },
+    "queryInvocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "capability", "template", "parameters", "bounds"],
+      "properties": {
+        "kind": {"const": "query"},
+        "capability": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$"},
+        "template": {"type": "string", "minLength": 1, "maxLength": 8192},
+        "parameters": {"$ref": "#/$defs/parameters"},
+        "bounds": {"$ref": "#/$defs/queryBounds"}
+      }
+    },
+    "commandInvocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "capability", "args", "parameters", "timeout_seconds", "max_output_bytes"],
+      "properties": {
+        "kind": {"const": "command"},
+        "capability": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$"},
+        "args": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {"type": "string", "minLength": 1, "maxLength": 1024},
+          "not": {"contains": {"enum": ["apply", "create", "delete", "edit", "exec", "merge", "patch", "push", "replace", "restart", "scale", "set", "update", "write"]}}
+        },
+        "parameters": {"$ref": "#/$defs/parameters"},
+        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 120},
+        "max_output_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576}
+      }
+    },
+    "evidenceContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "required_fields"],
+      "properties": {
+        "kind": {"enum": ["command_output", "document", "events", "logs", "records", "source_change", "timeseries"]},
+        "required_fields": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 9,
+          "uniqueItems": true,
+          "contains": {"const": "result_summary"},
+          "items": {"enum": ["artifact", "captured_at", "join_basis", "query", "resource_identity", "result_sample", "result_summary", "source_url", "time_range"]}
+        }
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "intent",
+        "source_requirement_id",
+        "safety",
+        "invocation",
+        "evidence_contract",
+        "confirms_when",
+        "falsifies_when",
+        "on_confirm",
+        "on_falsify",
+        "on_error"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/stableID"},
+        "intent": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "source_requirement_id": {"$ref": "#/$defs/stableID"},
+        "safety": {"const": "read_only"},
+        "invocation": {"oneOf": [{"$ref": "#/$defs/queryInvocation"}, {"$ref": "#/$defs/commandInvocation"}]},
+        "evidence_contract": {"$ref": "#/$defs/evidenceContract"},
+        "confirms_when": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "falsifies_when": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "on_confirm": {"type": "array", "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/stableID"}},
+        "on_falsify": {"type": "array", "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/stableID"}},
+        "on_error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action"],
+          "properties": {"action": {"enum": ["fail_run", "record_gap"]}}
+        }
+      }
+    },
+    "escalation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["when", "target"],
+      "properties": {
+        "when": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "target": {"type": "string", "minLength": 1, "maxLength": 512}
+      }
+    },
+    "remediation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "proposed_steps",
+        "approval_required",
+        "approval_expectation",
+        "rollback_steps",
+        "verification_check_id"
+      ],
+      "properties": {
+        "mode": {"const": "suggest_only"},
+        "proposed_steps": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"type": "string", "minLength": 1, "maxLength": 4096}},
+        "approval_required": {"const": true},
+        "approval_expectation": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "rollback_steps": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"type": "string", "minLength": 1, "maxLength": 4096}},
+        "verification_check_id": {"$ref": "#/$defs/stableID"}
+      }
+    },
+    "completion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_check_ids", "allow_inconclusive", "require_gap_reason_for_skips"],
+      "properties": {
+        "required_check_ids": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/stableID"}},
+        "allow_inconclusive": {"type": "boolean"},
+        "require_gap_reason_for_skips": {"type": "boolean"}
+      }
+    }
+  }
+}

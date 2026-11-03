@@ -1,0 +1,61 @@
+{
+  "title": "Reclaimed disk space on the monitoring host",
+  "type": "change",
+  "is_key": true,
+  "started_at": "2026-08-03T12:55:21Z",
+  "tags": ["disk", "monitoring", "mitigation", "recovery"],
+  "external_reference": "disk-remediation-20260803",
+  "body": "Cleared disposable Docker state on the standalone monitoring and CI host and confirmed that nothing durable was touched.\n\nInspection output:\n- Docker data root is /mnt/HC_Volume_104395459/docker.\n- Unused anonymous Docker volumes and Loki's active Docker JSON stdout log were the two large consumers.\n- No GitHub Actions Runner.Worker process was active.\n\nActions performed:\n- Pruned only unused anonymous volumes; active named Prometheus, Loki and Grafana volumes were preserved.\n- Pruned unused images.\n- Truncated only Loki's Docker stdout log after capturing a recent tail. Durable Loki data was not touched.\n\nVerified outcome:\n- All monitoring containers remain running and their health checks pass.\n- The DiskSpaceLow alert no longer fires.\n\nPermanent follow-up: recreate the monitoring containers in a maintenance window so the existing Docker JSON log limits apply to them.",
+  "blocks": [
+    {
+      "type": "stats",
+      "slot": "summary",
+      "items": [
+        {"label": "Volumes pruned", "value": "26.48 GB", "caption": "526 unused anonymous"},
+        {"label": "Loki log truncated", "value": "12.95 GB", "caption": "Docker stdout log only"},
+        {"label": "Images reclaimed", "value": "596.8 MB", "caption": "unused images"},
+        {"label": "DiskSpaceLow alert", "value": "0 firing", "caption": "ALERTS query is empty", "tone": "good"}
+      ]
+    },
+    {
+      "type": "compare",
+      "anchor": "Verified outcome",
+      "title": "Disk used",
+      "unit": "%",
+      "better": "lower",
+      "metric": "used",
+      "threshold": {"value": 85, "label": "Alert line: 85% used (15% free)"},
+      "rows": [
+        {"label": "/", "mono": true, "before": 86, "after": 80, "details": [{"label": "free", "before": "13.77%", "after": "19.45%"}]},
+        {"label": "/mnt/HC_Volume_104395459", "mono": true, "before": 93, "after": 20, "details": [{"label": "free", "before": "7.15%", "after": "76.07%"}]}
+      ]
+    },
+    {
+      "type": "trend",
+      "anchor": "Verified outcome",
+      "title": "Disk used on /mnt/HC_Volume_104395459",
+      "unit": "%",
+      "series": [86, 88, 91, 93, 93, 41, 20],
+      "start": "2026-08-03T10:00:00Z",
+      "step_seconds": 600,
+      "threshold": {"value": 85, "label": "Alert line: 85% used"},
+      "marks": [{"i": 5, "label": "Volumes pruned"}],
+      "source": {
+        "kind": "prometheus",
+        "datasource": "prometheus-prod",
+        "query": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/mnt/HC_Volume_104395459\"} / node_filesystem_size_bytes{mountpoint=\"/mnt/HC_Volume_104395459\"})",
+        "step": "10m"
+      }
+    },
+    {
+      "type": "checks",
+      "title": "Recovery checks",
+      "items": [
+        {"label": "Both mounts above 15% free", "state": "pass", "detail": "root 19.45%, volume 76.07% free"},
+        {"label": "DiskSpaceLow alert not firing", "state": "pass"},
+        {"label": "All ten monitoring containers running", "state": "pass"},
+        {"label": "Prometheus, Grafana and Loki health checks", "state": "pass", "detail": "Loki reports ready"}
+      ]
+    }
+  ]
+}

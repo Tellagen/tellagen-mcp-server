@@ -1,0 +1,62 @@
+{
+  "description": "Block sets the API rejects with 400 invalid_block. Each case lists the blocks a client might send, the field the API names and the problem it reports. The full list of bad fields is in details.errors.",
+  "cases": [
+    {
+      "name": "unknown block type",
+      "blocks": [{"type": "heatmap", "cells": [[1, 2], [3, 4]]}],
+      "field": "blocks[0].type",
+      "message": "unknown block type \"heatmap\" (use stats, compare, trend, table, checks or changes)"
+    },
+    {
+      "name": "a number sent as text",
+      "blocks": [{"type": "compare", "unit": "ms", "rows": [{"label": "GET /v1/me", "before": 900, "after": "slow"}]}],
+      "field": "blocks[0].rows[0].after",
+      "message": "must be a number"
+    },
+    {
+      "name": "five key figures",
+      "blocks": [{"type": "stats", "items": [
+        {"label": "a", "value": "1"}, {"label": "b", "value": "2"}, {"label": "c", "value": "3"},
+        {"label": "d", "value": "4"}, {"label": "e", "value": "5"}
+      ]}],
+      "field": "blocks[0].items",
+      "message": "needs 1 to 4 items (got 5)"
+    },
+    {
+      "name": "a table row with a missing cell",
+      "blocks": [{"type": "table", "columns": [{"label": "Query"}, {"label": "Calls / min"}], "rows": [{"cells": ["orders by customer", "1,840"]}, {"cells": ["update inventory"]}]}],
+      "field": "blocks[0].rows[1].cells",
+      "message": "needs exactly 2 cells (got 1)"
+    },
+    {
+      "name": "a mark outside the series",
+      "blocks": [{"type": "trend", "series": [38, 41, 88, 91], "marks": [{"i": 4, "label": "TTL change shipped"}]}],
+      "field": "blocks[0].marks[0].i",
+      "message": "must be a point index from 0 to 3"
+    },
+    {
+      "name": "start without step_seconds",
+      "blocks": [{"type": "trend", "series": [38, 41], "start": "2026-08-12T09:00:00Z"}],
+      "field": "blocks[0].step_seconds",
+      "message": "is required when start is set"
+    },
+    {
+      "name": "a tone that is a colour",
+      "blocks": [{"type": "stats", "items": [{"label": "Peak CPU", "value": "91%", "tone": "red"}]}],
+      "field": "blocks[0].items[0].tone",
+      "message": "must be good, warn, bad or neutral"
+    },
+    {
+      "name": "slot and anchor together",
+      "blocks": [{"type": "stats", "slot": "summary", "anchor": "Verified outcome", "items": [{"label": "Peak CPU", "value": "91%"}]}],
+      "field": "blocks[0].anchor",
+      "message": "cannot be combined with slot"
+    },
+    {
+      "name": "a field the contract does not have",
+      "blocks": [{"type": "checks", "items": [{"label": "Alert cleared", "state": "pass", "owner": "ana"}]}],
+      "field": "blocks[0].items[0].owner",
+      "message": "is not a known field (known: label, state, detail)"
+    }
+  ]
+}

@@ -97,6 +97,34 @@ describe("TellagenClient", () => {
     );
   });
 
+  it("preserves structured API error details", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          code: "investigation_completion_blocked",
+          message: "Coverage is incomplete",
+          coverage: { decision: "blocked", missing_check_ids: ["check-1"] },
+        }),
+        { status: 422 },
+      ),
+    );
+
+    try {
+      await client.patch("/api/v1/investigations/run-v2", {
+        status: "completed",
+      });
+      expect.fail("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(TellagenAPIError);
+      const apiErr = err as TellagenAPIError;
+      expect(apiErr.code).toBe("investigation_completion_blocked");
+      expect(apiErr.payload?.coverage).toEqual({
+        decision: "blocked",
+        missing_check_ids: ["check-1"],
+      });
+    }
+  });
+
   it("throws TellagenAPIError on 401", async () => {
     fetchSpy.mockResolvedValueOnce(
       new Response(

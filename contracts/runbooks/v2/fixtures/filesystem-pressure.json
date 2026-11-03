@@ -1,0 +1,181 @@
+{
+  "schema_version": "v2",
+  "match": {
+    "scope": "context",
+    "symptoms": ["disk_pressure", "low disk alert"],
+    "priority": 95
+  },
+  "source_requirements": [
+    {
+      "id": "filesystem-metrics",
+      "source_key": "grafana",
+      "capabilities": ["prometheus:query"],
+      "required": true,
+      "on_unavailable": {"action": "record_gap"}
+    },
+    {
+      "id": "infrastructure-docs",
+      "source_key": "github",
+      "capabilities": ["repos:read"],
+      "required": true,
+      "on_unavailable": {"action": "record_gap"}
+    },
+    {
+      "id": "host-filesystem",
+      "source_key": "local_host",
+      "capabilities": [
+        "host:filesystem_inventory",
+        "host:path_mount_mapping",
+        "host:filesystem_consumers"
+      ],
+      "required": true,
+      "on_unavailable": {"action": "record_gap"}
+    }
+  ],
+  "entry_check_ids": ["identify-alert-filesystem"],
+  "checks": [
+    {
+      "id": "identify-alert-filesystem",
+      "intent": "Identify the exact host, device, mountpoint, filesystem type, capacity, available bytes, and trend that triggered the alert",
+      "source_requirement_id": "filesystem-metrics",
+      "safety": "read_only",
+      "invocation": {
+        "kind": "query",
+        "capability": "prometheus:query",
+        "template": "(node_filesystem_avail_bytes{fstype=~\"ext4|xfs\"} / node_filesystem_size_bytes{fstype=~\"ext4|xfs\"}) * 100",
+        "parameters": {
+          "time_range": {"type": "time_range", "source": "incident.time_range", "target": "request.range"}
+        },
+        "bounds": {"lookback": "6h", "step": "1m", "max_points": 360}
+      },
+      "evidence_contract": {
+        "kind": "timeseries",
+        "required_fields": ["artifact", "query", "time_range", "resource_identity", "result_summary"]
+      },
+      "confirms_when": "A series identifies one alerting host, device, and mountpoint with less than the configured free-space threshold",
+      "falsifies_when": "No matching filesystem series breached the alert threshold during the incident window",
+      "on_confirm": ["read-infrastructure-topology"],
+      "on_falsify": ["read-infrastructure-topology"],
+      "on_error": {"action": "record_gap"}
+    },
+    {
+      "id": "read-infrastructure-topology",
+      "intent": "Read the configured infrastructure repository to identify the approved host route and candidate service storage paths",
+      "source_requirement_id": "infrastructure-docs",
+      "safety": "read_only",
+      "invocation": {
+        "kind": "query",
+        "capability": "repos:read",
+        "template": "Read the configured infrastructure repository metadata, monitoring stack README, host inventory policy, Compose topology, and production inventory. Return the approved host identity and candidate service storage paths without reading credentials.",
+        "parameters": {},
+        "bounds": {"lookback": "5m", "step": "5m", "max_points": 1}
+      },
+      "evidence_contract": {
+        "kind": "document",
+        "required_fields": ["artifact", "query", "result_summary"]
+      },
+      "confirms_when": "Reviewed documentation identifies an approved host route and candidate storage paths for the alerted service",
+      "falsifies_when": "Reviewed documentation explicitly shows the suspected service does not run on the alerting host",
+      "on_confirm": ["map-runtime-filesystems"],
+      "on_falsify": ["map-runtime-filesystems"],
+      "on_error": {"action": "record_gap"}
+    },
+    {
+      "id": "map-runtime-filesystems",
+      "intent": "Map the alerted filesystem and every suspected service storage path to runtime host, device, and mountpoint identities",
+      "source_requirement_id": "host-filesystem",
+      "safety": "read_only",
+      "invocation": {
+        "kind": "query",
+        "capability": "host:path_mount_mapping",
+        "template": "Use the reviewed bounded host evidence wrapper to map root, monitoring, and container storage paths to host, device, mountpoint, and filesystem identities. Compare candidates only with explicit resource identity keys.",
+        "parameters": {},
+        "bounds": {"lookback": "5m", "step": "5m", "max_points": 1}
+      },
+      "evidence_contract": {
+        "kind": "command_output",
+        "required_fields": ["artifact", "query", "resource_identity", "join_basis", "result_summary"]
+      },
+      "confirms_when": "The suspected consumer maps to the same host, device, and mountpoint as the alert, with the join keys recorded",
+      "falsifies_when": "The suspected consumer explicitly maps to a different device or mountpoint on the alerting host",
+      "on_confirm": ["find-alerted-filesystem-consumers"],
+      "on_falsify": ["find-alerted-filesystem-consumers"],
+      "on_error": {"action": "record_gap"}
+    },
+    {
+      "id": "find-alerted-filesystem-consumers",
+      "intent": "Identify bounded top-level consumers on the alerted filesystem without crossing mount boundaries",
+      "source_requirement_id": "host-filesystem",
+      "safety": "read_only",
+      "invocation": {
+        "kind": "query",
+        "capability": "host:filesystem_consumers",
+        "template": "Use the reviewed bounded host evidence wrapper to list top-level consumers on the alerted filesystem only. Do not follow other mounts and do not read file contents, configuration, environment, or credentials.",
+        "parameters": {},
+        "bounds": {"lookback": "5m", "step": "5m", "max_points": 1}
+      },
+      "evidence_contract": {
+        "kind": "command_output",
+        "required_fields": ["artifact", "query", "resource_identity", "result_sample", "result_summary"]
+      },
+      "confirms_when": "One or more bounded consumers on the alerted filesystem account for material usage and are identified by path and bytes",
+      "falsifies_when": "No inspected consumer on the alerted filesystem accounts for material usage within the bounded evidence",
+      "on_confirm": ["verify-filesystem-headroom"],
+      "on_falsify": ["verify-filesystem-headroom"],
+      "on_error": {"action": "record_gap"}
+    },
+    {
+      "id": "verify-filesystem-headroom",
+      "intent": "Verify current free-space headroom for the original alert host, device, and mountpoint",
+      "source_requirement_id": "filesystem-metrics",
+      "safety": "read_only",
+      "invocation": {
+        "kind": "query",
+        "capability": "prometheus:query",
+        "template": "(node_filesystem_avail_bytes{fstype=~\"ext4|xfs\"} / node_filesystem_size_bytes{fstype=~\"ext4|xfs\"}) * 100",
+        "parameters": {
+          "time_range": {"type": "time_range", "source": "incident.time_range", "target": "request.range"}
+        },
+        "bounds": {"lookback": "30m", "step": "30s", "max_points": 60}
+      },
+      "evidence_contract": {
+        "kind": "timeseries",
+        "required_fields": ["artifact", "query", "time_range", "resource_identity", "result_summary"]
+      },
+      "confirms_when": "The original host, device, and mountpoint have recovered above the responder-approved free-space threshold",
+      "falsifies_when": "The original filesystem remains below the threshold or the returned resource identity differs",
+      "on_confirm": [],
+      "on_falsify": [],
+      "on_error": {"action": "record_gap"}
+    }
+  ],
+  "escalation": {
+    "when": "Runtime topology is unavailable, resource identities do not match, or no bounded consumer explains the alert",
+    "target": "infrastructure owner and incident commander"
+  },
+  "remediation": {
+    "mode": "suggest_only",
+    "proposed_steps": [
+      "Ask the infrastructure owner to review evidence-linked consumers on the alerted filesystem and approve a reversible cleanup target.",
+      "Treat service storage or WAL failures on a different filesystem as a separate remediation task with its own owner and verification."
+    ],
+    "approval_required": true,
+    "approval_expectation": "The incident commander or infrastructure owner approves the exact target and rollback before any cleanup or service recovery action.",
+    "rollback_steps": [
+      "Stop the approved cleanup if free space, service health, or evidence integrity worsens.",
+      "Restore only responder-approved reversible moves and re-run the original filesystem identity check."
+    ],
+    "verification_check_id": "verify-filesystem-headroom"
+  },
+  "completion": {
+    "required_check_ids": [
+      "identify-alert-filesystem",
+      "read-infrastructure-topology",
+      "map-runtime-filesystems",
+      "find-alerted-filesystem-consumers"
+    ],
+    "allow_inconclusive": true,
+    "require_gap_reason_for_skips": true
+  },
+  "notes": "Never infer filesystem causality by dividing or comparing metrics with different host, device, or mountpoint identities. Unknown topology is an evidence gap, not a root cause."
+}

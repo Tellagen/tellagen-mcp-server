@@ -1,0 +1,47 @@
+{
+  "contract_version": "2026-11-01.1",
+  "bundle_sha256": "a93a6c62a169c0d10ccefccf53e582bf593aa71c61af2666cd82880b05911b45",
+  "bundle_digest_algorithm": "sha256(sorted(path + NUL + file_sha256 + LF))",
+  "files": [
+    {
+      "path": "v2/compiled-plan.schema.json",
+      "sha256": "6526c68439fef418de0f04099a0119dd6673550bb9e2f302dc84bf2df6bd0fe5",
+      "bytes": 1246
+    },
+    {
+      "path": "v2/fixtures/filesystem-pressure.json",
+      "sha256": "8c7b92f5dc4b68e94d20459ff33089f93d41bf5b8b876c76ce28f5d4a5fb48af",
+      "bytes": 8804
+    },
+    {
+      "path": "v2/fixtures/grafana-error-rate-plan.json",
+      "sha256": "21304d87ba7f24939a04fe48e97c91ba5b0d1a94d2faa5fb13e202080f305d19",
+      "bytes": 1692
+    },
+    {
+      "path": "v2/fixtures/grafana-error-rate.json",
+      "sha256": "7d17e211f36e417e04cc767d05fe1ea786afc1a3b42e8f9b6bd1b78fba50d864",
+      "bytes": 1885
+    },
+    {
+      "path": "v2/fixtures/timeline-event-blocks-rejected.json",
+      "sha256": "059d4c82802c86984222a55b7bc2dc404aaa63a0dc9713fe91af8fc24bb15362",
+      "bytes": 2744
+    },
+    {
+      "path": "v2/fixtures/timeline-event-with-blocks.json",
+      "sha256": "944f8fcaaaacd81c2f2b0d42bd5e3baa32c26c33ce04d71a0187968158d2a7fe",
+      "bytes": 3361
+    },
+    {
+      "path": "v2/runbook-definition.schema.json",
+      "sha256": "d6db0e9e0f2cfd1ab79ab98927a2be905353937d443c8bb780b7b85f9682cecc",
+      "bytes": 14750
+    },
+    {
+      "path": "v2/timeline-event-blocks.schema.json",
+      "sha256": "f4557475589c86a3f98e4e02479c013c34eafe9277367209b6fb5658a69f5a3b",
+      "bytes": 12055
+    }
+  ]
+}

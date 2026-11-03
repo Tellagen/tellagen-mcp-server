@@ -1,0 +1,7 @@
+{
+  "schema_version": "v1_markdown",
+  "applies_to": {"scope": "global"},
+  "required_sources": ["legacy-custom-source"],
+  "safety_level": "read_only",
+  "body_markdown": "# Legacy baseline\n\n<!-- tellagen:section=safe_checks -->\n## Safe checks\n\nInspect the bounded operational view.\n"
+}

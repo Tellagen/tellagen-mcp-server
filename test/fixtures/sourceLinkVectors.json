@@ -1,0 +1,261 @@
+{
+  "version": 1,
+  "description": "Shared by web/lib/investigation/sourceLinks.test.ts and the MCP tellagen_build_source_link tests (CORE-776). Same input, same output string. Explore uses the Grafana `left` parameter (CORE-761); orgId: null leaves orgId out, an absent orgId means 1.",
+  "explore": [
+    {
+      "name": "prometheus with a datasource uid and the incident window",
+      "input": {
+        "baseUrl": "https://grafana.example.com",
+        "datasource": "prom-uid-1",
+        "query": "sum(rate(http_requests_total{service=\"checkout\"}[5m]))",
+        "from": "2026-06-18T08:40:00Z",
+        "to": "2026-06-18T10:20:00Z",
+        "orgId": null
+      },
+      "url": "https://grafana.example.com/explore?left=%7B%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22sum(rate(http_requests_total%7Bservice%3D%5C%22checkout%5C%22%7D%5B5m%5D))%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%221781772000000%22%2C%22to%22%3A%221781778000000%22%7D%2C%22datasource%22%3A%22prom-uid-1%22%7D"
+    },
+    {
+      "name": "loki with no datasource, relative times and no org",
+      "input": {
+        "baseUrl": "https://grafana.example.com/",
+        "query": "{app=\"api\"} |= \"timeout\"",
+        "from": "now-6h",
+        "to": "now",
+        "orgId": null
+      },
+      "url": "https://grafana.example.com/explore?left=%7B%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22%7Bapp%3D%5C%22api%5C%22%7D%20%7C%3D%20%5C%22timeout%5C%22%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-6h%22%2C%22to%22%3A%22now%22%7D%7D"
+    },
+    {
+      "name": "sub-path install with an org",
+      "input": {
+        "baseUrl": "https://tools.example.com/grafana",
+        "datasource": "loki-uid-2",
+        "query": "{job=\"worker\"}",
+        "from": "2026-06-18T08:40:00Z",
+        "orgId": 3
+      },
+      "url": "https://tools.example.com/grafana/explore?orgId=3&left=%7B%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22%7Bjob%3D%5C%22worker%5C%22%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%221781772000000%22%2C%22to%22%3A%22now%22%7D%2C%22datasource%22%3A%22loki-uid-2%22%7D"
+    },
+    {
+      "name": "legacy default keeps orgId=1",
+      "input": {
+        "baseUrl": "https://grafana.example.com",
+        "query": "up"
+      },
+      "url": "https://grafana.example.com/explore?orgId=1&left=%7B%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22up%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D"
+    }
+  ],
+  "exploreRejected": [
+    {
+      "name": "blank query",
+      "input": {
+        "baseUrl": "https://grafana.example.com",
+        "query": "  "
+      }
+    },
+    {
+      "name": "non-http base",
+      "input": {
+        "baseUrl": "javascript:alert(1)",
+        "query": "up"
+      }
+    },
+    {
+      "name": ".invalid base",
+      "input": {
+        "baseUrl": "https://grafana.demo.invalid",
+        "query": "up"
+      }
+    }
+  ],
+  "classify": [
+    {
+      "source": "grafana",
+      "family": "grafana",
+      "key": "grafana",
+      "viaGrafana": true
+    },
+    {
+      "source": "grafana-prometheus",
+      "family": "prometheus",
+      "key": "grafana",
+      "viaGrafana": true
+    },
+    {
+      "source": "grafana_loki",
+      "family": "loki",
+      "key": "grafana",
+      "viaGrafana": true
+    },
+    {
+      "source": "grafana-tempo",
+      "family": "tempo",
+      "key": "grafana",
+      "viaGrafana": true
+    },
+    {
+      "source": "Prometheus",
+      "family": "prometheus",
+      "key": "prometheus",
+      "viaGrafana": false
+    },
+    {
+      "source": "loki",
+      "family": "loki",
+      "key": "loki",
+      "viaGrafana": false
+    },
+    {
+      "source": "query_loki_logs",
+      "family": "loki",
+      "key": "loki",
+      "viaGrafana": false
+    },
+    {
+      "source": "kubernetes-logs",
+      "family": "kubernetes",
+      "key": "kubernetes",
+      "viaGrafana": false
+    },
+    {
+      "source": "kubernetes-api-proxy",
+      "family": "kubernetes",
+      "key": "kubernetes",
+      "viaGrafana": false
+    },
+    {
+      "source": "k8s",
+      "family": "kubernetes",
+      "key": "kubernetes",
+      "viaGrafana": false
+    },
+    {
+      "source": "kubectl",
+      "family": "kubernetes",
+      "key": "kubernetes",
+      "viaGrafana": false
+    },
+    {
+      "source": "github",
+      "family": "github",
+      "key": "github",
+      "viaGrafana": false
+    },
+    {
+      "source": "GitHub",
+      "family": "github",
+      "key": "github",
+      "viaGrafana": false
+    },
+    {
+      "source": "codebase",
+      "family": "codebase",
+      "key": "codebase",
+      "viaGrafana": false
+    },
+    {
+      "source": "postgres",
+      "family": "database",
+      "key": "postgres",
+      "viaGrafana": false
+    },
+    {
+      "source": "intercom",
+      "family": "other",
+      "key": "intercom",
+      "viaGrafana": false
+    },
+    {
+      "source": "login-service",
+      "family": "other",
+      "key": "login",
+      "viaGrafana": false
+    },
+    {
+      "source": "",
+      "family": "other",
+      "key": "unknown",
+      "viaGrafana": false
+    }
+  ],
+  "sanitizeUrl": [
+    {
+      "input": "https://grafana.example.com/d/abc/x?viewPanel=2",
+      "output": "https://grafana.example.com/d/abc/x?viewPanel=2"
+    },
+    {
+      "input": "  https://user:secret@grafana.example.com/d/abc  ",
+      "output": "https://grafana.example.com/d/abc"
+    },
+    {
+      "input": "http://grafana.example.com:3000/explore",
+      "output": "http://grafana.example.com:3000/explore"
+    },
+    {
+      "input": "javascript:alert(1)",
+      "output": null
+    },
+    {
+      "input": "data:text/html;base64,PHNjcmlwdD4=",
+      "output": null
+    },
+    {
+      "input": "file:///etc/passwd",
+      "output": null
+    },
+    {
+      "input": "k8s://context/prod/namespace/web/pods/api",
+      "output": null
+    },
+    {
+      "input": "ftp://files.example.com/a",
+      "output": null
+    },
+    {
+      "input": "//evil.example.com/path",
+      "output": null
+    },
+    {
+      "input": "not a url",
+      "output": null
+    },
+    {
+      "input": "",
+      "output": null
+    }
+  ],
+  "kubectl": [
+    {
+      "input": "k8s://context/prod/namespace/checkout/deployments/api",
+      "command": "kubectl --context prod -n checkout get deployments api"
+    },
+    {
+      "input": "k8s://context/prod/namespace/checkout/pods/api-7d9:8080/proxy/metrics",
+      "command": "kubectl --context prod -n checkout get pods api-7d9"
+    },
+    {
+      "input": "k8s://context/prod/namespace/checkout/events",
+      "command": "kubectl --context prod -n checkout get events"
+    },
+    {
+      "input": "k8s://context/prod/nodes/node-1",
+      "command": "kubectl --context prod get nodes node-1"
+    },
+    {
+      "input": "k8s://context/prod/namespace/checkout/secrets/db",
+      "command": null
+    },
+    {
+      "input": "k8s://context/pr$od/namespace/checkout/pods/api",
+      "command": null
+    },
+    {
+      "input": "k8s://context/prod/namespace/ch eckout/pods/api",
+      "command": null
+    },
+    {
+      "input": "k8s://cluster/prod",
+      "command": null
+    }
+  ]
+}
