@@ -7,4 +7,6 @@ export const INVESTIGATION_PROTOCOL_CAPABILITIES = [
   "gap_findings_v2",
   "completion_coverage_v2",
   "diagnosis_structure_v1",
+  "diagnosis_changes_v1",
+  "run_images_v1",
 ] as const;

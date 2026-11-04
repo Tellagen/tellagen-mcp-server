@@ -1,12 +1,11 @@
 /**
- * Source link building for evidence refs (CORE-776).
+ * Source link building for evidence refs.
  *
- * The pure functions here are ports of the web resolver in
- * web/lib/investigation/sourceLinks.ts and web/lib/grafana/deeplink.ts. The
- * shared vectors (test/fixtures/sourceLinkVectors.json) pin the same input to
- * the same output string on both sides. Keep Grafana's `left` Explore
- * parameter: Grafana main still migrates it and `panes` breaks older
- * versions (CORE-761).
+ * The pure functions here are ports of the link resolver in the Tellagen web
+ * app. The shared vectors (test/fixtures/sourceLinkVectors.json) pin the same
+ * input to the same output string on both sides. Keep Grafana's `left`
+ * Explore parameter: Grafana main still migrates it and `panes` breaks older
+ * versions.
  *
  * Nothing here touches the network or reads credentials.
  */
@@ -375,15 +374,24 @@ function encodeRef(ref: string): string {
   return ref.split("/").map(encodeURIComponent).join("/");
 }
 
-/** GitHub compare, commit and pull request URLs from `owner/name`. */
+const positiveInteger = (n: number | undefined): n is number =>
+  n !== undefined && Number.isInteger(n) && n > 0;
+
+/**
+ * GitHub compare, commit, pull request, Actions run (or job) and release URLs
+ * from `owner/name`.
+ */
 export function buildGithubLink(
-  kind: "diff" | "commit" | "pr",
+  kind: "diff" | "commit" | "pr" | "ci_run" | "release",
   input: {
     repo: string;
     sha?: string;
     base?: string;
     head?: string;
     prNumber?: number;
+    runId?: number;
+    jobId?: number;
+    tag?: string;
     githubUrl?: string;
   },
 ): string | null {
@@ -391,6 +399,17 @@ export function buildGithubLink(
   if (!GITHUB_REPO.test(repo) || repo.includes("..")) return null;
   const base = githubBase(input.githubUrl);
   if (!base) return null;
+  if (kind === "ci_run") {
+    if (!positiveInteger(input.runId)) return null;
+    if (input.jobId !== undefined && !positiveInteger(input.jobId)) return null;
+    const job = input.jobId !== undefined ? `/job/${input.jobId}` : "";
+    return `${base}/${repo}/actions/runs/${input.runId}${job}`;
+  }
+  if (kind === "release") {
+    const tag = input.tag?.trim() ?? "";
+    if (!GITHUB_REF.test(tag) || tag.includes("..")) return null;
+    return `${base}/${repo}/releases/tag/${encodeRef(tag)}`;
+  }
   if (kind === "commit") {
     const sha = input.sha?.trim() ?? "";
     return GITHUB_SHA.test(sha) ? `${base}/${repo}/commit/${sha.toLowerCase()}` : null;

@@ -4,15 +4,27 @@ import { z } from "zod";
  * Figures are the typed widgets Tellagen draws in the Diagnosis tab, on the
  * timeline and in the postmortem. The agent sends data and Tellagen draws it.
  *
- * The limits below mirror the Tellagen API contract,
- * backend/internal/investigationprotocol/contracts/v2/timeline-event-blocks.schema.json
- * in the Tellagen repository, which stays the source of truth. A figure over a
- * limit is rejected with the field named. Nothing is trimmed, because a
- * silently shortened label or a dropped row would misstate the evidence.
+ * The limits below mirror the Tellagen API contract
+ * (contracts/runbooks/v2/timeline-event-blocks.schema.json) and the API's own
+ * figure validation, which stay the source of truth. A figure over a limit is
+ * rejected with the field named. Nothing is trimmed, because a silently
+ * shortened label or a dropped row would misstate the evidence.
  */
 
-/** Types a causal step may carry as its `figure`. */
-export const STEP_FIGURE_TYPES = ["stats", "compare", "trend"] as const;
+/**
+ * Types a causal step may carry as its `figure`. table and changes are
+ * timeline blocks only.
+ */
+export const STEP_FIGURE_TYPES = [
+  "stats",
+  "compare",
+  "trend",
+  "checks",
+  "range_overlap",
+  "histogram",
+  "run_history",
+  "diff",
+] as const;
 
 /** Types the API accepts in a timeline event's `blocks`. */
 export const TIMELINE_BLOCK_TYPES = [
@@ -22,18 +34,14 @@ export const TIMELINE_BLOCK_TYPES = [
   "table",
   "checks",
   "changes",
-] as const;
-
-/**
- * Widgets designed for Tellagen but not accepted by the API yet. The builder
- * refuses them and points at what to send instead.
- */
-export const PLANNED_FIGURE_TYPES = [
   "range_overlap",
   "histogram",
   "run_history",
   "diff",
 ] as const;
+
+/** The most JSON one step figure may take, as the backend measures it. */
+export const MAX_STEP_FIGURE_BYTES = 16 * 1024;
 
 export type FigurePlacement = "step_figure" | "timeline_block";
 
@@ -191,6 +199,286 @@ const changesBase = z
   })
   .strict();
 
+/*
+ * The four figure types range_overlap, histogram, run_history and diff.
+ * Lengths count Unicode characters after trimming, as the API counts them,
+ * and text is one line without control characters.
+ */
+
+/** Control characters, line and paragraph separators and bidirectional controls. */
+const BLOCK_UNSAFE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
+/** The same for a line of code, which may also hold tabs. */
+const CODE_UNSAFE = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
+
+const charCount = (value: string): number => [...value].length;
+
+/** One line of at most max characters after trimming; required needs a non-space character. */
+function blockText(max: number, required = false) {
+  return z.string().superRefine((value, ctx) => {
+    const trimmed = value.trim();
+    if (trimmed === "") {
+      if (required) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "is required" });
+      return;
+    }
+    if (BLOCK_UNSAFE.test(trimmed)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "must be one line without control characters" });
+      return;
+    }
+    const n = charCount(trimmed);
+    if (n > max) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `at most ${max} characters (got ${n})` });
+  });
+}
+
+/** A line of code: kept as sent (indentation too), may be empty, tabs allowed. */
+function codeLine(max: number) {
+  return z.string().superRefine((value, ctx) => {
+    if (CODE_UNSAFE.test(value)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "must not contain control characters other than tabs" });
+      return;
+    }
+    const n = charCount(value);
+    if (n > max) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `at most ${max} characters (got ${n})` });
+  });
+}
+
+const rfc3339 = z
+  .string()
+  .datetime({ offset: true })
+  .describe("RFC 3339 time, for example 2026-08-12T09:00:00Z");
+
+const REPO_PATTERN = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+
+const repoField = blockText(80)
+  .refine((value) => value.trim() === "" || REPO_PATTERN.test(value.trim()), {
+    message: "must look like owner/name (letters, digits, dots, underscores and dashes)",
+  })
+  .describe("GitHub repository as owner/name, so each run or commit links to its page");
+
+const httpsLink = blockText(500).refine(
+  (value) => {
+    const t = value.trim();
+    return t === "" || (t.startsWith("https://") && t.length > "https://".length && !/\s/.test(t));
+  },
+  { message: "must be an https:// link without spaces" },
+);
+
+const wholeCount = z.number().int().min(0).max(1_000_000);
+
+export const RUN_RESULTS = ["success", "failure", "cancelled", "pending"] as const;
+export const RUN_MARK_CHANGES = ["regression", "fix", "change"] as const;
+
+const rangeOverlapBase = z
+  .object({
+    type: z.literal("range_overlap"),
+    title: blockText(80).optional(),
+    unit: blockText(12).optional().describe("The one unit every row is in, for example px or MB"),
+    min: number.optional().describe("Start of the whole range drawn in the overview. Send with max."),
+    max: number.optional().describe("End of the whole range drawn in the overview. Send with min."),
+    rows: z
+      .array(
+        z
+          .object({
+            label: blockText(80, true),
+            from: number,
+            to: number.describe("Not below from"),
+          })
+          .strict(),
+      )
+      .min(2)
+      .max(4)
+      .describe("Two to four ranges. Tellagen computes where they overlap; never send the overlap."),
+    window: z
+      .tuple([number, number])
+      .optional()
+      .describe("[from, to] to choose the zoom yourself. Leave out to zoom to the overlap."),
+  })
+  .strict();
+
+const histogramBase = z
+  .object({
+    type: z.literal("histogram"),
+    title: blockText(80).optional(),
+    unit: blockText(12).optional(),
+    edges: z
+      .array(number)
+      .min(3)
+      .max(61)
+      .describe("Bucket edges, 3 to 61, none negative, each greater than the one before: 2 to 60 buckets"),
+    before: z.array(number).max(60).describe("One count per bucket before the change"),
+    after: z.array(number).max(60).describe("One count per bucket after the change"),
+    threshold: thresholdSchema.optional().describe("The SLO line. Tellagen computes the share over it."),
+    source: trendSourceSchema.optional().describe("Provenance only. The counts stay in before and after."),
+  })
+  .strict();
+
+const runRef = blockText(80, true);
+
+const runSchema = z
+  .object({
+    ref: runRef.describe("The run number or id, unique in the block. Marks and the span name runs by ref."),
+    result: z.enum(RUN_RESULTS),
+    sha: blockText(64).optional(),
+    at: rfc3339.optional(),
+    trigger: blockText(32).optional().describe("What started the run, for example push or schedule"),
+    job: blockText(80).optional().describe("The job that failed"),
+    url: httpsLink.optional(),
+  })
+  .strict();
+
+const runMarkSchema = z
+  .object({
+    between: z
+      .tuple([runRef, runRef])
+      .describe("Refs of two neighbouring runs, the second right after the first"),
+    change_ref: z.enum(RUN_MARK_CHANGES).describe("regression for the change that broke it, fix for the one that fixed it"),
+    sha: blockText(64).optional(),
+    at: rfc3339.optional(),
+    title: blockText(80).optional(),
+  })
+  .strict();
+
+const runSpanSchema = z
+  .object({
+    from: runRef,
+    to: runRef.describe("Not a run before from"),
+    label: blockText(48, true).describe("For example E2E Tests failed"),
+  })
+  .strict();
+
+const runHistoryBase = z
+  .object({
+    type: z.literal("run_history"),
+    title: blockText(80).optional(),
+    repo: repoField.optional(),
+    branch: blockText(80).optional(),
+    runs: z.array(runSchema).min(2).max(30).describe("2 to 30 runs, oldest first"),
+    marks: z.array(runMarkSchema).max(4).optional().describe("At most four changes between neighbouring runs"),
+    span: runSpanSchema.optional().describe("A stretch of runs bracketed under the strip"),
+  })
+  .strict();
+
+const diffLineSchema = z
+  .object({
+    op: z.enum(["+", "-"]),
+    text: codeLine(160).describe("The line as it is in the change, indentation kept, up to 160 characters"),
+  })
+  .strict();
+
+const diffBase = z
+  .object({
+    type: z.literal("diff"),
+    title: blockText(80).optional(),
+    path: blockText(200, true).describe("The file the lines are from"),
+    repo: repoField.optional(),
+    ref: blockText(64, true).describe("The commit sha or ref"),
+    at: rfc3339.optional(),
+    additions: wholeCount.describe("Added lines in the whole change, from the commit or pull request"),
+    deletions: wholeCount.describe("Removed lines in the whole change, from the commit or pull request"),
+    hunks: z
+      .array(z.array(diffLineSchema).min(1))
+      .min(1)
+      .max(6)
+      .describe("1 to 6 hunks of + and - lines, at most 12 lines in all. Do not send the whole diff."),
+  })
+  .strict();
+
+/** Exported for the step figure schema of tellagen_complete_investigation. */
+export const checksBlockSchema = checksBase;
+export const rangeOverlapBlockSchema = rangeOverlapBase;
+export const histogramBlockSchema = histogramBase;
+export const runHistoryBlockSchema = runHistoryBase;
+export const diffBlockSchema = diffBase;
+
+export type FigureRuleIssue = { path: Array<string | number>; message: string };
+
+const formatEdge = (n: number): string => String(n);
+
+/**
+ * The rules of range_overlap, histogram, run_history and diff that span
+ * fields, with the messages the API uses. The block has passed its schema.
+ */
+export function figureRuleIssues(block: { type: string } & Record<string, unknown>): FigureRuleIssue[] {
+  const issues: FigureRuleIssue[] = [];
+  const add = (path: Array<string | number>, message: string) => issues.push({ path, message });
+
+  if (block.type === "range_overlap") {
+    const b = block as unknown as z.infer<typeof rangeOverlapBase>;
+    let bounded = false;
+    if (b.min !== undefined && b.max === undefined) add(["max"], "is required when min is set");
+    else if (b.max !== undefined && b.min === undefined) add(["min"], "is required when max is set");
+    else if (b.min !== undefined && b.max !== undefined) {
+      if (b.min >= b.max) add(["max"], "must be greater than min");
+      else bounded = true;
+    }
+    for (const [i, row] of b.rows.entries()) {
+      if (row.from > row.to) add(["rows", i, "to"], "must not be below from");
+      if (bounded) {
+        const within = `must be within min and max (${formatEdge(b.min!)} to ${formatEdge(b.max!)})`;
+        if (row.from < b.min! || row.from > b.max!) add(["rows", i, "from"], within);
+        if (row.to < b.min! || row.to > b.max!) add(["rows", i, "to"], within);
+      }
+    }
+    if (b.window && b.window[0] >= b.window[1]) add(["window"], "must have from below to");
+  }
+
+  if (block.type === "histogram") {
+    const b = block as unknown as z.infer<typeof histogramBase>;
+    for (const [i, edge] of b.edges.entries()) {
+      if (edge < 0) add(["edges", i], "must not be negative");
+      else if (i > 0 && edge <= b.edges[i - 1]!) add(["edges", i], "must be greater than the edge before it");
+    }
+    const buckets = b.edges.length - 1;
+    for (const key of ["before", "after"] as const) {
+      const counts = b[key];
+      if (counts.length !== buckets) {
+        add([key], `needs exactly ${buckets} counts (got ${counts.length})`);
+        continue;
+      }
+      let valid = true;
+      for (const [i, count] of counts.entries()) {
+        if (count < 0) {
+          add([key, i], "must not be negative");
+          valid = false;
+        }
+      }
+      if (valid && counts.reduce((sum, c) => sum + c, 0) <= 0) add([key], "must add up to more than 0");
+    }
+  }
+
+  if (block.type === "run_history") {
+    const b = block as unknown as z.infer<typeof runHistoryBase>;
+    const index = new Map<string, number>();
+    for (const [i, run] of b.runs.entries()) {
+      const ref = run.ref.trim();
+      if (index.has(ref)) add(["runs", i, "ref"], "is already used by another run of this block");
+      else index.set(ref, i);
+    }
+    for (const [k, mark] of (b.marks ?? []).entries()) {
+      const at = mark.between.map((ref) => index.get(ref.trim()));
+      mark.between.forEach((ref, j) => {
+        if (at[j] === undefined) add(["marks", k, "between", j], "is not the ref of a run of this block");
+      });
+      if (at[0] !== undefined && at[1] !== undefined && at[1] !== at[0] + 1) {
+        add(["marks", k, "between"], "must name two neighbouring runs, the second right after the first");
+      }
+    }
+    if (b.span) {
+      const from = index.get(b.span.from.trim());
+      const to = index.get(b.span.to.trim());
+      if (from === undefined) add(["span", "from"], "is not the ref of a run of this block");
+      if (to === undefined) add(["span", "to"], "is not the ref of a run of this block");
+      if (from !== undefined && to !== undefined && from > to) add(["span", "to"], "must not be a run before from");
+    }
+  }
+
+  if (block.type === "diff") {
+    const b = block as unknown as z.infer<typeof diffBase>;
+    const lines = b.hunks.reduce((sum, hunk) => sum + hunk.length, 0);
+    if (lines > 12) add(["hunks"], `at most 12 lines in all (got ${lines})`);
+  }
+  return issues;
+}
+
 /** Where a block sits on a timeline event. Not together. */
 const placementFields = {
   slot: z.literal("summary").optional().describe("Draw the block above the note. Not together with anchor."),
@@ -210,6 +498,10 @@ export const timelineBlockSchema = z.discriminatedUnion("type", [
   tableBase.extend(placementFields),
   checksBase.extend(placementFields),
   changesBase.extend(placementFields),
+  rangeOverlapBase.extend(placementFields),
+  histogramBase.extend(placementFields),
+  runHistoryBase.extend(placementFields),
+  diffBase.extend(placementFields),
 ]);
 
 /**
@@ -282,6 +574,134 @@ const tableInput = z
   })
   .strict();
 
+/** A number as a tool returns it: a JSON number or a numeric string. */
+const measured = z.union([z.number(), z.string()]);
+
+/** A histogram, either as the contract has it or as cumulative le buckets. */
+const histogramInput = z
+  .object({
+    type: z.literal("histogram"),
+    title: blockText(80).optional(),
+    unit: blockText(12).optional(),
+    edges: histogramBase.shape.edges.optional().describe("Bucket edges. Send with before and after. Or send buckets instead."),
+    before: histogramBase.shape.before.optional(),
+    after: histogramBase.shape.after.optional(),
+    buckets: z
+      .array(
+        z
+          .object({
+            le: measured.describe('The upper bound, as the le label of a Prometheus bucket: a number, or "+Inf" for the last one'),
+            before: measured.describe("Cumulative count of the before window at this le (observations <= le)"),
+            after: measured.describe("Cumulative count of the after window at this le"),
+          })
+          .strict(),
+      )
+      .min(2)
+      .max(61)
+      .optional()
+      .describe("Cumulative bucket counts of two equal windows, one entry per le, as sum by (le) (increase(..._bucket[window])) returns them. Tellagen turns them into edges and one count per bucket."),
+    lower_edge: z
+      .number()
+      .finite()
+      .min(0)
+      .max(MAX_ABS)
+      .optional()
+      .describe("With buckets: where the first bucket starts. Default 0."),
+    overflow: z
+      .enum(["reject", "drop"])
+      .optional()
+      .describe('With buckets: what to do with observations above the last finite le (the +Inf bucket). A histogram has no open bucket. Default reject; drop leaves them out and says so in notes.'),
+    threshold: thresholdSchema.optional(),
+    source: trendSourceSchema.optional(),
+  })
+  .strict();
+
+/** Change roles of change_refs, mapped to the three marks a run history draws. */
+const ROLE_TO_MARK: Record<string, (typeof RUN_MARK_CHANGES)[number]> = {
+  regression: "regression",
+  fix: "fix",
+  change: "change",
+  regression_source: "regression",
+  first_bad: "regression",
+  rollback: "change",
+  last_good: "change",
+  verified_by: "change",
+  context: "change",
+};
+
+const runMarkInput = z
+  .object({
+    between: runMarkSchema.shape.between.optional(),
+    sha: blockText(64)
+      .optional()
+      .describe("The commit of the change. Without between, the mark goes before the first run built from this sha."),
+    change_ref: z
+      .enum(Object.keys(ROLE_TO_MARK) as [string, ...string[]])
+      .describe("regression, fix or change. A change_refs role is accepted too: regression_source and first_bad become regression, fix stays fix, any other role becomes change."),
+    at: rfc3339.optional(),
+    title: blockText(80).optional(),
+  })
+  .strict();
+
+/** One workflow run as the GitHub Actions REST API or gh run list --json returns it. */
+const githubRunInput = z
+  .object({
+    id: z.union([z.number(), z.string()]).optional(),
+    databaseId: z.union([z.number(), z.string()]).optional(),
+    run_number: z.number().int().optional(),
+    number: z.number().int().optional(),
+    head_sha: z.string().optional(),
+    headSha: z.string().optional(),
+    conclusion: z.string().nullable().optional(),
+    status: z.string().nullable().optional(),
+    run_started_at: z.string().optional(),
+    startedAt: z.string().optional(),
+    created_at: z.string().optional(),
+    createdAt: z.string().optional(),
+    event: z.string().optional(),
+    html_url: z.string().optional(),
+    url: z.string().optional(),
+    job: z.string().optional().describe("The failing job, from the run's jobs list. GitHub's run list does not carry it."),
+  })
+  .passthrough();
+
+const runHistoryInput = z
+  .object({
+    type: z.literal("run_history"),
+    title: blockText(80).optional(),
+    repo: repoField.optional(),
+    branch: blockText(80).optional(),
+    runs: runHistoryBase.shape.runs.optional().describe("2 to 30 runs, oldest first. Or send github_runs instead."),
+    github_runs: z
+      .array(githubRunInput)
+      .min(2)
+      .max(30)
+      .optional()
+      .describe("Workflow runs exactly as the GitHub Actions list returns them (REST or gh run list --json). Tellagen maps each to a run and puts them oldest first."),
+    marks: z.array(runMarkInput).max(4).optional(),
+    span: runSpanSchema.optional(),
+  })
+  .strict();
+
+const diffInput = z
+  .object({
+    type: z.literal("diff"),
+    title: blockText(80).optional(),
+    path: diffBase.shape.path,
+    repo: repoField.optional(),
+    ref: diffBase.shape.ref,
+    at: rfc3339.optional(),
+    additions: diffBase.shape.additions,
+    deletions: diffBase.shape.deletions,
+    hunks: diffBase.shape.hunks.optional().describe("1 to 6 hunks, at most 12 lines in all. Or send patch instead."),
+    patch: z
+      .string()
+      .max(200_000)
+      .optional()
+      .describe("A unified diff, as the patch of a GitHub commit or pull request file. Tellagen keeps its + and - lines; it must have at most 12."),
+  })
+  .strict();
+
 /** What tellagen_build_figure accepts. */
 export const figureInputSchema = z.discriminatedUnion("type", [
   statsBase,
@@ -290,9 +710,37 @@ export const figureInputSchema = z.discriminatedUnion("type", [
   tableInput,
   checksBase,
   changesBase,
+  rangeOverlapBase,
+  histogramInput,
+  runHistoryInput,
+  diffInput,
 ]);
 
 export type FigureInput = z.infer<typeof figureInputSchema>;
+
+/** The four figure types whose fields the tool listing leaves to the guide. */
+export const GUIDE_ONLY_FIGURE_TYPES = ["range_overlap", "histogram", "run_history", "diff"] as const;
+
+/**
+ * The figure as tellagen_build_figure lists it. The six original types carry
+ * their full schema; the four newer ones only their type, so the listing stays
+ * small (their fields are in the figure guide). buildFigure checks every type
+ * in full with figureInputSchema and names each bad field.
+ */
+export const figureToolInputSchema = z.discriminatedUnion("type", [
+  statsBase,
+  compareBase,
+  trendInput,
+  tableInput,
+  checksBase,
+  changesBase,
+  z
+    .object({ type: z.enum(GUIDE_ONLY_FIGURE_TYPES) })
+    .passthrough()
+    .describe(
+      "range_overlap, histogram, run_history or diff, with the fields in resource://tellagen/figure-guide. Checked in full when the tool runs.",
+    ),
+]);
 
 export type BuildFigureInput = {
   placement: FigurePlacement;
@@ -354,15 +802,11 @@ export function validateBlock(block: unknown): string[] {
       }
     }
   }
+  for (const issue of figureRuleIssues(b)) {
+    issues.push(`${issue.path.join(".")}: ${issue.message}`);
+  }
   return issues;
 }
-
-const PLANNED_HINT: Record<(typeof PLANNED_FIGURE_TYPES)[number], string> = {
-  range_overlap: "Send a compare block with the two edges as rows, or say it in the step.",
-  histogram: "Send a compare block with p50, p95 and p99 as rows (before and after, with the SLO as threshold), or a trend of the percentile.",
-  run_history: "Send a table with one row per run (run, commit, result), or a checks block with the failures first.",
-  diff: "Link the commit in the step's evidence refs and describe the change in the step. A changes block can show a value that moved from one thing to another.",
-};
 
 const toSeconds = (t: string | number): number | null => {
   if (typeof t === "number") {
@@ -508,6 +952,271 @@ function buildTrend(input: TrendInput): { block: Record<string, unknown>; notes:
   return { block, notes };
 }
 
+type Built = { block: Record<string, unknown>; notes: string[] } | { issues: string[] };
+
+const toMeasured = (v: number | string): number | null => {
+  const n = typeof v === "number" ? v : Number(v.trim());
+  return typeof v === "string" && v.trim() === "" ? null : Number.isFinite(n) ? n : null;
+};
+
+const toBound = (le: number | string): number | null => {
+  if (typeof le === "string" && /^\+?inf$/i.test(le.trim())) return Number.POSITIVE_INFINITY;
+  if (le === Number.POSITIVE_INFINITY) return le;
+  return toMeasured(le);
+};
+
+type HistogramInput = z.infer<typeof histogramInput>;
+
+/**
+ * A histogram from cumulative le buckets: the edges are the lower edge and the
+ * finite bounds, and the count of a bucket is the cumulative count at its
+ * bound less the one below it. Observations above the last finite bound have
+ * no bucket to go in; they are rejected unless overflow is drop.
+ */
+function buildHistogram(input: HistogramInput): Built {
+  const { buckets, lower_edge, overflow, edges, before, after, ...rest } = input;
+  if (buckets && (edges || before || after)) {
+    return { issues: ["buckets: send buckets, or edges with before and after, not both"] };
+  }
+  if (!buckets) {
+    if (!edges || !before || !after) {
+      return { issues: ["edges: send edges with before and after (one count per bucket), or send buckets (cumulative counts per le)"] };
+    }
+    return { block: { ...rest, edges, before, after }, notes: [] };
+  }
+
+  const notes: string[] = [];
+  const parsed: Array<{ le: number; before: number; after: number; at: number }> = [];
+  const issues: string[] = [];
+  for (const [i, bucket] of buckets.entries()) {
+    const le = toBound(bucket.le);
+    const b = toMeasured(bucket.before);
+    const a = toMeasured(bucket.after);
+    if (le === null) issues.push(`buckets.${i}.le: must be a number or +Inf`);
+    if (b === null) issues.push(`buckets.${i}.before: must be a number`);
+    if (a === null) issues.push(`buckets.${i}.after: must be a number`);
+    if (le !== null && b !== null && a !== null) parsed.push({ le, before: b, after: a, at: i });
+  }
+  if (issues.length > 0) return { issues };
+  parsed.sort((x, y) => x.le - y.le);
+  for (let i = 1; i < parsed.length; i += 1) {
+    if (parsed[i]!.le === parsed[i - 1]!.le) return { issues: [`buckets.${parsed[i]!.at}.le: ${parsed[i]!.le} is sent twice`] };
+  }
+  const finite = parsed.filter((p) => Number.isFinite(p.le));
+  const open = parsed.find((p) => !Number.isFinite(p.le));
+  if (finite.length < 2) return { issues: ["buckets: at least two buckets with a finite le are needed"] };
+  if (finite.length > 60) return { issues: [`buckets: ${finite.length} finite buckets; a histogram has at most 60. Query a coarser set of buckets.`] };
+
+  const lower = lower_edge ?? 0;
+  if (lower >= finite[0]!.le) {
+    return { issues: [`lower_edge: ${lower} must be below the first le (${finite[0]!.le})`] };
+  }
+  if (lower_edge === undefined) notes.push(`The first bucket starts at 0 (lower_edge) and ends at ${finite[0]!.le}.`);
+
+  const counts = { before: [] as number[], after: [] as number[] };
+  for (const key of ["before", "after"] as const) {
+    const top = Math.max(1, ...parsed.map((p) => Math.abs(p[key])));
+    const noise = top * 1e-9;
+    let previous = 0;
+    for (const p of finite) {
+      let count = p[key] - previous;
+      if (count < 0) {
+        if (-count > noise) {
+          return { issues: [`buckets.${p.at}.${key}: cumulative counts must not go down as le grows (${p[key]} after ${previous})`] };
+        }
+        count = 0;
+      }
+      counts[key].push(Number(count.toPrecision(12)));
+      previous = p[key];
+    }
+    if (open) {
+      const above = open[key] - previous;
+      if (above > noise) {
+        if (overflow !== "drop") {
+          return {
+            issues: [
+              `buckets: ${Number(above.toPrecision(12))} ${key} observations are above the last finite le (${finite[finite.length - 1]!.le}), in the +Inf bucket. A histogram has no open bucket: query a higher bucket, or set overflow to drop to leave them out and say so in the step.`,
+            ],
+          };
+        }
+        notes.push(`${Number(above.toPrecision(12))} ${key} observations above ${finite[finite.length - 1]!.le} (the +Inf bucket) were left out. Say so in the step.`);
+      } else if (above < -noise) {
+        return { issues: [`buckets.${open.at}.${key}: the +Inf count is below the count at the last finite le`] };
+      }
+    }
+  }
+
+  const block: Record<string, unknown> = {
+    ...rest,
+    edges: [lower, ...finite.map((p) => p.le)],
+    before: counts.before,
+    after: counts.after,
+  };
+  notes.push(`${buckets.length} cumulative buckets became ${finite.length} bucket counts per window.`);
+  return { block, notes };
+}
+
+type RunHistoryInput = z.infer<typeof runHistoryInput>;
+type GithubRun = z.infer<typeof githubRunInput>;
+
+const GITHUB_RESULTS: Record<string, (typeof RUN_RESULTS)[number]> = {
+  success: "success",
+  failure: "failure",
+  timed_out: "failure",
+  startup_failure: "failure",
+  cancelled: "cancelled",
+};
+const GITHUB_UNFINISHED = new Set(["queued", "in_progress", "waiting", "requested", "pending"]);
+
+const webUrl = (value: string | undefined): string | undefined => {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.hostname.startsWith("api.") ? value : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+function runFromGithub(run: GithubRun, i: number): { run?: Record<string, unknown>; issue?: string; mapped?: string } {
+  const number = run.run_number ?? run.number;
+  const id = run.id ?? run.databaseId;
+  const ref = number !== undefined ? `#${number}` : id !== undefined ? String(id) : "";
+  if (!ref) return { issue: `github_runs.${i}: needs run_number or id` };
+  const conclusion = (run.conclusion ?? "").trim().toLowerCase();
+  const status = (run.status ?? "").trim().toLowerCase();
+  let result: string | undefined;
+  let mapped: string | undefined;
+  if (conclusion === "") {
+    if (status === "" || GITHUB_UNFINISHED.has(status)) result = "pending";
+  } else {
+    result = GITHUB_RESULTS[conclusion];
+    if (result && conclusion !== result) mapped = `${ref} ${conclusion} is drawn as ${result}`;
+  }
+  if (!result) {
+    const what = conclusion || status;
+    return { issue: `github_runs.${i}.conclusion: "${what}" has no run_history result (success, failure, cancelled, pending). Leave the run out, or send runs yourself.` };
+  }
+  const out: Record<string, unknown> = { ref, result };
+  const sha = run.head_sha ?? run.headSha;
+  if (sha) out.sha = sha;
+  const at = run.run_started_at ?? run.startedAt ?? run.created_at ?? run.createdAt;
+  if (at) out.at = at;
+  if (run.event) out.trigger = run.event;
+  if (run.job) out.job = run.job;
+  const url = webUrl(run.html_url) ?? webUrl(run.url);
+  if (url) out.url = url;
+  return { run: out, mapped };
+}
+
+/** A run history, from runs or from the GitHub Actions run list; marks may be placed by sha. */
+function buildRunHistory(input: RunHistoryInput): Built {
+  const { github_runs, runs, marks, ...rest } = input;
+  if (github_runs && runs) return { issues: ["runs: send runs or github_runs, not both"] };
+  if (!github_runs && !runs) return { issues: ["runs: send runs (oldest first) or github_runs (as GitHub lists them)"] };
+  const notes: string[] = [];
+  let list: Array<Record<string, unknown>>;
+  if (github_runs) {
+    const issues: string[] = [];
+    const mapped: string[] = [];
+    list = [];
+    for (const [i, run] of github_runs.entries()) {
+      const out = runFromGithub(run, i);
+      if (out.issue) issues.push(out.issue);
+      if (out.mapped) mapped.push(out.mapped);
+      if (out.run) list.push(out.run);
+    }
+    if (issues.length > 0) return { issues };
+    if (mapped.length > 0) notes.push(`${mapped.join("; ")}.`);
+    if (list.every((run) => typeof run.at === "string" && Number.isFinite(Date.parse(run.at as string)))) {
+      const sorted = [...list].sort((a, b) => Date.parse(a.at as string) - Date.parse(b.at as string));
+      if (sorted.some((run, i) => run !== list[i])) notes.push("The runs were put oldest first by their start time.");
+      list = sorted;
+    } else {
+      notes.push("Some runs have no start time, so they are kept in the order sent. Runs must be oldest first.");
+    }
+  } else {
+    list = runs!.map((run) => ({ ...run }));
+  }
+
+  const outMarks: Array<Record<string, unknown>> = [];
+  for (const [k, mark] of (marks ?? []).entries()) {
+    const change = ROLE_TO_MARK[mark.change_ref]!;
+    if (change !== mark.change_ref) notes.push(`marks.${k}: change_ref ${mark.change_ref} is drawn as ${change}.`);
+    let between = mark.between;
+    if (!between) {
+      const sha = mark.sha?.trim().toLowerCase();
+      if (!sha) return { issues: [`marks.${k}: send between (two neighbouring run refs) or the sha of the change`] };
+      const first = list.findIndex((run) => {
+        const runSha = typeof run.sha === "string" ? run.sha.trim().toLowerCase() : "";
+        return runSha !== "" && (runSha.startsWith(sha) || sha.startsWith(runSha));
+      });
+      if (first <= 0) {
+        return {
+          issues: [
+            first === 0
+              ? `marks.${k}.sha: the first run is already built from ${mark.sha}, so there is no run before it. Send between, or add the run before it.`
+              : `marks.${k}.sha: no run is built from ${mark.sha}. Send between with the two runs the change falls between.`,
+          ],
+        };
+      }
+      between = [String(list[first - 1]!.ref), String(list[first]!.ref)];
+    }
+    const out: Record<string, unknown> = { between, change_ref: change };
+    if (mark.sha) out.sha = mark.sha;
+    if (mark.at) out.at = mark.at;
+    if (mark.title) out.title = mark.title;
+    outMarks.push(out);
+  }
+
+  const block: Record<string, unknown> = { ...rest, runs: list };
+  if (outMarks.length > 0) block.marks = outMarks;
+  return { block, notes };
+}
+
+type DiffInput = z.infer<typeof diffInput>;
+
+/** The + and - lines of a unified diff, one hunk per @@ header. */
+function buildDiff(input: DiffInput): Built {
+  const { patch, hunks, ...rest } = input;
+  if (patch !== undefined && hunks) return { issues: ["patch: send patch or hunks, not both"] };
+  if (patch === undefined) {
+    if (!hunks) return { issues: ["hunks: send hunks (at most 12 + and - lines) or patch (a unified diff)"] };
+    return { block: { ...rest, hunks }, notes: [] };
+  }
+  const lines = patch.split(/\r?\n/);
+  if (lines.filter((line) => line.startsWith("diff --git ")).length > 1) {
+    return { issues: [`patch: holds more than one file. Send the patch of ${input.path} only.`] };
+  }
+  const parsed: Array<Array<{ op: "+" | "-"; text: string }>> = [];
+  let current: Array<{ op: "+" | "-"; text: string }> | null = null;
+  for (const line of lines) {
+    if (line.startsWith("@@")) {
+      current = [];
+      parsed.push(current);
+      continue;
+    }
+    // File headers come before the first hunk; "\ No newline at end of file" is not a line.
+    if (current === null || line.startsWith("\\")) continue;
+    if (line.startsWith("+") || line.startsWith("-")) current.push({ op: line[0] as "+" | "-", text: line.slice(1) });
+  }
+  const kept = parsed.filter((hunk) => hunk.length > 0);
+  const changed = kept.reduce((sum, hunk) => sum + hunk.length, 0);
+  if (parsed.length === 0) return { issues: ["patch: no hunk found. Send the patch as GitHub gives it, from the first @@ line."] };
+  if (changed === 0) return { issues: ["patch: no added or removed line"] };
+  if (changed > 12 || kept.length > 6) {
+    return {
+      issues: [
+        `patch: ${changed} changed lines in ${kept.length} hunks. A diff shows at most 12 lines in at most 6 hunks: send hunks with the lines that show the change, copied as they are.`,
+      ],
+    };
+  }
+  const notes = parsed.length !== kept.length ? [`${parsed.length - kept.length} hunks with no + or - line were left out.`] : [];
+  return { block: { ...rest, hunks: kept }, notes };
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
 const describe = (block: Record<string, unknown>): string => {
   switch (block.type) {
     case "trend": {
@@ -523,6 +1232,28 @@ const describe = (block: Record<string, unknown>): string => {
       return `table of ${(block.rows as unknown[]).length} rows by ${(block.columns as unknown[]).length} columns`;
     case "checks":
       return `checks with ${(block.items as unknown[]).length} items`;
+    case "range_overlap": {
+      // For the agent only: Tellagen computes and draws the overlap itself.
+      const rows = block.rows as Array<{ from: number; to: number }>;
+      const from = Math.max(...rows.map((r) => r.from));
+      const to = Math.min(...rows.map((r) => r.to));
+      const unit = typeof block.unit === "string" ? ` ${block.unit}` : "";
+      return `range_overlap of ${rows.length} rows; ${from <= to ? `they overlap from ${from} to ${to}${unit}` : "they do not all overlap"}`;
+    }
+    case "histogram": {
+      const total = (key: string) => Number((block[key] as number[]).reduce((a, c) => a + c, 0).toPrecision(12));
+      return `histogram of ${(block.edges as unknown[]).length - 1} buckets, ${total("before")} observations before and ${total("after")} after`;
+    }
+    case "run_history": {
+      const runs = block.runs as Array<{ result: string }>;
+      const count = (result: string) => runs.filter((r) => r.result === result).length;
+      const marks = (block.marks as unknown[] | undefined)?.length ?? 0;
+      return `run_history of ${runs.length} runs (${count("success")} passed, ${count("failure")} failed, ${count("cancelled")} cancelled, ${count("pending")} pending) with ${plural(marks, "mark")}`;
+    }
+    case "diff": {
+      const lines = (block.hunks as unknown[][]).reduce((a, h) => a + h.length, 0);
+      return `diff of ${block.path} at ${block.ref}: +${block.additions} -${block.deletions} in the whole change, ${plural(lines, "line")} shown`;
+    }
     default:
       return `changes with ${(block.rows as unknown[]).length} rows`;
   }
@@ -534,16 +1265,6 @@ const describe = (block: Record<string, unknown>): string => {
  * and never makes up a value.
  */
 export function buildFigure(input: BuildFigureInput): BuildFigureResult {
-  const raw = input.figure as { type?: unknown } | null;
-  const asked = typeof raw?.type === "string" ? raw.type : "";
-  if ((PLANNED_FIGURE_TYPES as readonly string[]).includes(asked)) {
-    const hint = PLANNED_HINT[asked as (typeof PLANNED_FIGURE_TYPES)[number]];
-    return {
-      ok: false,
-      issues: [`type: "${asked}" is designed but Tellagen does not accept it yet. ${hint}`],
-    };
-  }
-
   const parsed = figureInputSchema.safeParse(input.figure);
   if (!parsed.success) return { ok: false, issues: issuesOf(parsed.error) };
   const figure = parsed.data;
@@ -552,7 +1273,7 @@ export function buildFigure(input: BuildFigureInput): BuildFigureResult {
     if (!(STEP_FIGURE_TYPES as readonly string[]).includes(figure.type)) {
       return {
         ok: false,
-        issues: [`type: a step figure is stats, compare or trend. A ${figure.type} block is a timeline block, so use placement "timeline_block" or pick one of those three.`],
+        issues: [`type: a step figure is ${STEP_FIGURE_TYPES.join(", ")}. A ${figure.type} block is a timeline block, so use placement "timeline_block" or pick one of those.`],
       };
     }
     if (input.slot || input.anchor || input.postmortem !== undefined) {
@@ -562,11 +1283,24 @@ export function buildFigure(input: BuildFigureInput): BuildFigureResult {
 
   const notes: string[] = [];
   let block: Record<string, unknown>;
-  if (figure.type === "trend") {
-    const built = buildTrend(figure);
+  const take = (built: Built): BuildFigureResult | null => {
     if ("issues" in built) return { ok: false, issues: built.issues };
     block = built.block;
     notes.push(...built.notes);
+    return null;
+  };
+  if (figure.type === "trend") {
+    const failed = take(buildTrend(figure));
+    if (failed) return failed;
+  } else if (figure.type === "histogram") {
+    const failed = take(buildHistogram(figure));
+    if (failed) return failed;
+  } else if (figure.type === "run_history") {
+    const failed = take(buildRunHistory(figure));
+    if (failed) return failed;
+  } else if (figure.type === "diff") {
+    const failed = take(buildDiff(figure));
+    if (failed) return failed;
   } else if (figure.type === "table") {
     block = {
       ...figure,
@@ -575,7 +1309,7 @@ export function buildFigure(input: BuildFigureInput): BuildFigureResult {
   } else {
     block = { ...figure };
   }
-  block = Object.fromEntries(Object.entries(block).filter(([, v]) => v !== undefined));
+  block = Object.fromEntries(Object.entries(block!).filter(([, v]) => v !== undefined));
 
   if (input.placement === "timeline_block") {
     if (input.slot) block.slot = input.slot;
@@ -586,6 +1320,16 @@ export function buildFigure(input: BuildFigureInput): BuildFigureResult {
   const issues = validateBlock(block);
   if (issues.length > 0) return { ok: false, issues };
 
+  if (input.placement === "step_figure") {
+    const bytes = new TextEncoder().encode(JSON.stringify(block)).length;
+    if (bytes > MAX_STEP_FIGURE_BYTES) {
+      return {
+        ok: false,
+        issues: [`figure: ${bytes} bytes; a step figure holds at most ${MAX_STEP_FIGURE_BYTES}. Send fewer points, runs or rows, or put it on a timeline event.`],
+      };
+    }
+  }
+
   return {
     ok: true,
     type: String(block.type),
@@ -595,7 +1339,7 @@ export function buildFigure(input: BuildFigureInput): BuildFigureResult {
     notes,
     use:
       input.placement === "step_figure"
-        ? "Put this object in result_summary.causal_paths[].steps[].figure. One figure per step. It needs the diagnosis structure the pickup advertises as diagnosis_structure_v1."
+        ? "Put this object in result_summary.causal_paths[].steps[].figure. One figure per step. It needs the diagnosis structure the pickup advertises as diagnosis_structure_v1. A Tellagen older than these figure types drops a checks, range_overlap, histogram, run_history or diff figure and says so in the completion warnings (figure_invalid)."
         : "Put this object in the blocks array of tellagen_post_timeline_event or tellagen_update_timeline_event. An update replaces the whole array, so send every block you want to keep.",
   };
 }

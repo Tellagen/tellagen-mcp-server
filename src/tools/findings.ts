@@ -3,8 +3,11 @@ import { z } from "zod";
 import { TellagenClient } from "../client.js";
 import { formatError } from "../errors.js";
 import {
+  DIAGNOSIS_CHANGES_CAPABILITY,
   evidenceRefStructureShape,
+  stripFindingChangeLinks,
   stripFindingEvidenceStructure,
+  supportsDiagnosisChanges,
   supportsDiagnosisStructure,
   unsupportedNotice,
 } from "../diagnosis-structure.js";
@@ -220,6 +223,16 @@ export function registerFindingTools(
         ) {
           reqBody.evidence_refs = stripped.refs;
           notice = unsupportedNotice(stripped.removed);
+        }
+        // ci_run, deployment and release links need diagnosis_changes_v1.
+        const changeLinks = stripFindingChangeLinks(reqBody.evidence_refs);
+        if (
+          changeLinks.removed.length > 0 &&
+          !(await supportsDiagnosisChanges(client, investigation_run_id))
+        ) {
+          reqBody.evidence_refs = changeLinks.refs;
+          const changesNotice = unsupportedNotice(changeLinks.removed, DIAGNOSIS_CHANGES_CAPABILITY);
+          notice = notice ? `${notice} ${changesNotice}` : changesNotice;
         }
         const data = await client.post(
           `/api/v1/incidents/${incident_id}/findings`,

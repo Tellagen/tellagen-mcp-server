@@ -1,0 +1,27 @@
+[
+  {
+    "type": "diff",
+    "title": "Focus clearance now bounds the clear area by the sticky chrome",
+    "path": "web/hooks/incident/useStickyChromeFocusClearance.ts",
+    "repo": "Tellagen/tellagen",
+    "ref": "2e08148fd",
+    "at": "2026-10-28T22:19:00Z",
+    "additions": 50,
+    "deletions": 7,
+    "hunks": [
+      [
+        { "op": "-", "text": "const bottom =" },
+        { "op": "+", "text": "let bottom =" }
+      ],
+      [
+        { "op": "+", "text": "// The offsets describe the chrome once it is stuck. Near the end of a" },
+        { "op": "+", "text": "// short tab the tab bar can still be in flow below that line, so the" },
+        { "op": "+", "text": "// chrome's own boxes bound the clear area too." }
+      ],
+      [
+        { "op": "+", "text": "  if (box.top < middle) top = Math.max(top, box.bottom);" },
+        { "op": "+", "text": "  else bottom = Math.min(bottom, box.top);" }
+      ]
+    ]
+  }
+]

@@ -1,0 +1,21 @@
+[
+  {
+    "type": "histogram",
+    "example": true,
+    "title": "Request latency, before and after the deploy",
+    "unit": "ms",
+    "edges": [10, 13, 16.8, 21.7, 28.2, 36.5, 47.3, 61.3, 79.4, 103, 133, 173, 224, 290, 375, 486, 630, 816, 1060, 1370, 1770, 2300, 2980, 3860, 5000],
+    "before": [43, 152, 438, 1054, 1963, 2993, 3657, 3584, 2846, 1780, 936, 376, 124, 33, 7, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+    "after": [22, 84, 260, 679, 1371, 2264, 2997, 3182, 2738, 1855, 1057, 460, 171, 81, 144, 351, 608, 715, 545, 284, 101, 23, 3, 0],
+    "threshold": {
+      "value": 500,
+      "label": "SLO 500 ms"
+    },
+    "source": {
+      "kind": "promql",
+      "datasource": "prometheus",
+      "query": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))",
+      "step": "5m"
+    }
+  }
+]

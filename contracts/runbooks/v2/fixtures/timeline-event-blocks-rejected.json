@@ -5,7 +5,7 @@
       "name": "unknown block type",
       "blocks": [{"type": "heatmap", "cells": [[1, 2], [3, 4]]}],
       "field": "blocks[0].type",
-      "message": "unknown block type \"heatmap\" (use stats, compare, trend, table, checks or changes)"
+      "message": "unknown block type \"heatmap\" (use stats, compare, trend, table, checks, changes, range_overlap, histogram, run_history or diff)"
     },
     {
       "name": "a number sent as text",
@@ -57,6 +57,34 @@
       "blocks": [{"type": "checks", "items": [{"label": "Alert cleared", "state": "pass", "owner": "ana"}]}],
       "field": "blocks[0].items[0].owner",
       "message": "is not a known field (known: label, state, detail)"
+    },
+    {
+      "name": "a run history mark between runs that are not neighbours",
+      "blocks": [{"type": "run_history", "runs": [{"ref": "1", "result": "success"}, {"ref": "2", "result": "failure"}, {"ref": "3", "result": "failure"}], "marks": [{"between": ["1", "3"], "change_ref": "regression"}]}],
+      "field": "blocks[0].marks[0].between",
+      "message": "must name two neighbouring runs, the second right after the first"
+    },
+    {
+      "name": "histogram counts that do not match the edges",
+      "blocks": [{"type": "histogram", "edges": [10, 100, 1000], "before": [5], "after": [2, 8]}],
+      "field": "blocks[0].before",
+      "message": "needs exactly 2 counts (got 1)"
+    },
+    {
+      "name": "a diff with more than twelve lines",
+      "blocks": [{"type": "diff", "path": "a.go", "ref": "abc", "additions": 13, "deletions": 0, "hunks": [[
+        {"op": "+", "text": "1"}, {"op": "+", "text": "2"}, {"op": "+", "text": "3"}, {"op": "+", "text": "4"}, {"op": "+", "text": "5"},
+        {"op": "+", "text": "6"}, {"op": "+", "text": "7"}, {"op": "+", "text": "8"}, {"op": "+", "text": "9"}, {"op": "+", "text": "10"},
+        {"op": "+", "text": "11"}, {"op": "+", "text": "12"}, {"op": "+", "text": "13"}
+      ]]}],
+      "field": "blocks[0].hunks",
+      "message": "at most 12 lines in all (got 13)"
+    },
+    {
+      "name": "two ranges with only one in the whole range",
+      "blocks": [{"type": "range_overlap", "min": 0, "max": 100, "rows": [{"label": "a", "from": 10, "to": 20}, {"label": "b", "from": 50, "to": 150}]}],
+      "field": "blocks[0].rows[1].to",
+      "message": "must be within min and max (0 to 100)"
     }
   ]
 }

@@ -41,7 +41,8 @@ describe("shared source link vectors (same cases as the web resolver)", () => {
   });
 
   // When the app repo is checked out next to this one, the vendored copy must
-  // be the app's file. Set TELLAGEN_APP_REPO to point at it.
+  // hold the app's vectors. Only the description may differ. Set
+  // TELLAGEN_APP_REPO to point at it.
   const appVectors = join(
     process.env.TELLAGEN_APP_REPO ?? join(root, "..", "tellagen"),
     "web",
@@ -50,11 +51,15 @@ describe("shared source link vectors (same cases as the web resolver)", () => {
     "sourceLinkVectors.json",
   );
   it.skipIf(!existsSync(appVectors))(
-    "matches the app repo's vectors file byte for byte",
+    "has the same vectors as the app repo's file",
     () => {
-      expect(readFileSync(join(root, "test", "fixtures", "sourceLinkVectors.json"), "utf8")).toBe(
-        readFileSync(appVectors, "utf8"),
-      );
+      const withoutDescription = (path: string) => {
+        const { description: _description, ...rest } = JSON.parse(readFileSync(path, "utf8"));
+        return rest;
+      };
+      expect(
+        withoutDescription(join(root, "test", "fixtures", "sourceLinkVectors.json")),
+      ).toStrictEqual(withoutDescription(appVectors));
     },
   );
 });

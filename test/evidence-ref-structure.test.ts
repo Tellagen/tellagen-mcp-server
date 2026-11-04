@@ -31,7 +31,7 @@ function findingInput(refOverrides: Record<string, unknown> = {}) {
 const pickup = (extra: Record<string, unknown> = {}) =>
   jsonResponse({ run: { id: "run-1" }, request: {}, ...extra });
 
-describe("evidence ref links, command and datasource (CORE-776)", () => {
+describe("evidence ref links, command and datasource", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     fetchSpy = vi.spyOn(globalThis, "fetch");

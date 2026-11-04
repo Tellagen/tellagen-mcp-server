@@ -715,6 +715,8 @@ describe("Tool integration via client", () => {
           "gap_findings_v2",
           "completion_coverage_v2",
           "diagnosis_structure_v1",
+          "diagnosis_changes_v1",
+          "run_images_v1",
         ],
       });
     });

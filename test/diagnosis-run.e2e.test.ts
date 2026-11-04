@@ -1,5 +1,5 @@
 /**
- * A run replayed end to end against a fake Tellagen REST server (CORE-778):
+ * A run replayed end to end against a fake Tellagen REST server:
  * pickup, build_source_link, trace step, post_finding x2, complete. The MCP
  * server is real and is called through an MCP client over an in-memory
  * transport, so the tool input schemas run exactly as they do for an agent
@@ -275,7 +275,7 @@ async function replayRun(call: Awaited<ReturnType<typeof connect>>["call"]) {
   return { links, deployId, errorId, complete, cause };
 }
 
-describe("a replayed run against a fake Tellagen REST server (CORE-778)", () => {
+describe("a replayed run against a fake Tellagen REST server", () => {
   let backend: FakeBackend | undefined;
   afterEach(async () => {
     await backend?.close();
@@ -332,6 +332,8 @@ describe("a replayed run against a fake Tellagen REST server (CORE-778)", () => 
       "gap_findings_v2",
       "completion_coverage_v2",
       "diagnosis_structure_v1",
+      "diagnosis_changes_v1",
+      "run_images_v1",
     ]);
     expect(pickup.body.client.name).toBe("claude");
 

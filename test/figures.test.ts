@@ -4,7 +4,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { TellagenClient } from "../src/client.js";
-import { buildFigure, validateBlock } from "../src/figures.js";
+import { buildFigure, MAX_STEP_FIGURE_BYTES, validateBlock } from "../src/figures.js";
+import { FIGURE_GUIDE } from "../src/tools/figures.js";
 import { createServer } from "../src/server.js";
 import { registerTimelineTools } from "../src/tools/timeline.js";
 
@@ -179,10 +180,11 @@ describe("compare, stats, table, checks and changes", () => {
 describe("placement", () => {
   const table = { type: "table", columns: [{ label: "A" }], rows: [{ cells: ["x"] }] };
 
-  it("keeps step figures to stats, compare and trend", () => {
+  it("keeps table and changes off a step and allows checks there", () => {
     const result = buildFigure({ placement: "step_figure", figure: table });
     expect(issues(result)).toContain("timeline block");
     expect(buildFigure({ placement: "step_figure", figure: { type: "stats", items: [{ label: "a", value: "1" }] } }).ok).toBe(true);
+    expect(buildFigure({ placement: "step_figure", figure: { type: "checks", items: [{ label: "E2E Tests", state: "fail" }] } }).ok).toBe(true);
   });
 
   it("gives a step figure no timeline placement", () => {
@@ -196,14 +198,15 @@ describe("placement", () => {
     expect(issues(buildFigure({ placement: "timeline_block", figure: table, slot: "summary", anchor: "Verified outcome" }))).toContain("slot or anchor, not both");
   });
 
-  it("refuses a planned widget and points at what to send", () => {
+  it("rejects a histogram with too few edges, naming the field", () => {
     const result = buildFigure({ placement: "step_figure", figure: { type: "histogram", edges: [1, 2], before: [1], after: [2] } });
-    expect(issues(result)).toContain("does not accept it yet");
-    expect(issues(result)).toContain("compare");
+    expect(issues(result)).toContain("edges");
   });
 
-  it.each(["range_overlap", "histogram", "run_history", "diff"])("names %s as designed but not accepted yet", (type) => {
-    expect(issues(buildFigure({ placement: "step_figure", figure: { type } }))).toContain(`"${type}" is designed but Tellagen does not accept it yet`);
+  it.each(["range_overlap", "histogram", "run_history", "diff"])("takes %s as a step figure now", (type) => {
+    const result = buildFigure({ placement: "step_figure", figure: { type } });
+    expect(issues(result)).not.toContain("does not accept it yet");
+    expect(issues(result)).not.toContain("timeline block");
   });
 
   it("checks a finished block the way the API does", () => {
@@ -237,8 +240,10 @@ describe("through the MCP server", () => {
     expect(list.resources.map((r) => r.uri)).toContain("resource://tellagen/figure-guide");
     const guide = await client.readResource({ uri: "resource://tellagen/figure-guide" });
     const body = String(guide.contents[0]?.text);
-    for (const type of ["stats", "compare", "trend", "table", "checks", "changes"]) expect(body).toContain(type);
-    expect(body).toContain("Designed but not accepted yet");
+    for (const type of ["stats", "compare", "trend", "table", "checks", "changes", "range_overlap", "histogram", "run_history", "diff"]) {
+      expect(body).toContain(`### ${type}`);
+    }
+    expect(body).not.toContain("Designed but not accepted yet");
   });
 
   it("lists the tool with a readable schema and builds a figure", async () => {
@@ -274,7 +279,7 @@ describe("through the MCP server", () => {
       name: "tellagen_build_figure",
       arguments: {
         placement: "step_figure",
-        figure: { type: "checks", items: [{ label: "E2E Tests", state: "fail" }] },
+        figure: { type: "changes", rows: [{ label: "pool size", from: "20", to: "40" }] },
       },
     });
     const out = JSON.parse((result.content as Array<{ text: string }>)[0]!.text);
@@ -322,5 +327,339 @@ describe("timeline tools carry blocks", () => {
     expect(schema.safeParse({ ...base, blocks: [block] }).success).toBe(true);
     expect(schema.safeParse({ ...base, blocks: [{ type: "heatmap", cells: [[1]] }] }).success).toBe(false);
     expect(schema.safeParse({ ...base, blocks: Array(13).fill(block) }).success).toBe(false);
+  });
+});
+
+describe("range_overlap", () => {
+  const rows = [
+    { label: "Tab bar", from: 105, to: 153 },
+    { label: "Impact table", from: 149, to: 385 },
+  ];
+
+  it("builds as given and reports the overlap without sending it", () => {
+    const result = buildFigure({ placement: "step_figure", figure: { type: "range_overlap", unit: "px", min: 0, max: 393, rows } });
+    if (!result.ok) throw new Error(result.issues.join("; "));
+    expect(result.block).toEqual({ type: "range_overlap", unit: "px", min: 0, max: 393, rows });
+    expect(result.summary).toContain("overlap from 149 to 153 px");
+    expect(result.block).not.toHaveProperty("overlap");
+  });
+
+  it("names every broken rule", () => {
+    const build = (extra: Record<string, unknown>) =>
+      issues(buildFigure({ placement: "timeline_block", figure: { type: "range_overlap", rows, ...extra } }));
+    expect(build({ rows: [{ label: "a", from: 5, to: 1 }, rows[1]] })).toContain("rows.0.to: must not be below from");
+    expect(build({ min: 0 })).toContain("max: is required when min is set");
+    expect(build({ min: 10, max: 10 })).toContain("max: must be greater than min");
+    expect(build({ min: 0, max: 200 })).toContain("rows.1.to: must be within min and max (0 to 200)");
+    expect(build({ window: [160, 140] })).toContain("window: must have from below to");
+    expect(build({ rows: [rows[0]] })).toContain("rows");
+    expect(build({ rows: Array(5).fill(rows[0]) })).toContain("rows");
+    expect(build({ rows: [{ label: "x".repeat(81), from: 1, to: 2 }, rows[1]] })).toContain("rows.0.label: at most 80 characters (got 81)");
+    expect(build({ rows: [{ label: "a‮b", from: 1, to: 2 }, rows[1]] })).toContain("rows.0.label");
+  });
+});
+
+describe("histogram", () => {
+  const buckets = [
+    { le: "0.1", before: "820", after: "610" },
+    { le: "0.5", before: "990", after: "800" },
+    { le: "1", before: "1000", after: "940" },
+    { le: "+Inf", before: "1000", after: "940" },
+  ];
+
+  it("turns cumulative le buckets into edges and one count per bucket", () => {
+    const result = buildFigure({
+      placement: "step_figure",
+      figure: { type: "histogram", unit: "s", buckets, threshold: { value: 0.5, label: "SLO 500 ms" } },
+    });
+    if (!result.ok) throw new Error(result.issues.join("; "));
+    expect(result.block).toEqual({
+      type: "histogram",
+      unit: "s",
+      edges: [0, 0.1, 0.5, 1],
+      before: [820, 170, 10],
+      after: [610, 190, 140],
+      threshold: { value: 0.5, label: "SLO 500 ms" },
+    });
+    expect(result.notes.join(" ")).toContain("starts at 0");
+    expect(result.summary).toBe("histogram of 3 buckets, 1000 observations before and 940 after");
+  });
+
+  it("sorts buckets, takes numbers and a lower edge", () => {
+    const block = okBlock(
+      buildFigure({
+        placement: "timeline_block",
+        figure: {
+          type: "histogram",
+          lower_edge: 0.05,
+          buckets: [
+            { le: 0.5, before: 9, after: 5 },
+            { le: 0.1, before: 4, after: 1 },
+          ],
+        },
+      }),
+    );
+    expect(block).toMatchObject({ edges: [0.05, 0.1, 0.5], before: [4, 5], after: [1, 4] });
+  });
+
+  it("refuses observations above the last finite le unless told to drop them", () => {
+    const open = [...buckets.slice(0, 3), { le: "+Inf", before: "1004", after: "940" }];
+    const refused = issues(buildFigure({ placement: "step_figure", figure: { type: "histogram", buckets: open } }));
+    expect(refused).toContain("4 before observations are above the last finite le (1)");
+    expect(refused).toContain("overflow");
+    const dropped = buildFigure({ placement: "step_figure", figure: { type: "histogram", buckets: open, overflow: "drop" } });
+    if (!dropped.ok) throw new Error(dropped.issues.join("; "));
+    expect(dropped.block).toMatchObject({ before: [820, 170, 10] });
+    expect(dropped.notes.join(" ")).toContain("4 before observations above 1 (the +Inf bucket) were left out");
+  });
+
+  it("names a bucket whose cumulative count goes down, a repeated le and a bad lower edge", () => {
+    const down = [{ le: 1, before: 10, after: 5 }, { le: 2, before: 7, after: 6 }];
+    expect(issues(buildFigure({ placement: "step_figure", figure: { type: "histogram", buckets: down } }))).toContain(
+      "buckets.1.before: cumulative counts must not go down as le grows (7 after 10)",
+    );
+    const twice = [{ le: 1, before: 1, after: 1 }, { le: "1", before: 2, after: 2 }, { le: 2, before: 3, after: 3 }];
+    expect(issues(buildFigure({ placement: "step_figure", figure: { type: "histogram", buckets: twice } }))).toContain("is sent twice");
+    expect(
+      issues(buildFigure({ placement: "step_figure", figure: { type: "histogram", lower_edge: 1, buckets: buckets.slice(0, 3) } })),
+    ).toContain("lower_edge: 1 must be below the first le (0.1)");
+    expect(
+      issues(buildFigure({ placement: "step_figure", figure: { type: "histogram", buckets: [{ le: "x", before: 1, after: 1 }, buckets[1]] } })),
+    ).toContain("buckets.0.le: must be a number or +Inf");
+  });
+
+  it("checks per-bucket counts the way the API does", () => {
+    const build = (figure: Record<string, unknown>) => buildFigure({ placement: "timeline_block", figure: { type: "histogram", ...figure } });
+    expect(okBlock(build({ edges: [10, 100, 1000], before: [5, 1], after: [2, 8] }))).toMatchObject({ edges: [10, 100, 1000] });
+    expect(issues(build({ edges: [10, 100, 1000], before: [5], after: [2, 8] }))).toContain("before: needs exactly 2 counts (got 1)");
+    expect(issues(build({ edges: [10, 10, 1000], before: [5, 1], after: [2, 8] }))).toContain("edges.1: must be greater than the edge before it");
+    expect(issues(build({ edges: [-1, 10, 1000], before: [5, 1], after: [2, 8] }))).toContain("edges.0: must not be negative");
+    expect(issues(build({ edges: [10, 100, 1000], before: [0, 0], after: [2, -8] }))).toContain("before: must add up to more than 0");
+    expect(issues(build({ edges: [10, 100, 1000], before: [0, 0], after: [2, -8] }))).toContain("after.1: must not be negative");
+    expect(issues(build({ edges: Array.from({ length: 62 }, (_, i) => i), before: [], after: [] }))).toContain("edges");
+    expect(issues(build({ edges: [10, 100, 1000], before: [5, 1], after: [2, 8], buckets }))).toContain("not both");
+    expect(issues(build({ edges: [10, 100, 1000], before: [5, 1] }))).toContain("edges: send edges with before and after");
+  });
+
+  it("refuses example data: a figure is built from a tool result", () => {
+    expect(
+      issues(buildFigure({ placement: "timeline_block", figure: { type: "histogram", example: true, edges: [1, 2, 3], before: [1, 1], after: [1, 1] } })),
+    ).toContain("example");
+  });
+});
+
+describe("run_history", () => {
+  // As the GitHub Actions REST list returns them: newest first.
+  const restRuns = [
+    { id: 903, run_number: 4152, head_sha: "c0ffee1", conclusion: "success", status: "completed", created_at: "2026-10-30T10:00:00Z", event: "push", html_url: "https://github.com/acme/shop/actions/runs/903", url: "https://api.github.com/repos/acme/shop/actions/runs/903", name: "E2E" },
+    { id: 902, run_number: 4151, head_sha: "4b7a2d1", conclusion: "timed_out", status: "completed", created_at: "2026-10-30T09:00:00Z", event: "push", html_url: "https://github.com/acme/shop/actions/runs/902", job: "E2E Tests" },
+    { id: 901, run_number: 4150, head_sha: "9f2c1e0", conclusion: "success", status: "completed", created_at: "2026-10-30T08:00:00Z", event: "schedule", html_url: "https://github.com/acme/shop/actions/runs/901" },
+  ];
+
+  it("maps the GitHub Actions list to runs oldest first and places marks by sha", () => {
+    const result = buildFigure({
+      placement: "step_figure",
+      figure: {
+        type: "run_history",
+        repo: "acme/shop",
+        branch: "master",
+        github_runs: restRuns,
+        marks: [
+          { sha: "4b7a2d1", change_ref: "regression_source", title: "Sticky header" },
+          { sha: "c0ffee1", change_ref: "fix" },
+        ],
+      },
+    });
+    if (!result.ok) throw new Error(result.issues.join("; "));
+    expect(result.block).toEqual({
+      type: "run_history",
+      repo: "acme/shop",
+      branch: "master",
+      runs: [
+        { ref: "#4150", result: "success", sha: "9f2c1e0", at: "2026-10-30T08:00:00Z", trigger: "schedule", url: "https://github.com/acme/shop/actions/runs/901" },
+        { ref: "#4151", result: "failure", sha: "4b7a2d1", at: "2026-10-30T09:00:00Z", trigger: "push", job: "E2E Tests", url: "https://github.com/acme/shop/actions/runs/902" },
+        { ref: "#4152", result: "success", sha: "c0ffee1", at: "2026-10-30T10:00:00Z", trigger: "push", url: "https://github.com/acme/shop/actions/runs/903" },
+      ],
+      marks: [
+        { between: ["#4150", "#4151"], change_ref: "regression", sha: "4b7a2d1", title: "Sticky header" },
+        { between: ["#4151", "#4152"], change_ref: "fix", sha: "c0ffee1" },
+      ],
+    });
+    const notes = result.notes.join(" ");
+    expect(notes).toContain("#4151 timed_out is drawn as failure");
+    expect(notes).toContain("oldest first");
+    expect(notes).toContain("regression_source is drawn as regression");
+    expect(result.summary).toBe("run_history of 3 runs (2 passed, 1 failed, 0 cancelled, 0 pending) with 2 marks");
+  });
+
+  it("reads gh run list --json, keeps a running run as pending and never links the API address", () => {
+    const block = okBlock(
+      buildFigure({
+        placement: "timeline_block",
+        figure: {
+          type: "run_history",
+          github_runs: [
+            { databaseId: 11, number: 7, headSha: "aaaaaaa", conclusion: "", status: "in_progress", startedAt: "2026-10-30T09:00:00Z", url: "https://api.github.com/repos/a/b/actions/runs/11" },
+            { databaseId: 10, number: 6, headSha: "bbbbbbb", conclusion: "cancelled", status: "completed", startedAt: "2026-10-30T08:00:00Z", url: "https://github.com/a/b/actions/runs/10" },
+          ],
+        },
+      }),
+    );
+    expect(block.runs).toEqual([
+      { ref: "#6", result: "cancelled", sha: "bbbbbbb", at: "2026-10-30T08:00:00Z", url: "https://github.com/a/b/actions/runs/10" },
+      { ref: "#7", result: "pending", sha: "aaaaaaa", at: "2026-10-30T09:00:00Z" },
+    ]);
+  });
+
+  it("refuses a conclusion with no result instead of guessing", () => {
+    const skipped = [restRuns[0], { ...restRuns[1], conclusion: "skipped" }];
+    expect(issues(buildFigure({ placement: "step_figure", figure: { type: "run_history", github_runs: skipped } }))).toContain(
+      'github_runs.1.conclusion: "skipped" has no run_history result',
+    );
+  });
+
+  it("names a mark it cannot place and the rules the API checks", () => {
+    const runs = [
+      { ref: "1", result: "success", sha: "aaaaaaa" },
+      { ref: "2", result: "failure", sha: "bbbbbbb" },
+      { ref: "3", result: "failure" },
+    ];
+    const build = (extra: Record<string, unknown>) =>
+      buildFigure({ placement: "timeline_block", figure: { type: "run_history", runs, ...extra } });
+    expect(issues(build({ marks: [{ sha: "ccccccc", change_ref: "fix" }] }))).toContain("marks.0.sha: no run is built from ccccccc");
+    expect(issues(build({ marks: [{ sha: "aaaaaaa", change_ref: "regression" }] }))).toContain("there is no run before it");
+    expect(issues(build({ marks: [{ change_ref: "fix" }] }))).toContain("marks.0: send between");
+    expect(issues(build({ marks: [{ between: ["1", "3"], change_ref: "regression" }] }))).toContain(
+      "marks.0.between: must name two neighbouring runs, the second right after the first",
+    );
+    expect(issues(build({ marks: [{ between: ["1", "9"], change_ref: "regression" }] }))).toContain("marks.0.between.1: is not the ref of a run of this block");
+    expect(issues(build({ span: { from: "3", to: "1", label: "E2E failed" } }))).toContain("span.to: must not be a run before from");
+    expect(issues(build({ runs: [...runs, { ref: "2", result: "success" }] }))).toContain("runs.3.ref: is already used by another run of this block");
+    expect(issues(build({ runs: [{ ...runs[0], url: "http://ci.example/1" }, runs[1]] }))).toContain("runs.0.url: must be an https:// link without spaces");
+    expect(issues(build({ runs: [{ ...runs[0], result: "skipped" }, runs[1]] }))).toContain("runs.0.result");
+    expect(issues(build({ repo: "acme" }))).toContain("repo: must look like owner/name");
+    expect(issues(build({ runs: Array.from({ length: 31 }, (_, i) => ({ ref: String(i), result: "success" })) }))).toContain("runs");
+    expect(issues(build({ marks: Array(5).fill({ between: ["1", "2"], change_ref: "fix" }) }))).toContain("marks");
+    expect(issues(build({ github_runs: restRuns }))).toContain("not both");
+  });
+
+  it("keeps a step figure under 16 KB and says so when it is not", () => {
+    const runs = Array.from({ length: 30 }, (_, i) => ({
+      ref: `run-${i}`,
+      result: "success",
+      job: "j".repeat(80),
+      url: `https://ci.example/${"x".repeat(470)}/${i}`,
+    }));
+    const step = buildFigure({ placement: "step_figure", figure: { type: "run_history", runs } });
+    expect(issues(step)).toContain(`a step figure holds at most ${MAX_STEP_FIGURE_BYTES}`);
+    expect(buildFigure({ placement: "timeline_block", figure: { type: "run_history", runs } }).ok).toBe(true);
+  });
+});
+
+describe("diff", () => {
+  const base = { type: "diff", path: "web/Header.tsx", repo: "acme/shop", ref: "4b7a2d1", additions: 14, deletions: 3 };
+  const patch = [
+    "diff --git a/web/Header.tsx b/web/Header.tsx",
+    "--- a/web/Header.tsx",
+    "+++ b/web/Header.tsx",
+    "@@ -10,3 +10,3 @@ export function Header() {",
+    " const header = {",
+    "-  position: static;",
+    "+  position: sticky;",
+    "+\ttop: 0;",
+    "@@ -40,2 +40,2 @@",
+    "   unchanged();",
+    "@@ -60,2 +60,2 @@",
+    "-const bottom = 1",
+    "\\ No newline at end of file",
+  ].join("\n");
+
+  it("keeps the + and - lines of a patch, one hunk per @@, indentation and tabs kept", () => {
+    const result = buildFigure({ placement: "step_figure", figure: { ...base, patch } });
+    if (!result.ok) throw new Error(result.issues.join("; "));
+    expect(result.block).toEqual({
+      ...base,
+      hunks: [
+        [
+          { op: "-", text: "  position: static;" },
+          { op: "+", text: "  position: sticky;" },
+          { op: "+", text: "\ttop: 0;" },
+        ],
+        [{ op: "-", text: "const bottom = 1" }],
+      ],
+    });
+    expect(result.notes.join(" ")).toContain("1 hunks with no + or - line were left out");
+    expect(result.summary).toBe("diff of web/Header.tsx at 4b7a2d1: +14 -3 in the whole change, 4 lines shown");
+  });
+
+  it("refuses a long patch instead of choosing lines, and never counts the change size itself", () => {
+    const long = ["@@ -1 +1 @@", ...Array.from({ length: 13 }, (_, i) => `+line ${i}`)].join("\n");
+    expect(issues(buildFigure({ placement: "step_figure", figure: { ...base, patch: long } }))).toContain(
+      "patch: 13 changed lines in 1 hunks",
+    );
+    const { additions: _a, ...noCount } = base;
+    expect(issues(buildFigure({ placement: "step_figure", figure: { ...noCount, patch } }))).toContain("additions");
+    expect(issues(buildFigure({ placement: "step_figure", figure: { ...base, patch: "+x" } }))).toContain("no hunk found");
+    const twoFiles = `diff --git a/x b/x\n@@ -1 +1 @@\n+a\ndiff --git a/y b/y\n@@ -1 +1 @@\n+b`;
+    expect(issues(buildFigure({ placement: "step_figure", figure: { ...base, patch: twoFiles } }))).toContain(
+      "patch: holds more than one file. Send the patch of web/Header.tsx only.",
+    );
+  });
+
+  it("checks hunks the way the API does", () => {
+    const line = (text: string) => ({ op: "+", text });
+    const build = (hunks: unknown) => buildFigure({ placement: "timeline_block", figure: { ...base, hunks } });
+    expect(okBlock(build([[line("    indented  ")]]))).toMatchObject({ hunks: [[{ op: "+", text: "    indented  " }]] });
+    expect(okBlock(build([[line("")]]))).toMatchObject({ hunks: [[{ op: "+", text: "" }]] });
+    expect(issues(build([Array.from({ length: 13 }, (_, i) => line(String(i)))]))).toContain("hunks: at most 12 lines in all (got 13)");
+    expect(issues(build([[line("x".repeat(161))]]))).toContain("hunks.0.0.text: at most 160 characters (got 161)");
+    expect(issues(build([[line("a\u0007b")]]))).toContain("hunks.0.0.text: must not contain control characters other than tabs");
+    expect(issues(build([[{ op: "~", text: "x" }]]))).toContain("hunks.0.0.op");
+    expect(issues(build([[]]))).toContain("hunks.0");
+    expect(issues(build(Array(7).fill([line("x")])))).toContain("hunks");
+    expect(issues(buildFigure({ placement: "timeline_block", figure: { ...base, path: " ", hunks: [[line("x")]] } }))).toContain("path: is required");
+    expect(issues(buildFigure({ placement: "timeline_block", figure: { ...base, additions: 1.5, hunks: [[line("x")]] } }))).toContain("additions");
+  });
+});
+
+describe("the guide's examples", () => {
+  // Every indented JSON example in the guide is a figure the builder accepts.
+  const examples = FIGURE_GUIDE.split(/\n\s*\n/)
+    .map((paragraph) => paragraph.split("\n"))
+    .filter((lines) => lines.every((l) => l.startsWith("    ")) && lines[0]!.trim().startsWith('{ "type"'))
+    .map((lines) => JSON.parse(lines.join("\n")) as { type: string });
+
+  it("has one for every new type", () => {
+    const types = examples.map((example) => example.type);
+    for (const type of ["range_overlap", "histogram", "run_history", "diff"]) expect(types).toContain(type);
+  });
+
+  it.each(examples.map((example) => [example.type, example] as const))("builds the %s example", (_type, example) => {
+    const result = buildFigure({ placement: "timeline_block", figure: example });
+    expect(result.ok, result.ok ? "" : result.issues.join("; ")).toBe(true);
+  });
+});
+
+describe("the four newer types in the tool listing", () => {
+  it("lists them by type only and still names every bad field when the tool runs", async () => {
+    const server = createServer(new TellagenClient({ apiUrl: "https://test.api.tellagen.com", apiKey: "tllg_test" }));
+    const client = new Client({ name: "test", version: "0.0.1" });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(a), client.connect(b)]);
+    const tools = await client.listTools();
+    const listed = JSON.stringify(tools.tools.find((t) => t.name === "tellagen_build_figure")?.inputSchema);
+    expect(listed).toContain("range_overlap");
+    expect(listed).not.toContain("hunks");
+    const complete = JSON.stringify(tools.tools.find((t) => t.name === "tellagen_complete_investigation")?.inputSchema);
+    expect(complete).toContain("run_history");
+    expect(complete).not.toContain("github_runs");
+
+    const result = await client.callTool({
+      name: "tellagen_build_figure",
+      arguments: { placement: "step_figure", figure: { type: "histogram", edges: [10, 100, 1000], before: [5], after: [2, 8] } },
+    });
+    const out = JSON.parse((result.content as Array<{ text: string }>)[0]!.text);
+    expect(result.isError).toBe(true);
+    expect(out.issues).toContain("before: needs exactly 2 counts (got 1)");
   });
 });

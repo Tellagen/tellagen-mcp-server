@@ -21,7 +21,7 @@ const causeRow = {
   sort_order: 0,
 };
 
-describe("tellagen_update_cause (CORE-782)", () => {
+describe("tellagen_update_cause", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     fetchSpy = vi.spyOn(globalThis, "fetch");
