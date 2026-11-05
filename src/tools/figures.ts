@@ -1,11 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { buildFigure, figureInputSchema } from "../figures.js";
+import { buildFigure, figureToolInputSchema } from "../figures.js";
 
 export const FIGURE_GUIDE_URI = "resource://tellagen/figure-guide";
 
 /** Added to the server instructions so every agent knows figures exist. */
-export const FIGURE_INSTRUCTIONS = `Figures: Tellagen draws typed widgets (stats, compare, trend, table, checks, changes) from data you send, in the Diagnosis tab, on the timeline and in the postmortem. Use tellagen_build_figure to turn the numbers you read from a tool result into a figure Tellagen accepts: it puts a time series on an even grid of at most 500 points, turns deploy, alert and rollback times into marks, and enforces every limit. Attach the result as a causal step's figure or as a block on a timeline event. A figure owns its numbers: never repeat them in prose, never invent one, and keep units in the unit field. Read ${FIGURE_GUIDE_URI} to choose the widget that fits the question and to learn how to plot data on it.`;
+export const FIGURE_INSTRUCTIONS = `Figures: Tellagen draws typed widgets (stats, compare, trend, table, checks, changes, range_overlap, histogram, run_history, diff) from data you send, in the Diagnosis tab, on the timeline and in the postmortem. Use tellagen_build_figure to turn the numbers you read from a tool result into a figure Tellagen accepts: it puts a time series on an even grid of at most 500 points, turns deploy, alert and rollback times into marks, turns cumulative histogram buckets into bucket counts, maps a GitHub Actions run list to a run history, and enforces every limit. Attach the result as a causal step's figure or as a block on a timeline event. A figure owns its numbers: never repeat them in prose, never invent one, and keep units in the unit field. Read ${FIGURE_GUIDE_URI} to choose the widget that fits the question and to learn how to plot data on it.`;
 
 export const FIGURE_GUIDE = `# Tellagen figures
 
@@ -31,8 +31,12 @@ Use tellagen_build_figure to make one. It reshapes the numbers you already read 
 | Did it get better, and is it inside the line? | compare | yes | yes | 1 to 8 rows, 3 details per row |
 | When did it start, and what happened around then? | trend | yes | yes | 2 to 500 points, 3 marks |
 | Which items rank highest? | table | no | yes | 1 to 6 columns, 1 to 12 rows, cell 64 |
-| Which checks passed, failed or did not run? | checks | no | yes | 1 to 12 items, label 80, detail 160 |
+| Which checks passed, failed or did not run? | checks | yes | yes | 1 to 12 items, label 80, detail 160 |
 | What moved from one thing to another? | changes | no | yes | 1 to 8 rows, from and to 80, note 160 |
+| Where do two or more ranges meet? | range_overlap | yes | yes | 2 to 4 rows, label 80, unit 12 |
+| Did the slow tail move, when the average did not? | histogram | yes | yes | 3 to 61 edges (2 to 60 buckets), one count per bucket |
+| Which build broke, and which fixed it? | run_history | yes | yes | 2 to 30 runs, 4 marks, ref 80, sha 64, job 80, url 500 |
+| What exactly changed in the code? | diff | yes | yes | path 200, ref 64, 1 to 6 hunks, 12 lines in all, line 160 |
 
 ## How to plot data on each widget
 
@@ -90,9 +94,62 @@ A recovery checklist or a CI job list. Put failures first. The block holds 12 it
 
 A setting, a version, a limit. Each row has a label and a from, a to, or both, with an optional note.
 
+### range_overlap: ranges that meet
+
+Use it when the cause is two ranges meeting: layout offsets, a maintenance window against an error spike, memory or port ranges. Two to four rows, each with a label, a from and a to (from not above to), all in one unit.
+
+1. Read each range from a tool result: the config, the layout, the window times as numbers.
+2. Send min and max for the whole range when you want an overview strip, and every row must fall inside them. Leave out window: Tellagen zooms to the overlap.
+3. Never send the overlap itself. Tellagen computes it, and the builder tells you what it is in summary.
+
+    { "type": "range_overlap", "title": "Header and sticky bar", "unit": "px",
+      "rows": [ { "label": "Header", "from": 0, "to": 153 }, { "label": "Sticky bar", "from": 149, "to": 197 } ] }
+
+### histogram: a distribution before and after
+
+Use it when an average hides a slow tail. Send bucket counts for two equal windows. Tellagen computes p50, p95, p99 and the share over the threshold from the buckets, so never send percentiles.
+
+1. Run the bucket query on a window before the change and on one of the same length after it, for example sum by (le) (increase(http_request_duration_seconds_bucket{service="checkout"}[30m])) at the end of each window.
+2. Send the result as buckets: one entry per le with the cumulative before and after counts, as Prometheus returns them, numeric strings and "+Inf" included.
+3. The builder turns them into edges (lower_edge, default 0, then every finite le) and one count per bucket. Observations above the last finite le have no bucket: the builder rejects them unless you set overflow to drop, and then you say so in the step.
+4. Add the SLO as threshold, in the unit of the le values.
+
+    { "type": "histogram", "title": "Checkout latency", "unit": "s",
+      "buckets": [ { "le": "0.1", "before": "820", "after": "610" }, { "le": "0.5", "before": "990", "after": "800" },
+                   { "le": "1", "before": "1000", "after": "940" }, { "le": "+Inf", "before": "1000", "after": "940" } ],
+      "threshold": { "value": 0.5, "label": "SLO 500 ms" } }
+
+If you already have per-bucket counts, send edges, before and after instead: before and after hold exactly one count per bucket (one fewer than edges), none negative.
+
+### run_history: CI builds, jobs, canaries or deploys
+
+Use it for a regression in CI or a bad deploy. Runs go oldest first, each with a ref, a result (success, failure, cancelled, pending), and the failing job when one failed.
+
+1. List the workflow runs of the branch around the failure: the GitHub Actions REST list, the GitHub MCP list of workflow runs, or gh run list --json number,databaseId,headSha,conclusion,status,createdAt,startedAt,event,url.
+2. Send them as github_runs, as they came. The builder maps each run: ref #run_number, the head sha, the start time, the event as trigger, the run page as url, and the conclusion as result (timed_out and startup_failure count as failure). A run whose conclusion is skipped, neutral, stale or action_required has no result: leave it out or send runs yourself. Runs are put oldest first by time.
+3. Add job to the failing runs: the name of the job that failed, from the run's jobs list.
+4. Add marks for the change that broke it (change_ref regression) and the one that fixed it (fix). Give the sha of the change and the builder places the mark before the first run built from it, or give between with the refs of the two neighbouring runs. change_ref may be a change_refs role: regression_source and first_bad become regression, fix stays fix, others become change.
+5. Set repo to owner/name so each run links to its page, and an optional span such as { "from": "#4151", "to": "#4163", "label": "E2E Tests failed" }.
+
+    { "type": "run_history", "title": "E2E on master", "repo": "acme/shop", "branch": "master",
+      "github_runs": [ { "run_number": 4150, "head_sha": "9f2c1e0", "conclusion": "success", "created_at": "2026-10-30T08:00:00Z", "event": "push" },
+                       { "run_number": 4151, "head_sha": "4b7a2d1", "conclusion": "failure", "created_at": "2026-10-30T09:00:00Z", "event": "push", "job": "E2E Tests" } ],
+      "marks": [ { "sha": "4b7a2d1", "change_ref": "regression", "title": "Move the header to a sticky layout" } ] }
+
+### diff: the change that broke or fixed it
+
+Use it for the lines that matter in the change, not the whole diff.
+
+1. Read the commit or pull request file from GitHub. additions and deletions are the size of the whole change, from the commit or the pull request, never counted by you from a part of it.
+2. Send the file's patch as patch: the builder keeps its + and - lines, one hunk per @@ header. It must have at most 12 such lines in at most 6 hunks; otherwise copy the lines that show the change into hunks yourself, as they are, indentation kept.
+3. Set path, ref (the commit sha) and repo.
+
+    { "type": "diff", "path": "web/components/Header.tsx", "repo": "acme/shop", "ref": "4b7a2d1", "additions": 14, "deletions": 3,
+      "hunks": [ [ { "op": "-", "text": "  position: static;" }, { "op": "+", "text": "  position: sticky;" } ] ] }
+
 ## Where the figure goes
 
-- A causal step: set it as figure on the step in result_summary.causal_paths. Only stats, compare and trend are allowed there. This needs the diagnosis structure, which the pickup advertises as diagnosis_structure_v1.
+- A causal step: set it as figure on the step in result_summary.causal_paths. Every type except table and changes is allowed there, at most 16 KB. This needs the diagnosis structure, which the pickup advertises as diagnosis_structure_v1. A Tellagen that does not know a figure type yet drops the figure and says so in the completion warnings (figure_invalid).
 - A timeline event: put it in blocks on tellagen_post_timeline_event or tellagen_update_timeline_event. Any type is allowed, up to 12 per event. An update replaces the whole array, so send every block you want to keep, and [] clears them. Set slot to summary to draw the block above the note, or anchor to the exact heading text it sits under. Not both. Set postmortem to false to keep a block out of the postmortem.
 
 Call tellagen_build_figure with placement step_figure or timeline_block, and use the block it returns as it is.
@@ -101,17 +158,10 @@ Call tellagen_build_figure with placement step_figure or timeline_block, and use
 
 - Grafana or Prometheus: a range query returns time and value pairs. Send them as points. Run the same query on two equal windows for a compare.
 - Loki: a count over time by step is a trend. A count by label over two windows is a compare.
-- GitHub Actions: failed jobs go in checks, failures first. A run history is a table with one row per run: run, commit, result.
+- Prometheus histograms: the _bucket series summed by le over two equal windows are a histogram. Send them as buckets.
+- GitHub Actions: failed jobs of one run go in checks, failures first. The runs of a branch are a run_history: send the run list as github_runs.
+- GitHub commits and pull requests: the lines that broke or fixed it are a diff. Send the file's patch, and the change's additions and deletions.
 - Kubernetes: restarts or ready counts before and after are a compare, a list of pods is a table.
-
-## Designed but not accepted yet
-
-Do not send these. Tellagen rejects them today. Send the alternative.
-
-- range_overlap, two ranges that overlap: say it in the step, or send a compare with the two edges as rows.
-- histogram, a distribution before and after: send a compare with p50, p95 and p99 as rows.
-- run_history, the pass and fail of many runs: send a table or a checks block.
-- diff, a code change: link the commit in the evidence refs and describe the change in the step.
 
 ## If Tellagen rejects a figure
 
@@ -124,12 +174,12 @@ export function registerFigureTools(server: McpServer): void {
     {
       title: "Build a figure",
       description:
-        "Turn numbers you already read from a tool result into a figure (a typed widget) that Tellagen draws, and check it against Tellagen's limits before you send it. Widgets: stats (up to 4 headline numbers), compare (before and after per host, route or job, with an SLO line), trend (a series over time with up to 3 marks), table (a ranked list, up to 12 rows), checks (pass or fail per check, up to 12), changes (a value that moved from one thing to another). For a time series send raw samples as points and the deploy, alert or rollback times as events: the tool puts them on an even grid of at most 500 points and works out the mark positions. It has no data of its own and never invents a value, so send only numbers from a tool result you can cite. placement step_figure is for a causal step (stats, compare or trend, one per step). placement timeline_block is for a timeline event (any type). Read resource://tellagen/figure-guide to choose the widget and to see how to plot data on it.",
+        "Turn numbers you already read from a tool result into a figure (a typed widget) that Tellagen draws, and check it against Tellagen's limits before you send it. Widgets: stats (up to 4 headline numbers), compare (before and after per host, route or job, with an SLO line), trend (a series over time with up to 3 marks), table (a ranked list, up to 12 rows), checks (pass or fail per check, up to 12), changes (a value that moved from one thing to another), range_overlap (2 to 4 ranges that meet), histogram (bucket counts before and after), run_history (CI or deploy runs with the regression and fix marks), diff (up to 12 changed lines). For a time series send raw samples as points and the deploy, alert or rollback times as events: the tool puts them on an even grid of at most 500 points and works out the mark positions. For a histogram send Prometheus cumulative le buckets as buckets; for a run history send the GitHub Actions run list as github_runs; for a diff send the patch. It has no data of its own and never invents a value, so send only numbers from a tool result you can cite. placement step_figure is for a causal step (any type except table and changes, one per step). placement timeline_block is for a timeline event (any type). Read resource://tellagen/figure-guide to choose the widget and to see how to plot data on it.",
       inputSchema: {
         placement: z
           .enum(["step_figure", "timeline_block"])
           .describe("step_figure for result_summary.causal_paths[].steps[].figure. timeline_block for the blocks of a timeline event."),
-        figure: figureInputSchema,
+        figure: figureToolInputSchema,
         slot: z.literal("summary").optional().describe("timeline_block only: draw the block above the note. Not together with anchor."),
         anchor: z.string().max(80).optional().describe("timeline_block only: the exact heading text in the note that the block sits under. Not together with slot."),
         postmortem: z.boolean().optional().describe("timeline_block only: false keeps the block out of the postmortem."),

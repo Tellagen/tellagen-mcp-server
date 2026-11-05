@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Shared by web/lib/investigation/sourceLinks.test.ts and the MCP tellagen_build_source_link tests (CORE-776). Same input, same output string. Explore uses the Grafana `left` parameter (CORE-761); orgId: null leaves orgId out, an absent orgId means 1.",
+  "description": "Shared by the Tellagen web app link tests and the tellagen_build_source_link tests. Same input, same output string. Explore uses the Grafana `left` parameter; orgId: null leaves orgId out, an absent orgId means 1.",
   "explore": [
     {
       "name": "prometheus with a datasource uid and the incident window",

@@ -7,7 +7,7 @@ import {
   supportsDiagnosisStructure,
 } from "../diagnosis-structure.js";
 
-/** The causes endpoint limits (CORE-781). */
+/** The causes endpoint limits. */
 export const CAUSE_STATES = ["leading", "open", "ruled_out"] as const;
 
 export const updateCauseInputShape = {

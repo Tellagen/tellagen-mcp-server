@@ -1,0 +1,14 @@
+[
+  {
+    "type": "range_overlap",
+    "title": "Space under the sticky tab bar, 852 × 393",
+    "unit": "px",
+    "min": 0,
+    "max": 393,
+    "rows": [
+      { "label": "Tab bar", "from": 105, "to": 153 },
+      { "label": "Customer impact table", "from": 149, "to": 385 }
+    ],
+    "window": [140, 160]
+  }
+]

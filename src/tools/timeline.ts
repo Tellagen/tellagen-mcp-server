@@ -35,7 +35,7 @@ const timelineMutationSchema = {
     .max(12)
     .optional()
     .describe(
-      "Figures drawn on the event: stats, compare, trend, table, checks or changes. Build each one with tellagen_build_figure (placement timeline_block) and read resource://tellagen/figure-guide. On update this replaces the whole array, so send every block to keep; [] clears them.",
+      "Figures drawn on the event: stats, compare, trend, table, checks, changes, range_overlap, histogram, run_history or diff. Build each one with tellagen_build_figure (placement timeline_block) and read resource://tellagen/figure-guide. On update this replaces the whole array, so send every block to keep; [] clears them.",
     ),
 };
 

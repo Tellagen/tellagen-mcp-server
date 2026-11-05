@@ -91,7 +91,9 @@ From Settings → AI diagnostics, click **Check MCP tools**, then copy the diagn
 | `tellagen_get_service` | Get one service and its metadata |
 | `tellagen_probe_datasource` | Diagnose a local datasource setup; for Grafana, checks required env vars and `/api/health` reachability without returning credentials |
 | `tellagen_get_diagnostic_session` | Read a `diag_*` MCP diagnostic session from Settings → AI diagnostics |
-| `tellagen_build_source_link` | Build the clickable link for an evidence ref: Grafana Explore / logs / trace / panel, GitHub compare / commit / pull request. Kubernetes and sources without a browser URL return a copyable command or guidance. Calls only the Tellagen API |
+| `tellagen_build_source_link` | Build the clickable link for an evidence ref: Grafana Explore / logs / trace / panel, GitHub compare / commit / pull request / Actions run or job (`ci_run`) / release. Kubernetes and sources without a browser URL return a copyable command or guidance. Calls only the Tellagen API |
+| `tellagen_build_figure` | Turn numbers read from a tool result into a figure Tellagen draws (stats, compare, trend, table, checks, changes, range_overlap, histogram, run_history, diff) and check it against Tellagen's limits. No network call; the guide is `resource://tellagen/figure-guide` |
+| `tellagen_get_context_attachment` | Read one screenshot of a run (`pickup.attachments.items[].url`) with the API key: an image block up to 700 KB, plus the temp file path, size, type and pixel size |
 
 ### Write tools
 
@@ -99,7 +101,7 @@ From Settings → AI diagnostics, click **Check MCP tools**, then copy the diagn
 |------|-------------|
 | `tellagen_create_incident` | Create an incident; use `title` for the display title, `short_title` for the ID/Slack slug, and `impact_summary` for impact (`gist` remains a legacy alias for `short_title`) |
 | `tellagen_update_incident` | Update the display title, work type, owning team, status, impact summary, links, or timestamps |
-| `tellagen_start_investigation` | Start a local investigation run when no UI-created run ID was provided |
+| `tellagen_start_investigation` | Start a local investigation run when no UI-created run ID was provided; `corrects_run_id` starts a follow-up, `question_finding_id` answers an open diagnosis question |
 | `tellagen_pick_up_investigation` | Attach the local agent to a UI-created awaiting run |
 | `tellagen_post_runbook_check_attempt` | Report an exact check/source attempt from a negotiated structured v2 runbook plan |
 | `tellagen_post_trace_step` | Post live progress with a stable step ID and immutable runbook/non-runbook guidance basis |
@@ -239,17 +241,95 @@ Tellagen shows a source on every proof in the Diagnosis tab. Evidence refs (`tel
 
 | Field | Use |
 |-------|-----|
-| `links[]` | Up to 4 `{kind, label, url}` entries (`kind`: explore, panel, diff, commit, pr, logs, trace; http or https; label up to 60 characters). Build them with `tellagen_build_source_link` and copy its `links[]` unchanged. |
+| `links[]` | Up to 4 `{kind, label, url}` entries (`kind`: explore, panel, diff, commit, pr, logs, trace, and with `diagnosis_changes_v1` ci_run, deployment, release; http or https; label up to 60 characters). Build them with `tellagen_build_source_link` and copy its `links[]` unchanged. |
 | `command` | A copyable read-only command (up to 1000 characters) for Kubernetes and other local sources that have no browser link. Tellagen redacts credentials and drops a longer command. |
 | `datasource` | The data source name or uid the evidence came from. |
 
 `tellagen_build_source_link` takes the Grafana address from `GRAFANA_URL` in the MCP client environment, else from the Tellagen Grafana datasource `base_url` (Tellagen shows connector settings to settings managers only, so everyone else sets `GRAFANA_URL`). Explore links use Grafana's `left` parameter and the same builder as the Tellagen web app (shared test vectors keep them identical). The time range defaults to the incident window when you pass `investigation_run_id`. It never puts credentials in a link and makes no network call except to the Tellagen API.
 
-`tellagen_complete_investigation` also accepts the causal chain with `finding_ids` (the numeric ids that `tellagen_post_finding` returns), one `figure` per step (a timeline `stats`, `compare` or `trend` block, validated before the request is sent), `ruled_out[]`, `coverage[]` and `unknowns[]`. `tellagen_post_trace_step` accepts `outcome` (supports, rules_out, nothing_notable, inconclusive, unavailable) and `cause_key`. `tellagen_update_cause` posts the causes you are testing while the run is live (`PUT /api/v1/investigation-runs/{id}/causes/{key}`, at most 8 per run); it is sent only when the run advertises `diagnosis_structure_v1`, otherwise the result carries an `mcp_notice` and nothing is sent. The response carries the backend `warnings[]` verbatim and a one-line `warnings_summary` the agent can act on.
+`tellagen_complete_investigation` also accepts the causal chain with `finding_ids` (the numeric ids that `tellagen_post_finding` returns), one `figure` per step (a timeline block of any type except `table` and `changes`, validated before the request is sent; see Figures), `ruled_out[]`, `coverage[]`, `unknowns[]` and `change_refs[]` (see Change refs). `tellagen_post_trace_step` accepts `outcome` (supports, rules_out, nothing_notable, inconclusive, unavailable) and `cause_key`. `tellagen_update_cause` posts the causes you are testing while the run is live (`PUT /api/v1/investigation-runs/{id}/causes/{key}`, at most 8 per run); it is sent only when the run advertises `diagnosis_structure_v1`, otherwise the result carries an `mcp_notice` and nothing is sent. The response carries the backend `warnings[]` verbatim and a one-line `warnings_summary` the agent can act on.
 
 ### Capability negotiation
 
-The MCP server always advertises `diagnosis_structure_v1` in `protocol_capabilities` at pickup. It sends the fields above **only** when the pickup (or `tellagen_get_incident_context`) response lists `diagnosis_structure_v1` in the top-level `server_capabilities`. Against an older Tellagen the fields are removed before the request leaves, the call still succeeds, and the tool result carries an `mcp_notice` naming what was not sent. A run this process did not pick up is checked once through `GET /api/v1/investigations/{id}/context`.
+At pickup the MCP server advertises, in `protocol_capabilities`, the runbook v2 bundle plus three optional capabilities. Tellagen lists the ones it accepts in the top-level `server_capabilities` of the pickup (and of `tellagen_get_incident_context`), for example `["diagnosis_structure_v1", "diagnosis_changes_v1", "run_images_v1"]`.
+
+| Capability | The MCP sends | Effect on Tellagen |
+| --- | --- | --- |
+| `diagnosis_structure_v1` | evidence ref `links`, `command`, `datasource`; `causal_paths` with `finding_ids`, `figure`, `links`; `ruled_out`, `coverage`, `unknowns`; trace `outcome` and `cause_key`; live causes | a confirmed or likely diagnosis without `causal_paths` is a hard error; every other check is a warning |
+| `diagnosis_changes_v1` | `change_refs`, and the `ci_run`, `deployment` and `release` link kinds | enables the warning `regression_source_missing` |
+| `run_images_v1` | (nothing extra) it reads screenshots with `tellagen_get_context_attachment` | the web says the client reads images; without it the responder is told the agent gets each caption and a link |
+
+The fields behind a capability go **only** to a run whose response lists it in `server_capabilities`. Against an older Tellagen they are removed before the request leaves, the call still succeeds, and the tool result carries an `mcp_notice` naming what was not sent. A run this process did not pick up is checked once through `GET /api/v1/investigations/{id}/context`.
+
+### Change refs
+
+`result_summary.change_refs` ties the changes to the incident: at most 6, in the order sent; leave the key out when there are none.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | string | up to 64 characters; Tellagen derives `change-N` when it is missing or used twice |
+| `role` | enum, required | `regression_source`, `fix`, `rollback`, `last_good`, `first_bad`, `verified_by`, `context` |
+| `kind` | enum, required | `commit`, `pull_request`, `deployment`, `release`, `ci_run`, `config_change` |
+| `title` | string | one line, up to 200 |
+| `repo` | string | `owner/name` |
+| `ref` | string | pull request number, release tag, CI run id, branch or deployment id; up to 120 |
+| `sha` | string | hex, 7 to 64 characters |
+| `occurred_at` | string | RFC 3339 (merge, deploy or run time) |
+| `author` | string | up to 120 |
+| `result` | enum | `success`, `failure`, `cancelled`, `skipped`, `pending`, `unknown`: a fact about a run or deploy, never a verdict |
+| `state` | enum | `open`, `merged`, `closed`, `reverted`, `deployed`, `rolled_back` |
+| `verification` | enum | `confirmed`, `likely`, `unknown` |
+| `confidence_percent` | integer | 0 to 100 |
+| `step_ids` | string[] | ids of `causal_paths[].steps[]`, up to 12 |
+| `finding_ids` | number[] | numeric ids of the run's findings, up to 12 |
+| `links` | `{kind, label?, url}[]` | up to 4, http(s) only |
+
+Each ref needs one of `ref`, `sha`, `title` or `links`; the MCP refuses an unknown role, kind or enum value before the request. Without a link Tellagen builds one from `repo` with `sha` or `ref` (commits, pull requests, releases and GitHub CI runs); `deployment` and `config_change` need a `links` entry. Completion warnings for change refs: `change_without_link`, `change_without_proof` (no `finding_ids` or `step_ids`), `regression_source_missing`, `change_refs_dropped`. SKILL.md "Regression and CI failures" is the playbook.
+
+## Figures
+
+`tellagen_build_figure` turns numbers you read from a tool result into a figure: a typed block Tellagen draws in the Diagnosis tab, on the timeline and in the postmortem. It reshapes and checks; it has no data of its own and never invents a value. A figure over a limit is rejected with the field named, as the API would.
+
+| Type | Step figure | Timeline block | Limits |
+| --- | --- | --- | --- |
+| `stats` | yes | yes | 1 to 4 items |
+| `compare` | yes | yes | 1 to 8 rows, 3 details per row |
+| `trend` | yes | yes | 2 to 500 points, 3 marks; raw samples are put on an even grid |
+| `table` | no | yes | 1 to 6 columns, 1 to 12 rows |
+| `checks` | yes | yes | 1 to 12 items |
+| `changes` | no | yes | 1 to 8 rows |
+| `range_overlap` | yes | yes | 2 to 4 rows `{label, from, to}`, optional `min`/`max` and `window`; the overlap is computed by Tellagen |
+| `histogram` | yes | yes | 3 to 61 `edges`, one count per bucket in `before` and `after`; the builder also takes Prometheus cumulative `le` buckets |
+| `run_history` | yes | yes | 2 to 30 runs oldest first, 4 marks, a span; the builder also takes the GitHub Actions run list (`github_runs`) and places marks by sha |
+| `diff` | yes | yes | `path`, `ref`, `additions`, `deletions`, 1 to 6 hunks and 12 lines in all; the builder also takes a unified `patch` |
+
+A step figure is at most 16 KB. The builder never sets `example` (demo data). The tool listing shows the four newer types by type only to keep it small; their fields are in `resource://tellagen/figure-guide`, and the tool checks them in full when it runs. A Tellagen that does not know a figure type yet answers a timeline block with `400 invalid_block`, and drops a step figure with the completion warning `figure_invalid`.
+
+## Run context: screenshots, links and the parent run
+
+The pickup bundle may carry `attachments` (the run's screenshots and a `safety_notice`), `context_links` (typed Slack and GitHub links from the question, with the `ids` Tellagen parsed and an `outcome`) and `parent` (for a follow-up: the earlier run, its result and findings). Each key is left out when empty, so an older client sees the bundle it saw before. When the bundle lists screenshots, the pickup result adds an `mcp_hint`.
+
+`tellagen_get_context_attachment` reads one screenshot per call from `GET <TELLAGEN_API_URL>/api/v1/incidents/{id}/investigation-attachments/{attachment_id}` with the API key (`incidents:read`). It accepts only that path (the `url` of an `attachments.items[]` entry, or `incident_id` with `attachment_id`); it never sends the key anywhere else.
+
+- It refuses a response over 5 MB (the most Tellagen stores) and anything that is not a PNG, JPEG or WebP image by its bytes, and checks the bytes against the `ETag` checksum.
+- It writes the image to a private temp folder (`tellagen-attachments-*` under the system temp directory, file mode 0600) and returns a text block with the path, size, type, pixel size, sha256 and the safety notice.
+- It adds an MCP image block when the image is at most 700 KB (about 930 KB as base64, under the 1 MB tool result cap some clients apply). A larger image comes back as the text block only, with the reason; the agent opens the file. The bytes are never repeated as base64 text.
+- A `404` (removed, expired after 30 days, or another incident's) is final; the result says not to retry.
+
+`tellagen_start_investigation` accepts `corrects_run_id` (follow up an earlier run of the same incident) and `question_finding_id` (answer an open diagnosis question, a gap finding). Tellagen refuses a run of another incident, and a question finding that is dismissed, already resolved, being verified by another run, or not a gap.
+
+## API error codes
+
+| Code | Status | Meaning |
+| --- | --- | --- |
+| `invalid_block` | 400 | a timeline block breaks the contract; `field` and `details.errors` name each path |
+| `invalid_screenshot` | 400 | a finding screenshot was refused (type, size, or a `url` that is not a public https address; send `base64` for a Grafana behind a login) |
+| `finding_too_large` | 400 | a finding field is over its limit; the message names it |
+| `request_body_too_large` | 413 | the request is too large (only screenshot bytes may make a finding large) |
+| `root_cause_requires_person` | 400 / 403 | an agent tried to accept or reject a root cause; agents only propose one, a responder decides |
+| `invalid_attachment` / `invalid_context_link` | 400 | a run was started with a bad `attachment_ids` or `context_links` entry |
+| `attachment_too_large` / `attachment_limit` / `storage_unavailable` | 413 / 409 / 503 | screenshot upload limits and storage |
+| `response_too_large` | 413 | (MCP side) a screenshot over 5 MB was not read |
 
 ## Authentication
 

@@ -22,7 +22,11 @@ export const SOURCE_LINK_KINDS = [
   "pr",
   "logs",
   "trace",
+  "ci_run",
+  "release",
 ] as const;
+
+const GITHUB_KINDS: ReadonlySet<string> = new Set(["diff", "commit", "pr", "ci_run", "release"]);
 
 type SourceLinkKind = (typeof SOURCE_LINK_KINDS)[number];
 
@@ -140,7 +144,7 @@ export const sourceLinkInputSchema = {
   kind: z
     .enum(SOURCE_LINK_KINDS)
     .describe(
-      "explore = Grafana Explore for a Prometheus query; logs = Grafana Explore for a Loki query; trace = Grafana Explore for a Tempo trace id; panel = a Grafana dashboard panel; diff = GitHub compare; commit = GitHub commit; pr = GitHub pull request",
+      "explore = Grafana Explore for a Prometheus query; logs = Grafana Explore for a Loki query; trace = Grafana Explore for a Tempo trace id; panel = a Grafana dashboard panel; diff = GitHub compare; commit = GitHub commit; pr = GitHub pull request; ci_run = a GitHub Actions run or job; release = a GitHub release. ci_run and release links need diagnosis_changes_v1 on the run.",
     ),
   source: z
     .string()
@@ -193,6 +197,14 @@ export const sourceLinkInputSchema = {
   base: z.string().optional().describe("Base ref or sha (diff)"),
   head: z.string().optional().describe("Head ref or sha (diff)"),
   pr_number: z.number().int().positive().optional().describe("Pull request number (pr)"),
+  run_id: z.number().int().positive().optional().describe("GitHub Actions run id, as in /actions/runs/<id> (ci_run)"),
+  job_id: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("GitHub Actions job id, to open the failing job of the run (ci_run)"),
+  tag: z.string().optional().describe("Release tag (release)"),
   github_url: z
     .string()
     .optional()
@@ -231,13 +243,19 @@ export async function buildSourceLinks(
     family === "database" ||
     family === "docs" ||
     family === "tellagen" ||
-    (family === "other" && input.kind !== "pr" && input.kind !== "commit" && input.kind !== "diff")
+    (family === "other" && !GITHUB_KINDS.has(input.kind))
   ) {
     return { links: [], guidance: NO_LINK_GUIDANCE };
   }
 
   const kind = input.kind;
-  if (kind === "diff" || kind === "commit" || kind === "pr") {
+  if (
+    kind === "diff" ||
+    kind === "commit" ||
+    kind === "pr" ||
+    kind === "ci_run" ||
+    kind === "release"
+  ) {
     if (!input.repo) fail("repo (owner/name) is required for GitHub links.");
     const url = buildGithubLink(kind, {
       repo: input.repo,
@@ -245,6 +263,9 @@ export async function buildSourceLinks(
       base: input.base,
       head: input.head,
       prNumber: input.pr_number,
+      runId: input.run_id,
+      jobId: input.job_id,
+      tag: input.tag,
       githubUrl: input.github_url,
     });
     if (!url) {
@@ -253,7 +274,11 @@ export async function buildSourceLinks(
           ? "Could not build a commit link: repo must be owner/name and sha 7 to 40 hex characters."
           : kind === "pr"
             ? "Could not build a pull request link: repo must be owner/name and pr_number a positive integer."
-            : "Could not build a compare link: repo must be owner/name, base and head plain refs, and github_url (if given) an http(s) address.",
+            : kind === "ci_run"
+              ? "Could not build a CI run link: repo must be owner/name, run_id a positive integer and job_id (if given) a positive integer."
+              : kind === "release"
+                ? "Could not build a release link: repo must be owner/name and tag a plain tag name."
+                : "Could not build a compare link: repo must be owner/name, base and head plain refs, and github_url (if given) an http(s) address.",
       );
     }
     const repo = input.repo.trim();
@@ -262,7 +287,13 @@ export async function buildSourceLinks(
         ? `Commit ${input.sha!.trim().slice(0, 7)} on GitHub`
         : kind === "pr"
           ? `Pull request #${input.pr_number} on GitHub`
-          : `Compare ${input.base!.trim()}...${input.head!.trim()}`;
+          : kind === "ci_run"
+            ? input.job_id !== undefined
+              ? `Job ${input.job_id} of run ${input.run_id} on GitHub`
+              : `CI run ${input.run_id} on GitHub`
+            : kind === "release"
+              ? `Release ${input.tag!.trim()} on GitHub`
+              : `Compare ${input.base!.trim()}...${input.head!.trim()}`;
     return { links: [{ kind, label: linkLabel(label || repo), url }] };
   }
 
@@ -352,7 +383,7 @@ export function registerSourceLinkTools(
     "tellagen_build_source_link",
     {
       description:
-        "Build the clickable link (or copyable command) for an evidence source, to put in evidence_refs[].links[]. Grafana Explore, panel and trace links come from the Grafana address (GRAFANA_URL in the MCP environment, else the Tellagen Grafana datasource); GitHub compare, commit and pull request links come from repo. Kubernetes and other sources without a browser URL return a command or guidance instead. Calls only the Tellagen API, puts no credentials in a URL, and returns {links:[{kind,label,url}]} that you copy into the ref unchanged.",
+        "Build the clickable link (or copyable command) for an evidence source, to put in evidence_refs[].links[]. Grafana Explore, panel and trace links come from the Grafana address (GRAFANA_URL in the MCP environment, else the Tellagen Grafana datasource); GitHub compare, commit, pull request, Actions run (ci_run) and release links come from repo. Kubernetes and other sources without a browser URL return a command or guidance instead. Calls only the Tellagen API, puts no credentials in a URL, and returns {links:[{kind,label,url}]} that you copy into the ref unchanged.",
       inputSchema: sourceLinkInputSchema,
     },
     async (input) => {

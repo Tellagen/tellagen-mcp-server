@@ -1,0 +1,29 @@
+[
+  {
+    "type": "run_history",
+    "title": "Test on master",
+    "repo": "Tellagen/tellagen",
+    "branch": "master",
+    "runs": [
+      { "ref": "40284925790", "sha": "8e0242492", "at": "2026-10-26T07:17:00Z", "trigger": "schedule", "result": "success" },
+      { "ref": "40393824015", "sha": "b53b46e12", "at": "2026-10-26T20:14:00Z", "trigger": "push", "result": "failure" },
+      { "ref": "40465464003", "sha": "76bb81f7a", "at": "2026-10-27T07:09:00Z", "trigger": "schedule", "result": "success" },
+      { "ref": "40478748447", "sha": "8b53adde1", "at": "2026-10-27T09:10:00Z", "trigger": "push", "result": "cancelled" },
+      { "ref": "40482519776", "sha": "f3e632ce2", "at": "2026-10-27T09:40:00Z", "trigger": "push", "result": "failure" },
+      { "ref": "40516692265", "sha": "3a5bf8d48", "at": "2026-10-27T13:57:00Z", "trigger": "push", "result": "failure" },
+      { "ref": "40536146928", "sha": "682951d12", "at": "2026-10-27T15:57:00Z", "trigger": "push", "result": "failure" },
+      { "ref": "40652465042", "sha": "8a528ae2b", "at": "2026-10-28T07:48:00Z", "trigger": "schedule", "result": "success" },
+      { "ref": "40685045009", "sha": "028a88678", "at": "2026-10-28T12:05:49Z", "trigger": "push", "result": "success" },
+      { "ref": "40838442688", "sha": "4b11cc47d", "at": "2026-10-29T07:54:29Z", "trigger": "schedule", "result": "failure", "job": "E2E Tests" },
+      { "ref": "40951197945", "sha": "fa696c529", "at": "2026-10-29T20:40:00Z", "trigger": "push", "result": "failure", "job": "E2E Tests" },
+      { "ref": "41023217203", "sha": "e2b14f0b8", "at": "2026-10-30T07:57:00Z", "trigger": "schedule", "result": "failure", "job": "E2E Tests" },
+      { "ref": "41182266572", "sha": "a67964e41", "at": "2026-10-31T07:51:00Z", "trigger": "schedule", "result": "success" },
+      { "ref": "41289327533", "sha": "c255c064e", "at": "2026-11-01T09:32:00Z", "trigger": "schedule", "result": "failure", "job": "Frontend Tests" }
+    ],
+    "marks": [
+      { "between": ["40685045009", "40838442688"], "change_ref": "regression", "sha": "2e08148fd", "at": "2026-10-28T22:19:00Z", "title": "test: a phone layout guard and a keyboard walkthrough" },
+      { "between": ["41023217203", "41182266572"], "change_ref": "fix", "sha": "dbdfbee46", "at": "2026-10-31T00:02:00Z", "title": "keep a tall focused control's start clear of the sticky chrome" }
+    ],
+    "span": { "from": "40838442688", "to": "41023217203", "label": "E2E Tests failed" }
+  }
+]

@@ -21,7 +21,7 @@ const withCapability = () =>
   jsonResponse({ run: { id: "run-1" }, request: {}, server_capabilities: ["diagnosis_structure_v1"] });
 const withoutCapability = () => jsonResponse({ run: { id: "run-1" }, request: {} });
 
-describe("step figure schema (CORE-777)", () => {
+describe("step figure schema", () => {
   const ok = (figure: unknown) => stepFigureSchema.safeParse(figure);
   const message = (figure: unknown) => {
     const result = ok(figure);
@@ -169,6 +169,30 @@ describe("tellagen_complete_investigation schema", () => {
     expect(mutate((s) => ((s.ruled_out[0] as any).label = ""))).toBe(false);
     expect(mutate((s) => ((s.ruled_out[0] as any).confidence_percent = 101))).toBe(false);
     expect(mutate((s) => ((s.ruled_out[0] as any).links = [{ ...exploreLink, url: "javascript:alert(1)" }]))).toBe(false);
+  });
+
+  it("checks a run_history figure in full although the listing shows only its type", () => {
+    const summary = structuredSummary();
+    (summary.causal_paths[0].steps[1] as any).figure = {
+      type: "run_history",
+      runs: [
+        { ref: "1", result: "success" },
+        { ref: "2", result: "failure" },
+        { ref: "3", result: "failure" },
+      ],
+      marks: [{ between: ["1", "3"], change_ref: "regression" }],
+    };
+    const parsed = parse(summary);
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues.map((issue) => issue.path.join("."))).toContain(
+        "result_summary.causal_paths.0.steps.1.figure.marks.0.between",
+      );
+    }
+    (summary.causal_paths[0].steps[1] as any).figure = { type: "checks", items: [{ label: "E2E", state: "fail", owner: "x" }] };
+    expect(parse(summary).success).toBe(false);
+    (summary.causal_paths[0].steps[1] as any).figure = { type: "checks", items: [{ label: "E2E", state: "fail" }] };
+    expect(parse(summary).success).toBe(true);
   });
 
   it("fails a bad figure with a message that names it, before any request", () => {

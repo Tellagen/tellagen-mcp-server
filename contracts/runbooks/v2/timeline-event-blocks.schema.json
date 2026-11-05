@@ -2,12 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tellagen.dev/contracts/timeline/v2/timeline-event-blocks.schema.json",
   "title": "Tellagen timeline event blocks",
-  "description": "The blocks field of a timeline event: typed widgets that hold the numbers behind a note. Send it with the REST timeline create (POST /api/v1/incidents/{id}/timeline) or update (PATCH /api/v1/timeline/{id}); the MCP tools tellagen_post_timeline_event and tellagen_update_timeline_event pass it through. The server validates every block and answers one bad block with 400 invalid_block, a message, the path of the first bad field in field and up to ten bad fields in details.errors. An update that sends blocks replaces the whole array; [] removes them; leaving the field out keeps them. Strings are trimmed, one line and free of control characters (only source.query may hold line breaks). Numbers are finite and between -1e12 and 1e12. An event carries at most 12 blocks and 64 KB of block JSON.",
+  "description": "The blocks field of a timeline event: typed widgets that hold the numbers behind a note. Send it with the REST timeline create (POST /api/v1/incidents/{id}/timeline) or update (PATCH /api/v1/timeline/{id}); the MCP tools tellagen_post_timeline_event and tellagen_update_timeline_event pass it through. The server validates every block and answers one bad block with 400 invalid_block, a message, the path of the first bad field in field and up to ten bad fields in details.errors. An update that sends blocks replaces the whole array; [] removes them; leaving the field out keeps them. Strings are trimmed, one line and free of control characters (only source.query may hold line breaks; a diff line's text is the one string that is not trimmed, so it keeps its indentation, and it may hold tabs). The same blocks, except table and changes, are the figure of a Diagnosis chain step (causal_paths[].steps[].figure). Numbers are finite and between -1e12 and 1e12. An event carries at most 12 blocks and 64 KB of block JSON.",
   "x-guidance": [
     "Put the few numbers a responder scans for in one stats block: at most four, each with a short label, a value, a caption that says what it is measured on, and a tone.",
     "Use a compare block for a metric that has a value before, a value after and a threshold (an SLO or alert line). Give the unit, say which direction is better, and put one row per host, route or query.",
     "Use a trend block for a series over time. Send start and step_seconds together, reduce the range to at most 500 points, add at most three marks for the events that explain the shape, and fill source with the query that produced the series (kind, datasource, query, step, and artifact_id when you have it).",
     "Use a table block for a ranked list (top queries, failing routes), a checks block for a recovery checklist with a result per check, and a changes block for a value that moved from one thing to another.",
+    "Use a range_overlap block when the cause is two ranges meeting (layout offsets, a maintenance window against an error spike, memory or port ranges): two to four rows with a from and a to, in one unit. Tellagen computes the overlap and zooms to it; send min and max for the whole range, and a window only to choose the zoom yourself.",
+    "Use a histogram block when an average hides a slow tail: bucket edges (3 to 61, increasing) and one count per bucket for before and for after, plus the threshold (an SLO). Tellagen computes p50, p95, p99 and the share over the threshold from the buckets, so send counts, never percentiles.",
+    "Use a run_history block for CI builds, scheduled jobs, canaries or deploys: runs oldest first, each with a ref, a result (success, failure, cancelled, pending) and the failing job, repo as owner/name so each run links to its page, marks for the change that introduced and the one that fixed it (between two neighbouring run refs, change_ref regression or fix), and an optional span with a label such as E2E Tests failed.",
+    "Use a diff block for the change that broke something or fixed it: the file path, the commit ref, the added and removed counts of the whole change, and at most 12 lines in hunks, each with op + or - and the text with its indentation. Do not send the whole diff.",
+    "Set example: true only on a block that stands in for data you did not read from a tool result (a demo or an illustration); a block built from a tool result never sets it.",
     "Tone is a meaning, not decoration: good for a figure that is healthy or recovered, warn for one that needs attention, bad for one that is failing, neutral or no tone for a plain fact. Never use tone to emphasise.",
     "A block owns its numbers. Do not repeat in the note a number that a block already shows; the note says what happened and why, the block says how much.",
     "Never invent a number. Every value comes from a tool result you can cite; if you do not have it, leave that figure, row or block out. Write values as measured and keep units in the unit field, not in the number.",
@@ -26,12 +31,18 @@
         {"$ref": "#/$defs/trend"},
         {"$ref": "#/$defs/table"},
         {"$ref": "#/$defs/checks"},
-        {"$ref": "#/$defs/changes"}
+        {"$ref": "#/$defs/changes"},
+        {"$ref": "#/$defs/range_overlap"},
+        {"$ref": "#/$defs/histogram"},
+        {"$ref": "#/$defs/run_history"},
+        {"$ref": "#/$defs/diff"}
       ]
     },
     "slot": {"const": "summary", "description": "Draws the block above the note. Not together with anchor."},
     "anchor": {"type": "string", "maxLength": 80, "description": "The text of a heading in the note; the block sits under it, or after the note when the heading is missing. Not together with slot."},
     "postmortem": {"type": "boolean", "description": "false keeps the block out of the postmortem; absent means included."},
+    "example": {"type": "boolean", "description": "true marks the numbers as example data: the figure shows an Example data tag. Absent means real data."},
+    "repo": {"type": "string", "maxLength": 80, "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", "description": "owner/name of a GitHub repository; the figure builds its links from it."},
     "number": {"type": "number", "minimum": -1000000000000, "maximum": 1000000000000},
     "threshold": {
       "type": "object",
@@ -40,6 +51,20 @@
       "properties": {
         "value": {"$ref": "#/$defs/number"},
         "label": {"type": "string", "maxLength": 80}
+      }
+    },
+    "source": {
+      "type": "object",
+      "description": "Provenance only. The counts stay in the block.",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"type": "string", "maxLength": 80},
+        "datasource": {"type": "string", "maxLength": 80},
+        "query": {"type": "string", "maxLength": 2000},
+        "from": {"type": "string", "maxLength": 80},
+        "to": {"type": "string", "maxLength": 80},
+        "step": {"type": "string", "maxLength": 80},
+        "artifact_id": {"type": "string", "maxLength": 80}
       }
     },
     "stats": {
@@ -51,6 +76,7 @@
         "slot": {"$ref": "#/$defs/slot"},
         "anchor": {"$ref": "#/$defs/anchor"},
         "postmortem": {"$ref": "#/$defs/postmortem"},
+        "example": {"$ref": "#/$defs/example"},
         "items": {
           "type": "array",
           "minItems": 1,
@@ -78,6 +104,7 @@
         "slot": {"$ref": "#/$defs/slot"},
         "anchor": {"$ref": "#/$defs/anchor"},
         "postmortem": {"$ref": "#/$defs/postmortem"},
+        "example": {"$ref": "#/$defs/example"},
         "title": {"type": "string", "maxLength": 80},
         "metric": {"type": "string", "maxLength": 32},
         "unit": {"type": "string", "maxLength": 12},
@@ -127,6 +154,7 @@
         "slot": {"$ref": "#/$defs/slot"},
         "anchor": {"$ref": "#/$defs/anchor"},
         "postmortem": {"$ref": "#/$defs/postmortem"},
+        "example": {"$ref": "#/$defs/example"},
         "title": {"type": "string", "maxLength": 80},
         "unit": {"type": "string", "maxLength": 12},
         "series": {"type": "array", "minItems": 2, "maxItems": 500, "items": {"$ref": "#/$defs/number"}},
@@ -172,6 +200,7 @@
         "slot": {"$ref": "#/$defs/slot"},
         "anchor": {"$ref": "#/$defs/anchor"},
         "postmortem": {"$ref": "#/$defs/postmortem"},
+        "example": {"$ref": "#/$defs/example"},
         "title": {"type": "string", "maxLength": 80},
         "columns": {
           "type": "array",
@@ -212,6 +241,7 @@
         "slot": {"$ref": "#/$defs/slot"},
         "anchor": {"$ref": "#/$defs/anchor"},
         "postmortem": {"$ref": "#/$defs/postmortem"},
+        "example": {"$ref": "#/$defs/example"},
         "title": {"type": "string", "maxLength": 80},
         "items": {
           "type": "array",
@@ -239,6 +269,7 @@
         "slot": {"$ref": "#/$defs/slot"},
         "anchor": {"$ref": "#/$defs/anchor"},
         "postmortem": {"$ref": "#/$defs/postmortem"},
+        "example": {"$ref": "#/$defs/example"},
         "title": {"type": "string", "maxLength": 80},
         "rows": {
           "type": "array",
@@ -254,6 +285,192 @@
               "from": {"type": "string", "maxLength": 80},
               "to": {"type": "string", "maxLength": 80},
               "note": {"type": "string", "maxLength": 160}
+            }
+          }
+        }
+      }
+    },
+    "range_overlap": {
+      "type": "object",
+      "description": "Where two to four ranges meet. The overlap (where every row is in the same place) is computed, not sent.",
+      "additionalProperties": false,
+      "required": ["type", "rows"],
+      "dependentRequired": {"min": ["max"], "max": ["min"]},
+      "properties": {
+        "type": {"const": "range_overlap"},
+        "slot": {"$ref": "#/$defs/slot"},
+        "anchor": {"$ref": "#/$defs/anchor"},
+        "postmortem": {"$ref": "#/$defs/postmortem"},
+        "example": {"$ref": "#/$defs/example"},
+        "title": {"type": "string", "maxLength": 80},
+        "unit": {"type": "string", "maxLength": 12},
+        "min": {"$ref": "#/$defs/number", "description": "The start of the whole range shown in the overview strip. Both min and max, or neither; min is below max and every row lies inside them."},
+        "max": {"$ref": "#/$defs/number", "description": "The end of the whole range."},
+        "rows": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "from", "to"],
+            "properties": {
+              "label": {"type": "string", "minLength": 1, "maxLength": 80},
+              "from": {"$ref": "#/$defs/number"},
+              "to": {"$ref": "#/$defs/number", "description": "Not below from."}
+            }
+          }
+        },
+        "window": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {"$ref": "#/$defs/number"},
+          "description": "[from, to] with from below to: the zoom. Absent: the figure zooms to the overlap."
+        }
+      }
+    },
+    "histogram": {
+      "type": "object",
+      "description": "A distribution before and after. p50, p95, p99 and the share over the threshold are computed from the buckets by linear interpolation.",
+      "additionalProperties": false,
+      "required": ["type", "edges", "before", "after"],
+      "properties": {
+        "type": {"const": "histogram"},
+        "slot": {"$ref": "#/$defs/slot"},
+        "anchor": {"$ref": "#/$defs/anchor"},
+        "postmortem": {"$ref": "#/$defs/postmortem"},
+        "example": {"$ref": "#/$defs/example"},
+        "title": {"type": "string", "maxLength": 80},
+        "unit": {"type": "string", "maxLength": 12},
+        "edges": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 61,
+          "items": {"type": "number", "minimum": 0, "maximum": 1000000000000},
+          "description": "Bucket edges, strictly increasing: one more than there are buckets."
+        },
+        "before": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 60,
+          "items": {"type": "number", "minimum": 0, "maximum": 1000000000000},
+          "description": "One count per bucket, adding up to more than 0."
+        },
+        "after": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 60,
+          "items": {"type": "number", "minimum": 0, "maximum": 1000000000000},
+          "description": "One count per bucket, adding up to more than 0."
+        },
+        "threshold": {"$ref": "#/$defs/threshold"},
+        "source": {"$ref": "#/$defs/source"}
+      }
+    },
+    "run_history": {
+      "type": "object",
+      "description": "CI builds, jobs, canaries or deploys in order, with the changes that fall between them.",
+      "additionalProperties": false,
+      "required": ["type", "runs"],
+      "properties": {
+        "type": {"const": "run_history"},
+        "slot": {"$ref": "#/$defs/slot"},
+        "anchor": {"$ref": "#/$defs/anchor"},
+        "postmortem": {"$ref": "#/$defs/postmortem"},
+        "example": {"$ref": "#/$defs/example"},
+        "title": {"type": "string", "maxLength": 80},
+        "repo": {"$ref": "#/$defs/repo"},
+        "branch": {"type": "string", "maxLength": 80},
+        "runs": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 30,
+          "description": "Oldest first. A ref is unique in the block.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ref", "result"],
+            "properties": {
+              "ref": {"type": "string", "minLength": 1, "maxLength": 80, "description": "The run id; marks and span point at it."},
+              "result": {"enum": ["success", "failure", "cancelled", "pending"]},
+              "sha": {"type": "string", "maxLength": 64},
+              "at": {"type": "string", "format": "date-time"},
+              "trigger": {"type": "string", "maxLength": 32},
+              "job": {"type": "string", "maxLength": 80, "description": "The failing job."},
+              "url": {"type": "string", "maxLength": 500, "pattern": "^https://[^\\s]+$", "description": "Overrides the link built from repo and ref."}
+            }
+          }
+        },
+        "marks": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["between", "change_ref"],
+            "properties": {
+              "between": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {"type": "string", "minLength": 1, "maxLength": 80},
+                "description": "The refs of two neighbouring runs, the second right after the first."
+              },
+              "change_ref": {"enum": ["regression", "fix", "change"], "description": "The role of the change in the run's change_refs."},
+              "sha": {"type": "string", "maxLength": 64},
+              "at": {"type": "string", "format": "date-time"},
+              "title": {"type": "string", "maxLength": 80}
+            }
+          }
+        },
+        "span": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["from", "to", "label"],
+          "properties": {
+            "from": {"type": "string", "minLength": 1, "maxLength": 80},
+            "to": {"type": "string", "minLength": 1, "maxLength": 80, "description": "Not before from."},
+            "label": {"type": "string", "minLength": 1, "maxLength": 48}
+          }
+        }
+      }
+    },
+    "diff": {
+      "type": "object",
+      "description": "The change that broke or fixed something: the file, the commit, the size of the whole change and at most 12 of its lines.",
+      "additionalProperties": false,
+      "required": ["type", "path", "ref", "additions", "deletions", "hunks"],
+      "properties": {
+        "type": {"const": "diff"},
+        "slot": {"$ref": "#/$defs/slot"},
+        "anchor": {"$ref": "#/$defs/anchor"},
+        "postmortem": {"$ref": "#/$defs/postmortem"},
+        "example": {"$ref": "#/$defs/example"},
+        "title": {"type": "string", "maxLength": 80},
+        "path": {"type": "string", "minLength": 1, "maxLength": 200},
+        "repo": {"$ref": "#/$defs/repo"},
+        "ref": {"type": "string", "minLength": 1, "maxLength": 64, "description": "The commit."},
+        "at": {"type": "string", "format": "date-time", "description": "When it was committed."},
+        "additions": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "deletions": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "hunks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "x-maxLinesInAll": 12,
+          "description": "Hunks of lines, at most 12 lines in all (a JSON Schema cannot count across hunks; the API does). A line's text is not trimmed: leading spaces are indentation.",
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["op", "text"],
+              "properties": {
+                "op": {"enum": ["+", "-"]},
+                "text": {"type": "string", "maxLength": 160}
+              }
             }
           }
         }
