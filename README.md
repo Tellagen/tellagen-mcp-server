@@ -186,7 +186,7 @@ For an explicit legacy update, supply the current `postmortem_version_id`. Pass 
 
 On a structured `422`, repair the reported validation issues before retrying. Successful immutable submissions require a new submission ID for changed content.
 
-For findings derived from a completed trace step, copy at least one stable shared identifier (`artifact_id`, `artifact_digest`, or `tool_use_id`) into `evidence_refs`, together with `evidence_fact_key` when returned. Do not copy `evidence_fact_key` alone and do not claim finding-level guidance; Tellagen derives that lineage from the completed trace.
+For findings derived from a completed trace step, send your own `tool_use_id` on the trace step (any stable string, one per check) and the same `tool_use_id` on the `evidence_refs` of the findings that check produced. An `artifact_id` or `artifact_digest` of the step works too. `evidence_fact_key` is optional: Tellagen works it out itself and replaces any value you send, so a key copied from a trace step changes nothing. Do not claim finding-level guidance; Tellagen derives that lineage from the completed trace.
 
 ## Composing with other MCP servers
 

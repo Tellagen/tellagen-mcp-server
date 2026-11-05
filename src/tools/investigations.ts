@@ -605,7 +605,7 @@ export function registerInvestigationTools(
     "tellagen_pick_up_investigation",
     {
       description:
-        "Attach this local MCP agent to a Tellagen investigation run created by the UI. Call this first when the prompt includes an investigation_run_id; it moves the run from awaiting_agent to running and returns the full context bundle.",
+        "Attach this local MCP agent to a Tellagen investigation run created by the UI. Call this first when the prompt includes an investigation_run_id; it moves the run from awaiting_agent to running and returns the full context bundle. The MCP sends its protocol capabilities itself, so there is no parameter for them. Picking the same unfinished run up again from a new MCP process is safe.",
       inputSchema: {
         investigation_run_id: z
           .string()
@@ -754,7 +754,9 @@ export function registerInvestigationTools(
         tool_use_id: z
           .string()
           .optional()
-          .describe("Optional upstream LLM/tool-call identifier"),
+          .describe(
+            "Send an identifier of your own for this check, any stable string that is unique per check (for example check-2-loki-errors). Send the same value as tool_use_id on the evidence refs of the findings this check produced: it is how Tellagen joins them. You may add it to a step that is already done by posting the step again with the same status, guidance and reuse_hint; a later post that leaves it out clears it",
+          ),
         title: z.string().min(1).describe("Short human-readable step title"),
         result_summary: z
           .string()
@@ -1081,7 +1083,7 @@ export function registerInvestigationTools(
     "tellagen_complete_investigation",
     {
       description:
-        'Complete or fail an investigation run. Before you complete a run, post each cause with tellagen_update_cause, build figures with tellagen_build_figure, and post the key moment with tellagen_post_timeline_event. Set status to "completed" when done, or "failed" with a failure_reason if the investigation could not finish. Include result_summary for the shared RCA record whenever possible: causal_paths (2 to 4 steps, each citing finding_ids and a figure), ruled_out, coverage and unknowns, and for a regression or CI failure change_refs (the regression_source, the fix and the verified_by runs after it). The response carries the backend warnings[] verbatim plus a one-line warnings_summary; read it and name anything you could not fix in your report.',
+        'Complete or fail an investigation run. Before you complete a run, post each cause with tellagen_update_cause, build figures with tellagen_build_figure, and post the key moment with tellagen_post_timeline_event. Set status to "completed" when done, or "failed" with a failure_reason if the investigation could not finish. Include result_summary for the shared RCA record whenever possible: causal_paths (2 to 4 steps, each citing finding_ids and a figure), ruled_out, coverage and unknowns, and for a regression or CI failure change_refs (the regression_source, the fix and the verified_by runs after it). The response carries the backend warnings[] verbatim and, only when there are warnings, a one-line warnings_summary; read it and name anything you could not fix in your report. result_summary must have conclusion, likely_cause_label, customer_impact, confidence_percent, signals_checked and takeaways, and should have assessment.diagnosis_state.',
       inputSchema: {
         run_id: z.string().min(1).describe("Investigation run ID"),
         status: z

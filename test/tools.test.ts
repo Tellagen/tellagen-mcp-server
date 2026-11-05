@@ -1728,7 +1728,7 @@ describe("Tool integration via client", () => {
             evidence_fact_key: "run-abc:summary:client-only",
           },
         ]),
-      ).toThrow();
+      ).not.toThrow();
       expect(tool.config.inputSchema?.guidance).toBeUndefined();
 
       const mockFinding = {

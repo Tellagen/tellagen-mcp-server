@@ -795,7 +795,8 @@ const WARNING_ADVICE: Record<string, string> = {
   structure_truncated: "keep ruled_out to 5, coverage to 8 and unknowns to 5",
   negative_not_ruled_out: "add a ruled_out entry for each negative finding that matters",
   gap_without_coverage: "add a coverage entry with state gap for each gap finding",
-  single_source_high_confidence: "confirm the cause from a second source or lower the confidence",
+  single_source_high_confidence:
+    "a step above 90% confidence rests on one source: cite a finding from a second source (a name that starts with grafana counts as one source) or send confidence_percent of 90 or less",
   change_without_link: "give each change ref a link, or repo with ref or sha so Tellagen can build one",
   change_without_proof: "cite finding_ids or step_ids on each change ref",
   regression_source_missing:
