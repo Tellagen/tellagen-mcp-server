@@ -442,7 +442,7 @@ describe("postmortem runbook candidate contract", () => {
         client: {
           name: "claude",
           profile_id: "work-laptop",
-          mcp_server_version: "0.3.0",
+          mcp_server_version: "0.4.0",
         },
       },
     );
