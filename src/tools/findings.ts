@@ -34,6 +34,18 @@ const screenshotSchema = z.object({
     .describe("Description of what the screenshot shows"),
 });
 
+const hasStableId = (ref: {
+  artifact_id?: string;
+  artifact_digest?: string;
+  tool_use_id?: string;
+}): boolean =>
+  [ref.artifact_id, ref.artifact_digest, ref.tool_use_id].some(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  );
+
+const factKeyAloneNotice =
+  "evidence_fact_key was sent without artifact_id, artifact_digest or tool_use_id. Tellagen works out the key itself and replaces yours, so it may not join this finding to its trace step. Send the same tool_use_id on the trace step and on the evidence ref.";
+
 const evidenceRefSchema = z
   .object({
     source: z
@@ -65,20 +77,22 @@ const evidenceRefSchema = z
     tool_use_id: z
       .string()
       .optional()
-      .describe("Exact tool_use_id returned by the completed trace step"),
+      .describe(
+        "The tool_use_id you sent on the trace step for this check. Send the same value here: it is the most reliable way to join the finding to that step",
+      ),
     artifact_id: z
       .string()
       .optional()
-      .describe("Exact artifact_id returned by the completed trace step"),
+      .describe("The artifact_id of the completed trace step, when it has one"),
     artifact_digest: z
       .string()
       .optional()
-      .describe("Exact artifact_digest returned by the completed trace step"),
+      .describe("The artifact_digest of the completed trace step, when it has one"),
     evidence_fact_key: z
       .string()
       .optional()
       .describe(
-        "Exact evidence_fact_key returned by the completed trace step; copy it together with artifact_id, artifact_digest, or tool_use_id",
+        "Optional. Tellagen works out this key itself from the other fields of the ref and replaces any value you send, so you do not need it. A summary key from a trace step (run:summary:hash) is accepted and changes nothing. To join the finding to a trace step, send the same tool_use_id (or artifact_id or artifact_digest) on both",
       ),
     captured_at: z
       .string()
@@ -106,19 +120,7 @@ const evidenceRefSchema = z
       .describe(
         "Screenshots related to this evidence (e.g., Grafana dashboard panel showing the spike)",
       ),
-  })
-  .refine(
-    (ref) =>
-      !ref.evidence_fact_key ||
-      [ref.artifact_id, ref.artifact_digest, ref.tool_use_id].some(
-        (value) => typeof value === "string" && value.trim().length > 0,
-      ),
-    {
-      message:
-        "evidence_fact_key must be accompanied by artifact_id, artifact_digest, or tool_use_id from a completed trace step. Leave it out if you do not have one",
-      path: ["evidence_fact_key"],
-    },
-  );
+  });
 
 export function registerFindingTools(
   server: McpServer,
@@ -152,7 +154,7 @@ export function registerFindingTools(
           .enum(["confirms", "supports", "contradicts", "gap"])
           .optional()
           .describe(
-            "How this finding relates to the current diagnosis. Use gap when a required source, check, or evidence contract could not be satisfied.",
+            "How this finding relates to the current diagnosis. Send contradicts on a negative finding and gap on a gap finding (a required source, check, or evidence contract could not be satisfied). Without a role Tellagen stores supports.",
           ),
         claim: z
           .string()
@@ -179,7 +181,7 @@ export function registerFindingTools(
           .array(evidenceRefSchema)
           .optional()
           .describe(
-            "References to evidence sources consulted. Reuse artifact_id, artifact_digest, or tool_use_id returned by the completed trace step, together with evidence_fact_key when returned, so Tellagen can derive finding-to-runbook lineage. Do not submit evidence_fact_key alone. Add links (from tellagen_build_source_link) for Grafana and GitHub sources and a command for kubectl and other local sources, so every ref opens its source.",
+            "References to evidence sources consulted. To join a finding to its trace step, send on the ref the same tool_use_id you sent on that step (or its artifact_id or artifact_digest); Tellagen derives the runbook lineage from the step. evidence_fact_key is optional because Tellagen works it out itself. Add links (from tellagen_build_source_link) for Grafana and GitHub sources and a command for kubectl and other local sources, so every ref opens its source.",
           ),
         screenshots: z
           .array(screenshotSchema)
@@ -216,13 +218,17 @@ export function registerFindingTools(
         // links, command and datasource go only to a backend that advertises
         // diagnosis_structure_v1; an older one would drop them silently.
         let notice: string | undefined;
+        if ((evidence_refs ?? []).some((ref) => ref.evidence_fact_key && !hasStableId(ref))) {
+          notice = factKeyAloneNotice;
+        }
         const stripped = stripFindingEvidenceStructure(reqBody.evidence_refs);
         if (
           stripped.removed.length > 0 &&
           !(await supportsDiagnosisStructure(client, investigation_run_id))
         ) {
           reqBody.evidence_refs = stripped.refs;
-          notice = unsupportedNotice(stripped.removed);
+          const structureNotice = unsupportedNotice(stripped.removed);
+          notice = notice ? `${notice} ${structureNotice}` : structureNotice;
         }
         // ci_run, deployment and release links need diagnosis_changes_v1.
         const changeLinks = stripFindingChangeLinks(reqBody.evidence_refs);

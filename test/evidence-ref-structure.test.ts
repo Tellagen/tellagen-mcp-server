@@ -102,8 +102,8 @@ describe("evidence ref links, command and datasource", () => {
       expect(refs).toContain("tellagen_build_source_link");
       const evidenceRef = (shape.evidence_refs as z.ZodOptional<z.ZodArray<z.ZodTypeAny>>)
         .unwrap()
-        .element as z.ZodEffects<z.ZodObject<Record<string, z.ZodTypeAny>>>;
-      const fields = evidenceRef.innerType().shape;
+        .element as z.ZodObject<Record<string, z.ZodTypeAny>>;
+      const fields = evidenceRef.shape;
       expect(fields.command.description).toContain("kubectl");
       expect(fields.links.unwrap().description).toContain("tellagen_build_source_link");
       expect(fields.datasource.description).toContain("data source");

@@ -57,7 +57,7 @@ Tellagen is an incident investigation platform. Your role is to act as an on-cal
 | `tellagen_update_finding` | PATCH | Dismiss or restore a finding |
 | `tellagen_promote_finding` | POST | Promote a finding to the incident timeline (creates a visible timeline event) |
 
-### Timeline
+### Postmortems
 | Tool | Method | What it does |
 |------|--------|-------------|
 | `tellagen_get_postmortem_revision_request` | GET | Read exact inputs and requested changes for a proposal |
@@ -66,6 +66,10 @@ Tellagen is an incident investigation platform. Your role is to act as an on-cal
 | `tellagen_update_postmortem` | POST | Promote a revision as the next LLM major version using the current immutable version ID as a concurrency guard |
 | `tellagen_get_postmortem_analysis_request` | GET | Read exact immutable document and selected evidence for a protocol v2 analysis request |
 | `tellagen_submit_postmortem_runbook_candidates` | POST | Submit zero to three review-only Structured v2 runbook candidates grounded check-by-check in persisted investigation evidence |
+
+### Timeline
+| Tool | Method | What it does |
+|------|--------|-------------|
 | `tellagen_post_timeline_event` | POST | Add a timestamped incident fact, decision, mitigation, recovery marker, or evidence-backed event |
 | `tellagen_get_timeline_event` | GET | Read one timeline event, including attached evidence and AI context |
 | `tellagen_update_timeline_event` | PATCH | Correct or enrich a timeline event as better evidence arrives |
@@ -154,7 +158,7 @@ When a terminal read-only check reveals a repeatable diagnostic pattern, attach 
 
 Every `tellagen_post_trace_step` call requires `guidance`. The pickup/context response freezes the run's eligible runbooks under `request.skills`; use only those exact values:
 
-During rollout, `request.attribution_policy` may still be `optional_v1` for older runs. This MCP 0.3 contract nevertheless requires guidance on every legacy trace step.
+During rollout, `request.attribution_policy` may still be `optional_v1` for older runs. This MCP still requires `guidance` on every trace step, whatever the policy says.
 
 - `guidance.refs[].runbook_id` = `request.skills[].id`
 - `guidance.refs[].version` = `request.skills[].version`
@@ -184,7 +188,7 @@ Relations describe how the cited guidance affected the check:
 - `adapted`: the check is a deliberate adaptation to the current incident.
 - `deviation`: the agent intentionally departed from the runbook; explain why in `reason`.
 
-If no frozen runbook guided the step, submit an explicit non-runbook basis with `refs: []`:
+If no frozen runbook guided the step, submit an explicit non-runbook basis with `refs: []`. This is the normal case when the pickup has no `request.skills` (no runbook matched this run): every step then carries `origin: "agent_judgment"`, `refs: []` and a one-line `reason`:
 
 ```json
 {
@@ -299,7 +303,7 @@ Optional:
 | Field | Type | Description |
 |-------|------|-------------|
 | `evidence_refs` | array | Sources consulted (see below) |
-| `role` | enum | `confirms`, `supports`, `contradicts`, or `gap` |
+| `role` | enum | `confirms`, `supports`, `contradicts`, or `gap`. Send `contradicts` on a `negative` finding and `gap` on a `gap` finding. Without a role Tellagen stores `supports` |
 | `screenshots` | array | Standalone screenshots for this finding |
 
 ### Evidence refs
@@ -337,7 +341,15 @@ Each evidence ref links to a specific data source you queried:
 }
 ```
 
-Copy lineage identifiers from the completed trace-step response. Always reuse at least one stable shared identifier—`artifact_id`, `artifact_digest`, or `tool_use_id`—and also copy `evidence_fact_key` when returned. Tellagen recomputes the finding fact key from stable evidence fields, then joins the finding to its completed trace step in this order: `evidence_fact_key`, `artifact_id`, `tool_use_id`, `artifact_digest`. Copying `evidence_fact_key` alone is not reliable. Tellagen derives the runbook/non-runbook lineage server-side; do not add an independent guidance claim to a finding, and do not invent identifiers.
+**Join a finding to its trace step.** Tellagen joins a finding to the completed trace step it came from by identifiers, and derives the runbook lineage from that step. The simplest identifier is one you choose yourself:
+
+1. Send a `tool_use_id` of your own on `tellagen_post_trace_step`: any stable string, one per check, for example `check-2-loki-errors`. The step response only carries a `tool_use_id` if you sent one.
+2. Send the same string as `tool_use_id` on the evidence ref of each finding that check produced.
+3. A step that is already `done` without one can still get it: post the step again with the same `step_id`, status, `guidance` and `reuse_hint`, and the `tool_use_id` added. That post replaces every field of the step, so repeat the `title`, `result_summary` and the rest you want to keep; a post that leaves `tool_use_id` out clears it. A runbook check attempt cannot be changed this way.
+
+An `artifact_id` or `artifact_digest` on the step works the same way when the step has one. Tellagen tries them in this order: the fact key it works out, `artifact_id`, `tool_use_id`, `artifact_digest`. Do not invent identifiers, and do not claim guidance on a finding.
+
+`evidence_fact_key` is optional. Tellagen works the key out again from the ref's own fields (`artifact_id`, then `artifact_digest`, `tool_use_id`, the source address, the query, the summary) and replaces any value you send, so copying one from a trace step changes nothing. A step with no identifier shows a key like `<run>:summary:<hash>`; that is such a derived key. The MCP accepts the key on its own, and adds an `mcp_notice` when it was sent without an identifier because the finding may then not join its step.
 
 #### Links, command and datasource (diagnosis_structure_v1)
 
@@ -399,14 +411,49 @@ Post early and often. A `hypothesis` with 0.4 confidence is still valuable — i
 
 How the types feed the diagnosis structure:
 
-- **`negative` = ruled out.** Every negative finding that matters becomes one `ruled_out` entry at completion, citing the finding id.
-- **`gap` = you could not see it or could not satisfy it.** Use it for a source you could not read (no access, tool failed, not configured). It becomes a `coverage` entry with state `gap`; a missing integration is `not_configured`.
+- **`negative` = ruled out.** Every negative finding that matters becomes one `ruled_out` entry at completion, citing the finding id. Post it with `role: "contradicts"`. Without a role Tellagen stores `supports`, and the finding then counts as support for the diagnosis instead of against it.
+- **`gap` = you could not see it or could not satisfy it.** Use it for a source you could not read (no access, tool failed, not configured). Post it with `role: "gap"`. It becomes a `coverage` entry with state `gap`; a missing integration is `not_configured`.
 - **One finding per chain step.** Post the proof of each step of the cause chain as its own `evidence` finding (with `role: "confirms"` or `"supports"`) and cite its id in that step's `finding_ids`.
 - **`observation` and `evidence` that are not part of the chain are context.** They stay in the evidence ledger; they are not chain steps.
 
 ## Diagnosis structure
 
 The Diagnosis tab is built from the `result_summary` you send to `tellagen_complete_investigation`: a verdict, the chain of causes with proof on every step, what was ruled out, which sources were covered, and what stays unknown. Send the structure whenever the pickup response lists `diagnosis_structure_v1` in `server_capabilities`; the MCP removes it for an older Tellagen and says so in `mcp_notice`.
+
+**Capabilities are sent for you.** `tellagen_pick_up_investigation` takes only the run id. The MCP sends its protocol capabilities (`diagnosis_structure_v1`, `diagnosis_changes_v1` and the others) in that call, so there is no parameter to set. Tellagen answers with `server_capabilities`. A new MCP process may pick the same run up again, for example after a restart: the call is safe and returns the run's bundle with the same frozen runbooks. It is refused when the run is already finished, or when the run was frozen with a runbook plan v2 and this process has a different `TELLAGEN_MCP_CLIENT` or `TELLAGEN_MCP_PROFILE_ID` than the first pickup (409 `pickup_client_context_mismatch`).
+
+### Minimal result_summary
+
+The MCP checks `result_summary` before it sends anything and refuses a completion that lacks one of these keys:
+
+| Key | What it holds |
+|-----|---------------|
+| `conclusion` | `tone` (`success`, `warning`, `danger` or `neutral`), `eyebrow` (a short label), `sentence` (what responders read), `show_new_investigation_cta` (true or false) |
+| `likely_cause_label` | One line, or an empty string when inconclusive |
+| `customer_impact` | `status` (`none`, `degraded`, `outage` or `unknown`), `verified` (true or false), `label` |
+| `confidence_percent` | Whole number 0 to 100 |
+| `signals_checked` | `checked` and `total`, whole numbers |
+| `takeaways` | A list, empty if none. Each has `id`, `title` and `severity` (`high`, `medium` or `low`) |
+
+`assessment.diagnosis_state` is optional in the schema, but send it: it is `confirmed`, `likely`, `incomplete`, `inconclusive` or `unknown`. With `confirmed` or `likely` the result must carry `causal_paths`. Everything else below is optional and goes beside these keys. A complete minimal `result_summary`:
+
+```json
+{
+  "conclusion": {"tone": "danger", "eyebrow": "Likely cause", "sentence": "Deploy 4412 exhausted the checkout connection pool, and 5xx rose from 0.2% to 8.1%.", "show_new_investigation_cta": false},
+  "likely_cause_label": "Connection pool exhausted after deploy 4412",
+  "customer_impact": {"status": "degraded", "verified": true, "label": "About 8% of checkouts failed for 40 minutes"},
+  "confidence_percent": 85,
+  "signals_checked": {"checked": 6, "total": 7},
+  "takeaways": [{"id": "t1", "title": "Roll back deploy 4412", "severity": "high"}],
+  "assessment": {"diagnosis_state": "likely"},
+  "causal_paths": [{"id": "primary", "kind": "primary", "steps": [
+    {"id": "deploy", "claim": "Deploy 4412 shipped at 09:02", "verification": "confirmed", "finding_ids": [11]},
+    {"id": "errors", "claim": "Checkout 5xx rose from 0.2% to 8.1% right after", "relation_to_previous": "causes", "verification": "likely", "finding_ids": [12]}
+  ]}]
+}
+```
+
+### The chain, ruled out, coverage and unknowns
 
 **Cause chain: `causal_paths`.** One primary path of 2 to 4 steps, from the trigger to the customer impact (for example deploy, then pool exhaustion, then 5xx). Each step is one sentence of `claim`, a `verification` (`confirmed`, `likely` or `unknown`), the numeric `finding_ids` that prove it (from `tellagen_post_finding`, never made-up keys), `links` for the whole step when useful, and a `figure`. A confirmed or likely diagnosis with no chain is rejected with a 400, so send the chain.
 
@@ -427,7 +474,7 @@ The Diagnosis tab is built from the `result_summary` you send to `tellagen_compl
 
 **Ruled out: `ruled_out`** (up to 5). `{label, explanation, finding_ids, links, confidence_percent}` for each cause you checked and excluded, taken from your `negative` findings.
 
-**Coverage: `coverage`** (up to 8). One entry per source: `{source, state, summary, step_ids, finding_ids, links}`. `state` is `checked` (read and used), `gap` (configured but you could not read it) or `not_configured`. `step_ids` are the ids of the chain steps that source proved.
+**Coverage: `coverage`** (up to 8). One entry per source you used or tried: `{source, state, summary, step_ids, finding_ids, links}`. Do not list a source you never queried. `state` is `checked` (read and used), `gap` (configured but you could not read it) or `not_configured` (the workspace has no such source). `step_ids` are the ids of the chain steps that source proved.
 
 **Unknowns: `unknowns`** (up to 5). `{label, why, finding_ids}` for what you could not establish, such as "why staging did not show it".
 
@@ -457,7 +504,12 @@ The Diagnosis tab is built from the `result_summary` you send to `tellagen_compl
 
 The `figure` in this example is the block that `tellagen_build_figure` returned. Do not write it by hand.
 
-**Read the completion response.** `warnings[]` comes back verbatim from Tellagen and `warnings_summary` groups them in one line, for example "2 evidence refs have no link: call tellagen_build_source_link or add a command". The run is already complete when you read it, so repeat the fix on the next run and name anything you could not fix in your final report. Warnings never fail a completion.
+**Read the completion response.** `warnings[]` comes back verbatim from Tellagen. `warnings_summary` groups them in one line, for example "2 evidence refs have no link: call tellagen_build_source_link or add a command"; it is present only when `warnings` is not empty, so its absence means no warnings. The run is already complete when you read it, so repeat the fix on the next run and name anything you could not fix in your final report. Warnings never fail a completion.
+
+**Avoid `single_source_high_confidence`.** Tellagen warns when a chain step sets `confidence_percent` above 90 and everything it cites comes from one source. It counts sources by the `source` name on the evidence refs of the findings the step cites (and the step's own `evidence_refs`), and every name that starts with `grafana` is one source, so Loki and Prometheus read through Grafana are still one. Do one of these before you complete:
+
+- Cite a finding from a second kind of source for that step, such as GitHub, Kubernetes, the codebase or a database.
+- Send `confidence_percent` of 90 or less on the step. The field is optional, and leaving it out never raises this warning.
 
 ### Causes under test (live)
 
@@ -466,6 +518,7 @@ Call `tellagen_update_cause` while you work so the Diagnosis tab shows what you 
 - Post a cause when you start testing it: `cause_key` (a short word with no spaces, up to 64 characters, such as `deploy-4412`), a `label` (required the first time) and `state: "open"`. Use the same key as `cause_key` on `tellagen_post_trace_step`.
 - Keep at most 8 causes per run, and only one `leading`. Move the state when the evidence changes: `leading` for the best-supported cause, `open` for one still being tested.
 - Rule a cause out with `state: "ruled_out"`, a one-sentence `rationale` and the `finding_ids` (numeric ids from `tellagen_post_finding`, up to 20) that exclude it.
+- `evidence_for` and `evidence_against` are your own counts, as whole numbers from 0 to 999: how many of your checks support the cause and how many contradict it. Tellagen stores what you send and does not count them from the trace.
 - A field you leave out keeps its value; `[]` clears a list. Do not call it after every check, only when a cause starts, changes state or is ruled out.
 - At completion Tellagen reconciles these causes to your final `result_summary`, so the final chain and `ruled_out` still have to be complete.
 
@@ -476,17 +529,19 @@ A failing CI pipeline, a broken build or a regression after a deploy is a questi
 1. **Bound the regression.** List the workflow runs of the branch (GitHub MCP list of workflow runs, or `gh run list --branch <branch> --workflow <name> --json number,databaseId,headSha,conclusion,status,createdAt,startedAt,event,url`). Find the last green run and the first red run of the same workflow. A failure that is red in every run in the window is not a regression: say so in `unknowns`.
 2. **Narrow to the change.** List the commits between the last green and the first red run's head sha. Read the failing job's log for the failing test or file, then find the commit or pull request that touched that file. If several commits are in the window and none touches it, say which you could not tell apart.
 3. **Find the fix.** Find the commit or pull request that fixed it (a revert, a follow-up fix, a rollback) and the first green run after it.
-4. **Check every later run.** Read the result of each run of the workflow after the fix. One green run after a fix is not enough when later runs failed again; name them.
-5. **Give every claim a typed link.** Call `tellagen_build_source_link` with `kind: "commit"`, `"pr"`, `"diff"`, `"ci_run"` (with `job_id` for the failing job) or `"release"`, and put the links in the finding's evidence refs and on each change ref.
-6. **Show it.** Build a `run_history` figure from the run list (`github_runs`, with `marks` at the regression and the fix by sha), a `checks` figure for the failing jobs of one run, and a `diff` figure for the lines that broke it. Put one on the chain step it proves.
+4. **Check every later run.** Read the result of each run of the workflow after the fix. One green run after a fix is not enough when later runs failed again; name them. A run that GitHub cancelled because a newer push replaced it is neither a pass nor a failure: post a finding that says so, with the run's link, and do not send it as `verified_by`. Name its commit in `unknowns` as not verified, because no run finished for it.
+5. **Give every claim a typed link.** Call `tellagen_build_source_link` with `kind: "commit"`, `"pr"`, `"diff"`, `"ci_run"` (with `job_id` for the failing job) or `"release"`, and put the links in the finding's evidence refs and on each change ref. The `job_id` is the `databaseId` of the job in `gh run view <run id> --json jobs`.
+6. **Show it.** Build a `run_history` figure from the run list, a `checks` figure for the failing jobs of one run, and a `diff` figure for the lines that broke it, with a `stats` figure for the headline numbers. Put one on the chain step it proves. The recipes are below, after the `change_refs` example.
 7. **Complete with `change_refs`** (at most 6, in this order):
 
 | Role | Kind | What to send |
 |------|------|--------------|
 | `regression_source` | `commit` or `pull_request` | The change that introduced the failure: `repo`, `sha` or `ref` (the PR number), `title`, `occurred_at` (merge time), `verification` |
-| `last_good` / `first_bad` | `ci_run` (or `deployment`) | The last green and the first red run: `ref` (the run id), `result`, `occurred_at` |
+| `last_good` / `first_bad` | `ci_run` (or `deployment`) | The last green and the first red run: `ref` (the numeric run id, such as `41289327533`; not the run number `#4151` that `run_history` uses), `result`, `occurred_at` (when the run finished) |
 | `fix` (or `rollback`) | `commit`, `pull_request` or `deployment` | The change that fixed it, with its `state` (`merged`, `deployed`, `reverted`, `rolled_back`) |
-| `verified_by` | `ci_run` | One per run after the fix, each with its `result` |
+| `verified_by` | `ci_run` | The runs after the fix, each with its `result`. The limit of 6 refs leaves room for two: if more than two runs follow the fix, send the first green run and the newest run, and list the others in a finding and in the `run_history` figure |
+
+A `ci_run` ref must be the numeric run id: Tellagen builds the run link as `/actions/runs/<ref>` only when `ref` is all digits, and builds none for `#4151` or a name. `result` is one of `success`, `failure`, `cancelled`, `skipped`, `pending` or `unknown`. Tellagen asks only for an RFC 3339 time in `occurred_at`; for a run, send when it finished (`updatedAt` of `gh run view`), because the `run_history` figure takes its own time from the start of each run. To link the failing job, put the link from `tellagen_build_source_link` (`ci_run` with `job_id`) in `links`, as in the example below.
 
 Each change ref needs `ref`, `sha`, `title` or `links`, and should cite `finding_ids` or `step_ids`; without a `links` entry Tellagen builds one from `repo` with `sha` or `ref` (commits, pull requests, releases and GitHub CI runs; a `deployment` or `config_change` needs a `links` entry). `result` is a fact about a run and never a verdict: a green run does not confirm the cause, a person does. Say in a finding when a check was not re-run after the fix. When a confirmed or likely diagnosis rests on GitHub evidence and there is no `regression_source`, Tellagen warns `regression_source_missing` unless `unknowns` says why it is not known.
 
@@ -500,6 +555,41 @@ Each change ref needs `ref`, `sha`, `title` or `links`, and should cite `finding
   {"role": "verified_by", "kind": "ci_run", "repo": "acme/checkout", "ref": "41289400002", "result": "success", "finding_ids": [13]}
 ]
 ```
+
+### Figures for a regression
+
+Build each one with `tellagen_build_figure` (placement `step_figure`, or `timeline_block` for a timeline event). The builder checks the limits and never invents a value, so send only numbers you read from a tool result. These recipes are the same as in `resource://tellagen/figure-guide`, which some clients cannot read.
+
+**`run_history`: which build broke and which fixed it.** Send the output of `gh run list` (or the GitHub Actions run list) as `github_runs`. The builder maps each run: `#<run number>` as the ref, the head sha, the start time, the event, the run page, and the conclusion as the result (`cancelled` stays `cancelled`; `timed_out` and `startup_failure` count as `failure`). A run that is skipped, neutral, stale or action_required has no result: leave it out. Runs are put oldest first; send 2 to 30. Add `job` (the failing job's name, from `gh run view <run id> --json jobs`) to the failing runs. Add up to 4 `marks`: `change_ref` is `regression` or `fix`, with the `sha` of the change (the mark goes before the first run built from it) or `between` with the refs of the two neighbouring runs. Set `repo` to `owner/name` so each run links to its page, and an optional `span` such as `{"from": "#4151", "to": "#4163", "label": "E2E Tests failed"}`.
+
+```json
+{ "type": "run_history", "title": "E2E on master", "repo": "acme/shop", "branch": "master",
+  "github_runs": [ { "number": 4150, "headSha": "9f2c1e0", "conclusion": "success", "startedAt": "2026-10-30T08:00:00Z", "event": "push" },
+                   { "number": 4151, "headSha": "4b7a2d1", "conclusion": "failure", "startedAt": "2026-10-30T09:00:00Z", "event": "push", "job": "E2E Tests" } ],
+  "marks": [ { "sha": "4b7a2d1", "change_ref": "regression", "title": "Move the header to a sticky layout" } ] }
+```
+
+**`checks`: pass or fail per job.** One item per job of the run, failures first, at most 12 items. `state` is `pass`, `fail`, `pending` or `skipped`. For a longer list send every failure and the checks that matter, and give the counts of the rest in the step.
+
+```json
+{ "type": "checks", "title": "Jobs on run 41289327533",
+  "items": [ { "label": "Frontend Tests", "state": "fail", "detail": "1 failed of 13516" }, { "label": "E2E Tests", "state": "pass" } ] }
+```
+
+**`stats`: the few numbers that matter.** 1 to 4 items. Each has a short `label`, a `value` written as text, a `caption` that says what it is measured on, and a `tone` (`good`, `warn`, `bad` or `neutral`).
+
+```json
+{ "type": "stats", "items": [ { "label": "Failed e2e tests", "value": "1 of 121", "caption": "master, Oct 30", "tone": "bad" } ] }
+```
+
+**`diff`: the lines that broke it or fixed it.** Send `path`, `ref` (the commit sha), `repo`, `additions` and `deletions`, and either `hunks` or `patch`. `patch` is the file's patch from GitHub, for one file only: the builder keeps its `+` and `-` lines, one hunk per `@@` header, and refuses more than 12 changed lines or 6 hunks. Then copy the lines that show the change into `hunks` yourself, as they are, indentation kept. Do not send the whole diff.
+
+```json
+{ "type": "diff", "path": "web/components/Header.tsx", "repo": "acme/shop", "ref": "4b7a2d1", "additions": 14, "deletions": 3,
+  "hunks": [ [ { "op": "-", "text": "  position: static;" }, { "op": "+", "text": "  position: sticky;" } ] ] }
+```
+
+`additions` and `deletions` are the size of the whole change, from the commit or pull request, as the block contract says. Tellagen draws them beside the file path, and writes "Excerpt: N of M changed lines" with M as their sum. So when the change touches several files, M counts lines of the other files too: say so in the figure `title` (for example "Header.tsx, 1 of 4 files"). Never count the numbers yourself from the part of the patch you kept.
 
 A runbook with the `github` source (`actions:read`, `commits:read`, `pull_requests:read`) gives these steps as checks; follow it when the pickup carries one. Against a Tellagen without `diagnosis_changes_v1` the MCP removes `change_refs` and the `ci_run`, `deployment` and `release` links and says so in `mcp_notice`; keep the same facts in the findings.
 
@@ -683,7 +773,7 @@ Then immediately start investigating it.
 - **Batching findings.** Post each finding as you discover it. Don't accumulate five findings and post them all at the end.
 - **Forgetting to complete the run.** Always call `tellagen_complete_investigation`, even on failure.
 - **Low-effort evidence refs.** Include the actual query you ran and a meaningful `result_summary`, not just "checked Grafana". Deep links in `url` let humans verify your work.
-- **Losing evidence lineage.** Reuse at least one exact `artifact_id`, `artifact_digest`, or `tool_use_id` from the completed trace response, together with its `evidence_fact_key` when returned, instead of rewriting or inventing identifiers.
+- **Losing evidence lineage.** Send your own `tool_use_id` on the trace step and the same `tool_use_id` on the evidence refs of the findings it produced. Copying `evidence_fact_key` is not needed and does not join anything.
 - **Changing guidance during a step.** A step's first accepted guidance basis is immutable; use a new step ID when the basis genuinely changes.
 - **Promoting everything.** The timeline is for key events. A speculative hypothesis with 0.3 confidence doesn't belong there.
 - **Skipping screenshots.** When you have access to Grafana render URLs or captured dashboard images, attach them. A panel screenshot showing the spike is worth more than a text description to a human responder in the war room.

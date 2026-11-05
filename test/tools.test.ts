@@ -6,6 +6,7 @@ import { z } from "zod";
 import { TellagenClient } from "../src/client.js";
 import { TellagenAPIError } from "../src/errors.js";
 import { registerAllTools } from "../src/tools/index.js";
+import { MCP_SERVER_VERSION } from "../src/version.js";
 
 /**
  * Helper: create a server with tools registered and call a tool by name.
@@ -689,7 +690,7 @@ describe("Tool integration via client", () => {
       expect(JSON.parse(String(request.body))).toEqual({
         client: {
           name: "claude",
-          mcp_server_version: "0.4.1",
+          mcp_server_version: MCP_SERVER_VERSION,
           profile_id: "work-cluster",
         },
         protocol_capabilities: [
@@ -945,7 +946,7 @@ describe("Tool integration via client", () => {
         source_resolution_id: "srcres_42_3_grafana-primary",
         step_id: "check-error-rate-1",
         step_index: 0,
-        mcp_server_version: "0.4.1",
+        mcp_server_version: MCP_SERVER_VERSION,
       });
     });
 
@@ -1728,7 +1729,7 @@ describe("Tool integration via client", () => {
             evidence_fact_key: "run-abc:summary:client-only",
           },
         ]),
-      ).toThrow();
+      ).not.toThrow();
       expect(tool.config.inputSchema?.guidance).toBeUndefined();
 
       const mockFinding = {
