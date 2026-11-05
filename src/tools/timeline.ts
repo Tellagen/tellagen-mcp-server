@@ -5,20 +5,11 @@ import { TellagenClient } from "../client.js";
 import { formatError } from "../errors.js";
 import { timelineBlockRefSchema } from "../figures.js";
 
-const evidenceLinkSchema = z.object({
-  source: z.string().min(1),
-  url: z.string().url(),
-  label: z.string().optional(),
-  summary: z.string().optional(),
-});
-
 const timelineMutationSchema = {
   title: z.string().min(1).optional(),
   body: z.string().optional(),
   type: z.string().optional(),
   icon: z.string().optional(),
-  source: z.string().optional(),
-  source_ref: z.string().optional(),
   started_at: z.string().datetime().optional(),
   ended_at: z.string().datetime().optional(),
   clear_ended_at: z.boolean().optional(),
@@ -26,10 +17,6 @@ const timelineMutationSchema = {
   workstream_id: z.number().int().positive().optional(),
   is_key: z.boolean().optional(),
   tags: z.array(z.string()).optional(),
-  ai_context: z.string().optional(),
-  source_window_started_at: z.string().datetime().optional(),
-  source_window_ended_at: z.string().datetime().optional(),
-  evidence_links: z.array(evidenceLinkSchema).optional(),
   blocks: z
     .array(timelineBlockRefSchema)
     .max(12)
@@ -272,11 +259,15 @@ export function registerTimelineTools(
     "tellagen_post_timeline_event",
     {
       description:
-        "Create a timeline event on an incident for timestamped RCA facts such as deploys, mitigations, customer impact, and verification milestones.",
+        "Create a timeline event on an incident for timestamped RCA facts such as deploys, mitigations, customer impact, and verification milestones. Title and body are required. When you have numbers, build a figure with tellagen_build_figure (placement timeline_block) and pass it in blocks.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
         ...timelineMutationSchema,
         title: z.string().min(1).describe("Timeline event title"),
+        body: z
+          .string()
+          .min(1)
+          .describe("What happened, in one or two sentences"),
       },
     },
     async ({ incident_id, ...params }) => {

@@ -294,6 +294,29 @@ function withAttachmentHint(data: unknown): unknown {
   };
 }
 
+const BEFORE_COMPLETE_CHECKLIST = [
+  "Post each cause you test with tellagen_update_cause, and keep its state current.",
+  "Give each chain step with numbers a figure built with tellagen_build_figure (placement step_figure), not written by hand.",
+  "Post the key moment with tellagen_post_timeline_event, with a body and with blocks built with tellagen_build_figure (placement timeline_block).",
+  "Give each evidence ref links from tellagen_build_source_link or a read-only command.",
+  "Cite finding_ids or step_ids on each change ref.",
+];
+
+/**
+ * Adds the checklist to a pickup response from a Tellagen that accepts the
+ * diagnosis structure. Every agent reads this response, and some clients show
+ * only a preview of the long guide.
+ */
+function withCompletionChecklist(data: unknown): unknown {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return data;
+  const capabilities = (data as { server_capabilities?: unknown }).server_capabilities;
+  if (!Array.isArray(capabilities) || !capabilities.includes("diagnosis_structure_v1")) return data;
+  return {
+    ...(data as Record<string, unknown>),
+    mcp_before_complete: BEFORE_COMPLETE_CHECKLIST,
+  };
+}
+
 function pickupClientName() {
   const value = (process.env.TELLAGEN_MCP_CLIENT || "codex")
     .trim()
@@ -610,7 +633,7 @@ export function registerInvestigationTools(
         rememberServerCapabilities(client, investigation_run_id, data);
         return {
           content: [
-            { type: "text" as const, text: JSON.stringify(withAttachmentHint(data)) },
+            { type: "text" as const, text: JSON.stringify(withCompletionChecklist(withAttachmentHint(data))) },
           ],
         };
       } catch (err) {
@@ -1058,7 +1081,7 @@ export function registerInvestigationTools(
     "tellagen_complete_investigation",
     {
       description:
-        'Complete or fail an investigation run. Set status to "completed" when done, or "failed" with a failure_reason if the investigation could not finish. Include result_summary for the shared RCA record whenever possible: causal_paths (2 to 4 steps, each citing finding_ids and a figure), ruled_out, coverage and unknowns, and for a regression or CI failure change_refs (the regression_source, the fix and the verified_by runs after it). The response carries the backend warnings[] verbatim plus a one-line warnings_summary; read it and name anything you could not fix in your report.',
+        'Complete or fail an investigation run. Before you complete a run, post each cause with tellagen_update_cause, build figures with tellagen_build_figure, and post the key moment with tellagen_post_timeline_event. Set status to "completed" when done, or "failed" with a failure_reason if the investigation could not finish. Include result_summary for the shared RCA record whenever possible: causal_paths (2 to 4 steps, each citing finding_ids and a figure), ruled_out, coverage and unknowns, and for a regression or CI failure change_refs (the regression_source, the fix and the verified_by runs after it). The response carries the backend warnings[] verbatim plus a one-line warnings_summary; read it and name anything you could not fix in your report.',
       inputSchema: {
         run_id: z.string().min(1).describe("Investigation run ID"),
         status: z

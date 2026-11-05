@@ -115,7 +115,7 @@ const evidenceRefSchema = z
       ),
     {
       message:
-        "evidence_fact_key must be accompanied by artifact_id, artifact_digest, or tool_use_id",
+        "evidence_fact_key must be accompanied by artifact_id, artifact_digest, or tool_use_id from a completed trace step. Leave it out if you do not have one",
       path: ["evidence_fact_key"],
     },
   );
@@ -347,7 +347,7 @@ export function registerFindingTools(
     "tellagen_promote_finding",
     {
       description:
-        "Promote a finding to the incident timeline. Creates a timeline event visible in the war room. Optionally override the title and body for the timeline entry.",
+        "Promote a finding to the incident timeline. Creates a timeline event visible in the war room. Optionally override the title and body for the timeline entry. Tellagen refuses this while the run has an open gap finding. In that case, post the fact with tellagen_post_timeline_event.",
       inputSchema: {
         finding_id: z.number().int().positive().describe("Finding ID"),
         title: z

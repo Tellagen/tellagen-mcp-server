@@ -286,6 +286,17 @@ describe("pickup and start carry the run context", () => {
     expect(body(0).protocol_capabilities).toContain("run_images_v1");
   });
 
+  it("gives the completion checklist only to a Tellagen that accepts the diagnosis structure", async () => {
+    const harness = createToolHarness();
+    fetchSpy.mockResolvedValueOnce(jsonResponse({ run: { id: "run-1" }, pickup: {}, server_capabilities: ["diagnosis_structure_v1"] }));
+    const current = harness.json(await harness.callTool("tellagen_pick_up_investigation", { investigation_run_id: "run-1" }));
+    expect(current.mcp_before_complete.join(" ")).toContain("tellagen_build_figure");
+
+    fetchSpy.mockResolvedValueOnce(jsonResponse({ run: { id: "run-2" }, pickup: {} }));
+    const older = harness.json(await harness.callTool("tellagen_pick_up_investigation", { investigation_run_id: "run-2" }));
+    expect(older.mcp_before_complete).toBeUndefined();
+  });
+
   it("starts a follow-up with corrects_run_id and a question with question_finding_id", async () => {
     const harness = createToolHarness();
     fetchSpy

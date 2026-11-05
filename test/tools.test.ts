@@ -402,17 +402,9 @@ describe("Tool integration via client", () => {
         title: "Rollback started",
         body: "Started rollback of deploy abc123 after 502 spike.",
         type: "mitigation",
-        source: "local-mcp",
         is_key: true,
         started_at: "2026-06-25T14:22:00Z",
         tags: ["rollback", "backend"],
-        evidence_links: [
-          {
-            source: "github",
-            url: "https://github.com/acme/api/commit/abc123",
-            label: "Deploy abc123",
-          },
-        ],
       });
 
       expect(JSON.parse(result.content[0].text)).toEqual({
@@ -426,17 +418,9 @@ describe("Tool integration via client", () => {
             title: "Rollback started",
             body: "Started rollback of deploy abc123 after 502 spike.",
             type: "mitigation",
-            source: "local-mcp",
             is_key: true,
             started_at: "2026-06-25T14:22:00Z",
             tags: ["rollback", "backend"],
-            evidence_links: [
-              {
-                source: "github",
-                url: "https://github.com/acme/api/commit/abc123",
-                label: "Deploy abc123",
-              },
-            ],
           }),
         }),
       );
@@ -705,7 +689,7 @@ describe("Tool integration via client", () => {
       expect(JSON.parse(String(request.body))).toEqual({
         client: {
           name: "claude",
-          mcp_server_version: "0.4.0",
+          mcp_server_version: "0.4.1",
           profile_id: "work-cluster",
         },
         protocol_capabilities: [
@@ -961,7 +945,7 @@ describe("Tool integration via client", () => {
         source_resolution_id: "srcres_42_3_grafana-primary",
         step_id: "check-error-rate-1",
         step_index: 0,
-        mcp_server_version: "0.4.0",
+        mcp_server_version: "0.4.1",
       });
     });
 

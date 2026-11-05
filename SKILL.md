@@ -2,6 +2,18 @@
 
 You have access to the Tellagen MCP server. This guide teaches you how to use it — alone and combined with other MCP servers — to investigate and manage incidents.
 
+This guide is long. Read all of it. If your client shows a preview and saves the text to a file, read that file.
+
+## Before you complete a run
+
+Do these five things before you call `tellagen_complete_investigation`:
+
+1. Each cause you tested was posted with `tellagen_update_cause`, and its state is current.
+2. Each chain step with numbers has a figure built with `tellagen_build_figure` (placement `step_figure`), not written by hand.
+3. The key moment has a timeline event from `tellagen_post_timeline_event`, with a `body` and with `blocks` built with `tellagen_build_figure` (placement `timeline_block`).
+4. Each evidence ref has `links` or a read-only `command`.
+5. Each change ref cites `finding_ids` or `step_ids`.
+
 ## Core concept
 
 Tellagen is an incident investigation platform. Your role is to act as an on-call AI investigator: read incidents, gather evidence from observability and source control systems, post structured findings, and promote key findings to the incident timeline so human responders see them in the war room.
@@ -114,11 +126,13 @@ Every investigation follows this sequence. Do not skip steps.
 5. tellagen_get_impact_summary     → check customer/business impact when available
 6. tellagen_post_runbook_check_attempt → for a frozen v2 plan, report the exact check/source identity before and after execution
 7. tellagen_post_trace_step        → for legacy runbook or non-plan work, post progress with its immutable guidance basis
-8. [gather evidence]               → use Grafana, GitHub, codebase, PagerDuty, kubectl, etc.
-9. tellagen_post_finding           → post each finding or explicit evidence gap as you discover it (do NOT batch)
-10. tellagen_promote_finding       → promote key findings to the timeline
-11. tellagen_post_timeline_event   → add timestamped facts, decisions, mitigations, and recovery markers when needed
-12. tellagen_complete_investigation → close the run with an RCA result_summary
+8. tellagen_update_cause           → post each cause when you start testing it, and when its state changes
+9. [gather evidence]               → use Grafana, GitHub, codebase, PagerDuty, kubectl, etc.
+10. tellagen_post_finding          → post each finding or explicit evidence gap as you discover it (do NOT batch)
+11. tellagen_build_figure          → turn the numbers you read into figures for the chain steps and the timeline
+12. tellagen_promote_finding       → promote key findings to the timeline (refused while a gap finding is open)
+13. tellagen_post_timeline_event   → add timestamped facts, decisions, mitigations, and recovery markers, with blocks when you have numbers
+14. tellagen_complete_investigation → close the run with an RCA result_summary
 ```
 
 ### Rules
@@ -441,6 +455,8 @@ The Diagnosis tab is built from the `result_summary` you send to `tellagen_compl
 }
 ```
 
+The `figure` in this example is the block that `tellagen_build_figure` returned. Do not write it by hand.
+
 **Read the completion response.** `warnings[]` comes back verbatim from Tellagen and `warnings_summary` groups them in one line, for example "2 evidence refs have no link: call tellagen_build_source_link or add a command". The run is already complete when you read it, so repeat the fix on the next run and name anything you could not fix in your final report. Warnings never fail a completion.
 
 ### Causes under test (live)
@@ -672,6 +688,9 @@ Then immediately start investigating it.
 - **Promoting everything.** The timeline is for key events. A speculative hypothesis with 0.3 confidence doesn't belong there.
 - **Skipping screenshots.** When you have access to Grafana render URLs or captured dashboard images, attach them. A panel screenshot showing the spike is worth more than a text description to a human responder in the war room.
 - **Not using negative findings.** When you rule something out, post a `negative` finding. It prevents other investigators from re-checking the same thing.
+- **Writing a figure by hand.** Build every figure with `tellagen_build_figure`. It checks the limits before you send it and names the field that is wrong.
+- **A timeline with no numbers.** `tellagen_post_timeline_event` needs a `body`, and a key moment with numbers needs `blocks` from `tellagen_build_figure` (placement `timeline_block`).
+- **Stopping at a failed link.** If `tellagen_build_source_link` fails, send a read-only `command` and the `datasource` on the evidence ref.
 - **Proofs with no source.** An evidence ref for Grafana or GitHub with no `links`, or a Kubernetes check with no `command`, shows "No source link" to responders. Call `tellagen_build_source_link`; do not paste a hand-built address.
 - **Citing keys instead of ids.** `finding_ids` are the numeric ids `tellagen_post_finding` returned. Keys, claims or titles are dropped.
 - **Inventing a figure.** A figure with a number you did not read from a tool result is worse than no figure.

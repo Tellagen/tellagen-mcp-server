@@ -93,8 +93,8 @@ async function grafanaBaseUrl(
       .filter((name): name is string => Boolean(name));
     fail(
       wanted
-        ? `No enabled Grafana datasource named "${wanted}" in Tellagen.${have.length ? ` Available: ${have.join(", ")}.` : ""} Set GRAFANA_URL in the MCP client environment to use your own Grafana address.`
-        : `No enabled Grafana datasource in Tellagen.${have.length ? ` Available: ${have.join(", ")}.` : ""} Configure one in Tellagen or set GRAFANA_URL in the MCP client environment.`,
+        ? `No enabled Grafana datasource named "${wanted}" in Tellagen.${have.length ? ` Available: ${have.join(", ")}.` : ""} Set GRAFANA_URL in the MCP client environment to use your own Grafana address. If you cannot, send a read-only command and the datasource on the evidence ref instead of a link.`
+        : `No enabled Grafana datasource in Tellagen.${have.length ? ` Available: ${have.join(", ")}.` : ""} Configure one in Tellagen or set GRAFANA_URL in the MCP client environment. If you cannot, send a read-only command and the datasource on the evidence ref instead of a link.`,
     );
   }
   if (named.length > 1) {
