@@ -5,6 +5,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { TellagenClient } from "../src/client.js";
 import { TellagenAPIError } from "../src/errors.js";
 import { createServer } from "../src/server.js";
+import { MCP_SERVER_VERSION } from "../src/version.js";
 import {
   postmortemRunbookCandidatesInputSchema,
   registerPostmortemRunbookTools,
@@ -442,7 +443,7 @@ describe("postmortem runbook candidate contract", () => {
         client: {
           name: "claude",
           profile_id: "work-laptop",
-          mcp_server_version: "0.4.1",
+          mcp_server_version: MCP_SERVER_VERSION,
         },
       },
     );
