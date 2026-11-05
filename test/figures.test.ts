@@ -323,10 +323,27 @@ describe("timeline tools carry blocks", () => {
   it("accepts a valid block in the tool schema and rejects an unknown type or more than twelve", () => {
     const { tools } = harness();
     const schema = z.object(tools.get("tellagen_post_timeline_event")!.config.inputSchema);
-    const base = { incident_id: 7, title: "t" };
+    const base = { incident_id: 7, title: "t", body: "b" };
     expect(schema.safeParse({ ...base, blocks: [block] }).success).toBe(true);
     expect(schema.safeParse({ ...base, blocks: [{ type: "heatmap", cells: [[1]] }] }).success).toBe(false);
     expect(schema.safeParse({ ...base, blocks: Array(13).fill(block) }).success).toBe(false);
+  });
+
+  it("needs a body on create, because Tellagen refuses an event without one", () => {
+    const { tools } = harness();
+    const schema = z.object(tools.get("tellagen_post_timeline_event")!.config.inputSchema);
+    expect(schema.safeParse({ incident_id: 7, title: "t" }).success).toBe(false);
+    expect(schema.safeParse({ incident_id: 7, title: "t", body: "" }).success).toBe(false);
+  });
+
+  it("does not offer the fields Tellagen refuses for an API key", () => {
+    const { tools } = harness();
+    for (const name of ["tellagen_post_timeline_event", "tellagen_update_timeline_event"]) {
+      const offered = Object.keys(tools.get(name)!.config.inputSchema);
+      for (const field of ["source", "source_ref", "ai_context", "source_window_started_at", "source_window_ended_at", "evidence_links"]) {
+        expect(offered).not.toContain(field);
+      }
+    }
   });
 });
 
