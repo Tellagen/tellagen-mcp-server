@@ -705,7 +705,7 @@ describe("Tool integration via client", () => {
       expect(JSON.parse(String(request.body))).toEqual({
         client: {
           name: "claude",
-          mcp_server_version: "0.3.0",
+          mcp_server_version: "0.4.0",
           profile_id: "work-cluster",
         },
         protocol_capabilities: [
@@ -961,7 +961,7 @@ describe("Tool integration via client", () => {
         source_resolution_id: "srcres_42_3_grafana-primary",
         step_id: "check-error-rate-1",
         step_index: 0,
-        mcp_server_version: "0.3.0",
+        mcp_server_version: "0.4.0",
       });
     });
 
