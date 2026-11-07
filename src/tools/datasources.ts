@@ -61,7 +61,7 @@ export function registerDatasourceTools(
     "tellagen_probe_datasource",
     {
       description:
-        "Run a local read-only diagnostic for a Tellagen datasource. For Grafana, checks required local environment variables and calls Grafana /api/health without returning credentials.",
+        "Check the local setup of a datasource that Tellagen lists, before you query it. For Grafana it checks the required environment variables and calls the /api/health endpoint. Returns ok, the checks that ran, the names of missing environment variables and a recommended action. It is read-only and never returns credentials.",
       inputSchema: {
         datasource_id: z
           .number()

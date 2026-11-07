@@ -16,7 +16,7 @@ export function registerContextTools(
     "tellagen_get_impact_summary",
     {
       description:
-        "Get Tellagen's customer-impact summary for an incident.",
+        "Read the customer-impact summary of an incident. For the individual customers, use tellagen_list_affected_customers. It changes nothing.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
       },
@@ -42,7 +42,7 @@ export function registerContextTools(
     "tellagen_list_affected_customers",
     {
       description:
-        "List affected customers for an incident, with optional status/email filters and pagination.",
+        "List the customers affected by an incident, with optional status and email filters and pagination. For totals, use tellagen_get_impact_summary. It changes nothing.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
         status: z.string().optional(),
@@ -77,7 +77,7 @@ export function registerContextTools(
     "tellagen_search",
     {
       description:
-        "Search Tellagen incidents, timeline events, issues, services, and related workspace records.",
+        "Search the workspace for incidents, timeline events, issues, services and related records. Use it when you do not know an ID. Returns matching records with their types. It changes nothing.",
       inputSchema: {
         q: z.string().min(2).optional().describe("Search query"),
         filters: z.string().optional().describe("Advanced filter string"),
@@ -130,7 +130,7 @@ export function registerContextTools(
   server.registerTool(
     "tellagen_list_services",
     {
-      description: "List services in the Tellagen service catalog.",
+      description: "List the services in the Tellagen service catalog. Use it to find a service ID. For one entry, call tellagen_get_service. It changes nothing.",
       inputSchema: {
         include_archived: z.boolean().optional(),
       },
@@ -155,7 +155,7 @@ export function registerContextTools(
   server.registerTool(
     "tellagen_get_service",
     {
-      description: "Get one Tellagen service catalog entry by ID.",
+      description: "Read one service catalog entry by ID, with its metadata. It changes nothing.",
       inputSchema: {
         service_id: z.number().int().positive().describe("Service ID"),
       },

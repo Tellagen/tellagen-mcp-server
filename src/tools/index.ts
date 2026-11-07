@@ -27,7 +27,7 @@ export function registerAllTools(
   registerDatasourceTools(server, client);
   registerDiagnosticTools(server, client);
   registerPostmortemRunbookTools(server, client);
-  registerFigureTools(server);
+  registerFigureTools(server, client);
   registerSourceLinkTools(server, client);
   registerAttachmentTools(server, client);
 }

@@ -70,7 +70,7 @@ export function registerDiagnosticTools(
     "tellagen_get_diagnostic_session",
     {
       description:
-        "Read a Tellagen MCP diagnostic session. Use this for diag_* IDs; do not pass diag_* IDs to investigation-run tools.",
+        "Read an MCP diagnostic session by its diag_* ID. Use it only for diag_* IDs; investigation-run tools reject them. To send the result of your check, call tellagen_report_diagnostic_tools. It changes nothing.",
       inputSchema: {
         diagnostic_session_id: z
           .string()
@@ -99,7 +99,7 @@ export function registerDiagnosticTools(
     "tellagen_report_diagnostic_tools",
     {
       description:
-        "Post sanitized MCP tool availability and access reports to a Tellagen diagnostic session after the local LLM checks visible MCP tools.",
+        "Report which MCP tools are visible and usable to a diagnostic session (diag_* ID), after you have checked them. Send only sanitized names and access results, never credentials. It does not start or change an investigation run.",
       inputSchema: {
         diagnostic_session_id: z
           .string()

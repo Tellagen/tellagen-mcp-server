@@ -130,7 +130,7 @@ export function registerFindingTools(
     "tellagen_post_finding",
     {
       description:
-        "Post a structured finding to an active investigation run on a Tellagen incident. Post findings incrementally as you discover them — do not batch. The response is {finding:{id,...}}: keep the numeric id, because causal_paths steps, ruled_out, coverage and unknowns cite findings by finding_ids when you complete the run.",
+        "Post a structured finding to an active investigation run on a Tellagen incident. Post findings incrementally as you discover them, and do not batch them. The response is {finding:{id,...}}: keep the numeric id, because causal_paths steps, ruled_out, coverage and unknowns cite findings by finding_ids when you complete the run. It cannot accept or reject a root cause: only a person does that in Tellagen.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
         investigation_run_id: z
@@ -269,7 +269,7 @@ export function registerFindingTools(
     "tellagen_list_findings",
     {
       description:
-        "List all findings for a Tellagen incident. Returns findings with type, confidence, status, and evidence.",
+        "List the findings of an incident, optionally for one run. Returns each finding's type, confidence, status and evidence. To read one finding with all its evidence refs, use tellagen_get_finding. It changes nothing.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
         run_id: z
@@ -300,7 +300,7 @@ export function registerFindingTools(
     "tellagen_get_finding",
     {
       description:
-        "Get a single finding by ID. Returns full finding details including evidence refs.",
+        "Read one finding by ID. Returns the full finding with its evidence refs. It changes nothing.",
       inputSchema: {
         finding_id: z.number().int().positive().describe("Finding ID"),
       },
@@ -324,7 +324,7 @@ export function registerFindingTools(
     "tellagen_update_finding",
     {
       description:
-        "Update a finding's status (dismiss or restore to draft). Promoted findings are immutable.",
+        "Dismiss a finding or restore it to draft. Use it to withdraw a finding that new evidence contradicts. Promoted findings cannot be changed. It cannot accept or reject a root cause: only a person does that in Tellagen.",
       inputSchema: {
         finding_id: z.number().int().positive().describe("Finding ID"),
         status: z

@@ -3,7 +3,14 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { TellagenClient } from "../client.js";
 import { formatError } from "../errors.js";
-import { timelineBlockRefSchema } from "../figures.js";
+import {
+  DIFF_LINES_CAPABILITY,
+  FIGURE_EXTRAS_CAPABILITY,
+  supportsDiffLines,
+  supportsFigureExtras,
+  unsupportedNotice,
+} from "../diagnosis-structure.js";
+import { timelineBlockRefSchema, withoutDiffLineDetailInBlock, withoutFigureExtrasInBlock } from "../figures.js";
 
 const timelineMutationSchema = {
   title: z.string().min(1).optional(),
@@ -101,6 +108,52 @@ function postmortemImportBody(input: {
   };
 }
 
+/**
+ * The blocks of a timeline event as the backend takes them. A diff block loses
+ * its unchanged lines and line numbers unless the backend advertises
+ * diff_lines_v1, and a stats or run_history block loses its figure extras
+ * unless it advertises figure_extras_v1, because an older one rejects them and
+ * drops the block.
+ */
+async function blocksForBackend<T extends { blocks?: unknown[] }>(
+  client: TellagenClient,
+  params: T,
+): Promise<{ params: T; notice?: string }> {
+  if (!params.blocks) return { params };
+  let blocks = params.blocks;
+  const notices: string[] = [];
+
+  const diffRemoved: string[] = [];
+  const noDiffDetail = blocks.map((block, index) => {
+    const result = withoutDiffLineDetailInBlock(block);
+    if (result.stripped) diffRemoved.push(`blocks[${index}]`);
+    return result.block;
+  });
+  if (diffRemoved.length > 0 && !(await supportsDiffLines(client))) {
+    blocks = noDiffDetail;
+    notices.push(unsupportedNotice(diffRemoved, DIFF_LINES_CAPABILITY));
+  }
+
+  const extrasRemoved: string[] = [];
+  const noExtras = blocks.map((block, index) => {
+    const result = withoutFigureExtrasInBlock(block);
+    if (result.what.length > 0) extrasRemoved.push(`blocks[${index}]`);
+    return result.block;
+  });
+  if (extrasRemoved.length > 0 && !(await supportsFigureExtras(client))) {
+    blocks = noExtras;
+    notices.push(unsupportedNotice(extrasRemoved, FIGURE_EXTRAS_CAPABILITY));
+  }
+
+  if (notices.length === 0) return { params };
+  return { params: { ...params, blocks }, notice: notices.join(" ") };
+}
+
+function withNotice(data: unknown, notice: string | undefined): unknown {
+  if (!notice || typeof data !== "object" || data === null || Array.isArray(data)) return data;
+  return { ...(data as Record<string, unknown>), mcp_notice: notice };
+}
+
 function definedBody(input: Record<string, unknown>): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(input)) {
@@ -163,7 +216,7 @@ export function registerTimelineTools(
     "tellagen_post_postmortem",
     {
       description:
-        "Create an immutable LLM postmortem version in Tellagen while preserving source-bundle and evidence metadata outside the Markdown body. If a shared draft exists, Tellagen snapshots it first as a minor draft version.",
+        "Legacy import: create an immutable LLM postmortem version while keeping source-bundle and evidence metadata outside the Markdown body. If a shared draft exists, Tellagen snapshots it first as a minor draft version. For a revision request, use tellagen_submit_postmortem_revision_proposal instead. It never submits a postmortem for the team.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
         submission_id: postmortemSubmissionIDSchema,
@@ -203,7 +256,7 @@ export function registerTimelineTools(
     "tellagen_update_postmortem",
     {
       description:
-        "Promote a revised LLM postmortem as the next immutable major version. Requires the current latest postmortem version ID as a concurrency guard. Tellagen snapshots a changed shared draft as a minor version first; use the returned version.id as postmortem_version_id when submitting runbook candidates.",
+        "Legacy import: promote a revised LLM postmortem as the next immutable major version. It needs the current latest postmortem version ID as a concurrency guard. Tellagen snapshots a changed shared draft as a minor version first; use the returned version.id as postmortem_version_id when submitting runbook candidates. For a revision request, use tellagen_submit_postmortem_revision_proposal instead.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
         postmortem_version_id: z
@@ -270,14 +323,15 @@ export function registerTimelineTools(
           .describe("What happened, in one or two sentences"),
       },
     },
-    async ({ incident_id, ...params }) => {
+    async ({ incident_id, ...input }) => {
       try {
+        const { params, notice } = await blocksForBackend(client, input);
         const data = await client.post(
           `/api/v1/incidents/${incident_id}/timeline`,
           definedBody(params),
         );
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(data) }],
+          content: [{ type: "text" as const, text: JSON.stringify(withNotice(data, notice)) }],
         };
       } catch (err) {
         return {
@@ -291,7 +345,7 @@ export function registerTimelineTools(
   server.registerTool(
     "tellagen_get_timeline_event",
     {
-      description: "Get one incident timeline event by ID.",
+      description: "Read one timeline event by ID. For the whole timeline, use tellagen_get_incident_timeline. It changes nothing.",
       inputSchema: {
         timeline_event_id: z
           .number()
@@ -319,7 +373,7 @@ export function registerTimelineTools(
     "tellagen_update_timeline_event",
     {
       description:
-        "Update a timeline event title, body, timing, tags, key-event flag, workstream, or evidence links.",
+        "Change a timeline event: title, body, timing, tags, key-event flag, workstream or evidence links. Send only the fields to change. To add a note without editing the event, use tellagen_add_timeline_comment. It cannot delete an event.",
       inputSchema: {
         timeline_event_id: z
           .number()
@@ -329,14 +383,15 @@ export function registerTimelineTools(
         ...timelineMutationSchema,
       },
     },
-    async ({ timeline_event_id, ...params }) => {
+    async ({ timeline_event_id, ...input }) => {
       try {
+        const { params, notice } = await blocksForBackend(client, input);
         const data = await client.patch(
           `/api/v1/timeline/${timeline_event_id}`,
           definedBody(params),
         );
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(data) }],
+          content: [{ type: "text" as const, text: JSON.stringify(withNotice(data, notice)) }],
         };
       } catch (err) {
         return {
@@ -351,7 +406,7 @@ export function registerTimelineTools(
     "tellagen_add_timeline_comment",
     {
       description:
-        "Add a comment to a timeline event, optionally as a reply to an existing comment.",
+        "Add a comment to a timeline event, optionally as a reply to an existing comment. Use it for discussion; to change the event itself, use tellagen_update_timeline_event.",
       inputSchema: {
         timeline_event_id: z
           .number()
@@ -388,7 +443,7 @@ export function registerTimelineTools(
   server.registerTool(
     "tellagen_list_timeline_comments",
     {
-      description: "List comments for a timeline event.",
+      description: "List the comments on a timeline event. It changes nothing.",
       inputSchema: {
         timeline_event_id: z
           .number()
