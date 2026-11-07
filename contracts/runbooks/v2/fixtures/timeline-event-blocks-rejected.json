@@ -14,13 +14,14 @@
       "message": "must be a number"
     },
     {
-      "name": "five key figures",
+      "name": "nine key figures",
       "blocks": [{"type": "stats", "items": [
         {"label": "a", "value": "1"}, {"label": "b", "value": "2"}, {"label": "c", "value": "3"},
-        {"label": "d", "value": "4"}, {"label": "e", "value": "5"}
+        {"label": "d", "value": "4"}, {"label": "e", "value": "5"}, {"label": "f", "value": "6"},
+        {"label": "g", "value": "7"}, {"label": "h", "value": "8"}, {"label": "i", "value": "9"}
       ]}],
       "field": "blocks[0].items",
-      "message": "needs 1 to 4 items (got 5)"
+      "message": "needs 1 to 8 items (got 9)"
     },
     {
       "name": "a table row with a missing cell",
@@ -71,14 +72,38 @@
       "message": "needs exactly 2 counts (got 1)"
     },
     {
-      "name": "a diff with more than twelve lines",
+      "name": "a diff with more than twelve changed lines",
       "blocks": [{"type": "diff", "path": "a.go", "ref": "abc", "additions": 13, "deletions": 0, "hunks": [[
         {"op": "+", "text": "1"}, {"op": "+", "text": "2"}, {"op": "+", "text": "3"}, {"op": "+", "text": "4"}, {"op": "+", "text": "5"},
         {"op": "+", "text": "6"}, {"op": "+", "text": "7"}, {"op": "+", "text": "8"}, {"op": "+", "text": "9"}, {"op": "+", "text": "10"},
         {"op": "+", "text": "11"}, {"op": "+", "text": "12"}, {"op": "+", "text": "13"}
       ]]}],
       "field": "blocks[0].hunks",
-      "message": "at most 12 lines in all (got 13)"
+      "message": "at most 12 changed lines in all (got 13)"
+    },
+    {
+      "name": "a diff hunk with three context lines before the first change",
+      "blocks": [{"type": "diff", "path": "a.go", "ref": "abc", "additions": 1, "deletions": 0, "hunks": [[
+        {"op": "context", "text": "1"}, {"op": "context", "text": "2"}, {"op": "context", "text": "3"}, {"op": "+", "text": "new"}
+      ]]}],
+      "field": "blocks[0].hunks[0]",
+      "message": "at most 2 context lines before the first changed line of a hunk (got 3)"
+    },
+    {
+      "name": "a diff context line with only one line number",
+      "blocks": [{"type": "diff", "path": "a.go", "ref": "abc", "additions": 1, "deletions": 0, "hunks": [[
+        {"op": "context", "text": "keep", "old_no": 3}, {"op": "+", "text": "new", "new_no": 4}
+      ]]}],
+      "field": "blocks[0].hunks[0][0]",
+      "message": "a context line needs old_no and new_no together"
+    },
+    {
+      "name": "a diff with line numbers on some lines only",
+      "blocks": [{"type": "diff", "path": "a.go", "ref": "abc", "additions": 1, "deletions": 1, "hunks": [[
+        {"op": "-", "text": "old", "old_no": 3}, {"op": "+", "text": "new"}
+      ]]}],
+      "field": "blocks[0].hunks",
+      "message": "line numbers must be on every line or on none"
     },
     {
       "name": "two ranges with only one in the whole range",

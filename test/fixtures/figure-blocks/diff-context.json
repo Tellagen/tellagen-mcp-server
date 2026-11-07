@@ -1,0 +1,31 @@
+[
+  {
+    "type": "diff",
+    "title": "Restore waits for each database to accept connections",
+    "path": "scripts/restore.sh",
+    "repo": "acme/shop",
+    "ref": "9c41d7a02",
+    "at": "2026-11-05T09:12:00Z",
+    "additions": 4,
+    "deletions": 3,
+    "hunks": [
+      [
+        { "op": "context", "text": "for db in \"${DATABASES[@]}\"; do", "old_no": 41, "new_no": 41 },
+        { "op": "context", "text": "  echo \"restoring ${db}\"", "old_no": 42, "new_no": 42 },
+        { "op": "-", "text": "  pg_restore --dbname \"${db}\" \"${BACKUP_DIR}/${db}.dump\"", "old_no": 43 },
+        { "op": "-", "text": "  sleep 5", "old_no": 44 },
+        { "op": "+", "text": "  pg_restore --dbname \"${db}\" --exit-on-error \"${BACKUP_DIR}/${db}.dump\"", "new_no": 43 },
+        { "op": "+", "text": "  wait_for_postgres \"${db}\" 60", "new_no": 44 },
+        { "op": "context", "text": "done", "old_no": 45, "new_no": 45 },
+        { "op": "context", "text": "", "old_no": 46, "new_no": 46 }
+      ],
+      [
+        { "op": "context", "text": "report() {", "old_no": 88, "new_no": 88 },
+        { "op": "-", "text": "\techo \"restored ${#DATABASES[@]} databases\"", "old_no": 89 },
+        { "op": "+", "text": "\techo \"restored ${#DATABASES[@]} of ${#EXPECTED[@]} databases\"", "new_no": 89 },
+        { "op": "+", "text": "\t[ \"${#DATABASES[@]}\" -eq \"${#EXPECTED[@]}\" ]", "new_no": 90 },
+        { "op": "context", "text": "}", "old_no": 90, "new_no": 91 }
+      ]
+    ]
+  }
+]

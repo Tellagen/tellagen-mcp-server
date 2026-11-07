@@ -20,7 +20,7 @@ const rejected = JSON.parse(
  * The Tellagen API's own accepted blocks of the four newer figure types,
  * copied as they are.
  */
-const golden = ["range-overlap", "histogram", "run-history", "diff"].map((name) => {
+const golden = ["range-overlap", "histogram", "run-history", "diff", "diff-context"].map((name) => {
   const [block] = JSON.parse(
     readFileSync(join(here, "fixtures", "figure-blocks", `${name}.json`), "utf8"),
   ) as Block[];
@@ -81,7 +81,8 @@ describe("step figure against the vendored timeline block contract", () => {
     const cases = rejected.cases.filter((entry) =>
       ["range_overlap", "histogram", "run_history", "diff"].includes(entry.blocks[0]!.type),
     );
-    expect(cases).toHaveLength(4);
+    // One case for each of range_overlap, histogram and run_history, and four for diff.
+    expect(cases).toHaveLength(7);
     for (const entry of cases) {
       expect(validateBlock(entry.blocks[0]), entry.name).toContain(`${localPath(entry.field)}: ${entry.message}`);
       const parsed = stepFigureSchema.safeParse(entry.blocks[0]);

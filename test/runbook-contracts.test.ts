@@ -85,7 +85,7 @@ describe("vendored Tellagen runbook contracts", () => {
     const manifest = JSON.parse(
       readFileSync(join(bundleRoot, "manifest.json"), "utf8"),
     ) as ContractManifest;
-    expect(manifest.contract_version).toBe("2026-11-03.1");
+    expect(manifest.contract_version).toBe("2026-11-07.1");
     expect(
       manifest.files.some(
         (entry) => entry.path === "v2/fixtures/filesystem-pressure.json",

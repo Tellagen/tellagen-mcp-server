@@ -1,4 +1,15 @@
 import { z } from "zod";
+import {
+  diffHunksFromPatch,
+  diffShapeAdvice,
+  hasDiffLineDetail,
+  MAX_DIFF_CHANGED_LINES,
+  MAX_DIFF_CONTEXT_EDGE,
+  MAX_DIFF_CONTEXT_GAP,
+  MAX_SELECTED_HUNKS,
+  withoutDiffLineDetail,
+  type DiffLine,
+} from "./diff-figure.js";
 
 /**
  * Figures are the typed widgets Tellagen draws in the Diagnosis tab, on the
@@ -47,6 +58,12 @@ export type FigurePlacement = "step_figure" | "timeline_block";
 
 const MAX_ABS = 1_000_000_000_000;
 const MAX_TREND_POINTS = 500;
+/** Stats a server with figure_extras_v1 takes; the first MAX_STATS_TILES are tiles. */
+export const MAX_STATS_ITEMS = 8;
+export const MAX_STATS_TILES = 4;
+const MAX_RUNS_NOT_SHOWN = 1_000_000;
+/** The server takes a stats title, more than 4 stats and runs_not_shown. */
+export const FIGURE_EXTRAS_CAPABILITY = "figure_extras_v1";
 
 const number = z.number().finite().min(-MAX_ABS).max(MAX_ABS);
 const positive = z.number().finite().gt(0).max(MAX_ABS);
@@ -62,6 +79,7 @@ const thresholdSchema = z
 const statsBase = z
   .object({
     type: z.literal("stats"),
+    title: blockText(80).optional().describe("A name for the tiles, for example Tests of the run. Only when the server lists figure_extras_v1."),
     items: z
       .array(
         z
@@ -77,8 +95,8 @@ const statsBase = z
           .strict(),
       )
       .min(1)
-      .max(4)
-      .describe("One to four numbers a responder scans for"),
+      .max(MAX_STATS_ITEMS)
+      .describe("One to eight numbers; aim for four or fewer. The first four are tiles (the total first, colour only on the exception), the rest plain rows. More than four only when the server lists figure_extras_v1."),
   })
   .strict();
 
@@ -352,15 +370,28 @@ const runHistoryBase = z
     repo: repoField.optional(),
     branch: blockText(80).optional(),
     runs: z.array(runSchema).min(2).max(30).describe("2 to 30 runs, oldest first"),
+    runs_not_shown: z
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_RUNS_NOT_SHOWN)
+      .optional()
+      .describe("How many runs of a longer history you left out. Only when the server lists figure_extras_v1."),
     marks: z.array(runMarkSchema).max(4).optional().describe("At most four changes between neighbouring runs"),
     span: runSpanSchema.optional().describe("A stretch of runs bracketed under the strip"),
   })
   .strict();
 
+const MAX_DIFF_LINE_NO = 10_000_000;
+
+const diffLineNo = z.number().int().min(1).max(MAX_DIFF_LINE_NO);
+
 const diffLineSchema = z
   .object({
-    op: z.enum(["+", "-"]),
+    op: z.enum(["+", "-", "context"]).describe("+ for an added line, - for a removed one, context for an unchanged line (only when the server lists diff_lines_v1)"),
     text: codeLine(160).describe("The line as it is in the change, indentation kept, up to 160 characters"),
+    old_no: diffLineNo.optional().describe("Line number in the old file: removed and context lines only. Only with diff_lines_v1, on every line or on none."),
+    new_no: diffLineNo.optional().describe("Line number in the new file: added and context lines only. Only with diff_lines_v1, on every line or on none."),
   })
   .strict();
 
@@ -378,7 +409,7 @@ const diffBase = z
       .array(z.array(diffLineSchema).min(1))
       .min(1)
       .max(6)
-      .describe("1 to 6 hunks of + and - lines, at most 12 lines in all. Do not send the whole diff."),
+      .describe("1 to 6 hunks, at most 12 changed lines (+ and -) in all. Send every line of a short change, each removed line next to the line that replaced it."),
   })
   .strict();
 
@@ -392,6 +423,80 @@ export const diffBlockSchema = diffBase;
 export type FigureRuleIssue = { path: Array<string | number>; message: string };
 
 const formatEdge = (n: number): string => String(n);
+
+/**
+ * The rules of a diff's hunks that span lines, with the API's messages: the
+ * budget counts changed lines only, a hunk holds at most 2 unchanged lines at
+ * each edge and 4 between two changes, and line numbers sit on every line or
+ * on none and count up through the diff.
+ */
+function diffRuleIssues(hunks: DiffLine[][]): FigureRuleIssue[] {
+  const issues: FigureRuleIssue[] = [];
+  const add = (path: Array<string | number>, message: string) => issues.push({ path, message });
+  let changedInAll = 0;
+  let numbered = 0;
+  let plain = 0;
+  let lastOld = 0;
+  let lastNew = 0;
+
+  for (const [i, hunk] of hunks.entries()) {
+    let context = 0;
+    let changed = 0;
+    for (const [j, line] of hunk.entries()) {
+      if (line.op === "context") {
+        context++;
+      } else {
+        const limit = changed === 0 ? MAX_DIFF_CONTEXT_EDGE : MAX_DIFF_CONTEXT_GAP;
+        if (context > limit) {
+          const where = changed === 0 ? "before the first changed line" : "between two changed lines";
+          add(["hunks", i], `at most ${limit} context lines ${where} of a hunk (got ${context})`);
+        }
+        context = 0;
+        changed++;
+        changedInAll++;
+      }
+
+      const hasOld = line.old_no !== undefined;
+      const hasNew = line.new_no !== undefined;
+      let fits = true;
+      if (hasOld && line.op === "+") {
+        add(["hunks", i, j, "old_no"], "is only for removed and context lines");
+        fits = false;
+      }
+      if (hasNew && line.op === "-") {
+        add(["hunks", i, j, "new_no"], "is only for added and context lines");
+        fits = false;
+      }
+      if (line.op === "context" && hasOld !== hasNew) {
+        add(["hunks", i, j], "a context line needs old_no and new_no together");
+        fits = false;
+      }
+      if (!fits) continue;
+      if (!hasOld && !hasNew) {
+        plain++;
+        continue;
+      }
+      numbered++;
+      if (hasOld) {
+        if (line.old_no! <= lastOld) add(["hunks", i, j, "old_no"], `must be greater than the previous old_no (${lastOld})`);
+        lastOld = line.old_no!;
+      }
+      if (hasNew) {
+        if (line.new_no! <= lastNew) add(["hunks", i, j, "new_no"], `must be greater than the previous new_no (${lastNew})`);
+        lastNew = line.new_no!;
+      }
+    }
+    if (changed === 0) add(["hunks", i], "needs at least 1 changed line (op + or -)");
+    else if (context > MAX_DIFF_CONTEXT_EDGE) {
+      add(["hunks", i], `at most ${MAX_DIFF_CONTEXT_EDGE} context lines after the last changed line of a hunk (got ${context})`);
+    }
+  }
+  if (changedInAll > MAX_DIFF_CHANGED_LINES) {
+    add(["hunks"], `at most ${MAX_DIFF_CHANGED_LINES} changed lines in all (got ${changedInAll})`);
+  }
+  if (numbered > 0 && plain > 0) add(["hunks"], "line numbers must be on every line or on none");
+  return issues;
+}
 
 /**
  * The rules of range_overlap, histogram, run_history and diff that span
@@ -473,8 +578,7 @@ export function figureRuleIssues(block: { type: string } & Record<string, unknow
 
   if (block.type === "diff") {
     const b = block as unknown as z.infer<typeof diffBase>;
-    const lines = b.hunks.reduce((sum, hunk) => sum + hunk.length, 0);
-    if (lines > 12) add(["hunks"], `at most 12 lines in all (got ${lines})`);
+    issues.push(...diffRuleIssues(b.hunks));
   }
   return issues;
 }
@@ -678,6 +782,7 @@ const runHistoryInput = z
       .max(30)
       .optional()
       .describe("Workflow runs exactly as the GitHub Actions list returns them (REST or gh run list --json). Tellagen maps each to a run and puts them oldest first."),
+    runs_not_shown: runHistoryBase.shape.runs_not_shown,
     marks: z.array(runMarkInput).max(4).optional(),
     span: runSpanSchema.optional(),
   })
@@ -693,12 +798,19 @@ const diffInput = z
     at: rfc3339.optional(),
     additions: diffBase.shape.additions,
     deletions: diffBase.shape.deletions,
-    hunks: diffBase.shape.hunks.optional().describe("1 to 6 hunks, at most 12 lines in all. Or send patch instead."),
+    hunks: diffBase.shape.hunks.optional().describe("1 to 6 hunks, at most 12 changed lines in all. Or send patch instead."),
     patch: z
       .string()
       .max(200_000)
       .optional()
-      .describe("A unified diff, as the patch of a GitHub commit or pull request file. Tellagen keeps its + and - lines; it must have at most 12."),
+      .describe(
+        "A unified diff, as the patch of a GitHub commit or pull request file. A change of 12 or fewer changed lines is sent whole. A longer one needs select_hunks.",
+      ),
+    select_hunks: z
+      .array(z.number().int().min(1))
+      .max(MAX_SELECTED_HUNKS)
+      .optional()
+      .describe("With patch: the numbers (1 is the first @@ header) of the hunks the claim cites, in file order, when the change has more than 12 changed lines."),
   })
   .strict();
 
@@ -1176,43 +1288,81 @@ function buildRunHistory(input: RunHistoryInput): Built {
 
 type DiffInput = z.infer<typeof diffInput>;
 
-/** The + and - lines of a unified diff, one hunk per @@ header. */
-function buildDiff(input: DiffInput): Built {
-  const { patch, hunks, ...rest } = input;
+/** What the server that will take the figure accepts. */
+export type FigureOptions = {
+  /** The server lists figure_extras_v1: a stats title, more than 4 stats and runs_not_shown. */
+  figureExtras?: boolean;
+  /** The server lists diff_lines_v1: a diff may carry unchanged lines and line numbers. */
+  diffLines?: boolean;
+};
+
+/**
+ * The hunks of a diff, from a unified patch or as the agent wrote them. A
+ * server without diff_lines_v1 gets only + and - lines, with no numbers.
+ */
+function buildDiff(input: DiffInput, options: FigureOptions): Built {
+  const { patch, hunks, select_hunks: selectHunks, ...rest } = input;
+  const diffLines = options.diffLines === true;
   if (patch !== undefined && hunks) return { issues: ["patch: send patch or hunks, not both"] };
+  if (patch === undefined && selectHunks) return { issues: ["select_hunks: only with patch"] };
+  const notes: string[] = [];
+  let out: DiffLine[][];
   if (patch === undefined) {
-    if (!hunks) return { issues: ["hunks: send hunks (at most 12 + and - lines) or patch (a unified diff)"] };
-    return { block: { ...rest, hunks }, notes: [] };
-  }
-  const lines = patch.split(/\r?\n/);
-  if (lines.filter((line) => line.startsWith("diff --git ")).length > 1) {
-    return { issues: [`patch: holds more than one file. Send the patch of ${input.path} only.`] };
-  }
-  const parsed: Array<Array<{ op: "+" | "-"; text: string }>> = [];
-  let current: Array<{ op: "+" | "-"; text: string }> | null = null;
-  for (const line of lines) {
-    if (line.startsWith("@@")) {
-      current = [];
-      parsed.push(current);
-      continue;
+    if (!hunks) return { issues: ["hunks: send hunks (at most 12 changed lines) or patch (a unified diff)"] };
+    out = hunks;
+    if (!diffLines && hasDiffLineDetail(out)) {
+      out = withoutDiffLineDetail(out);
+      notes.push("Unchanged lines and line numbers were left out: this Tellagen does not list diff_lines_v1 in server_capabilities.");
     }
-    // File headers come before the first hunk; "\ No newline at end of file" is not a line.
-    if (current === null || line.startsWith("\\")) continue;
-    if (line.startsWith("+") || line.startsWith("-")) current.push({ op: line[0] as "+" | "-", text: line.slice(1) });
+  } else {
+    if (patch.split(/\r?\n/).filter((line) => line.startsWith("diff --git ")).length > 1) {
+      return { issues: [`patch: holds more than one file. Send the patch of ${input.path} only.`] };
+    }
+    const built = diffHunksFromPatch(patch, { diffLines, selectHunks });
+    if ("issues" in built) return built;
+    out = built.hunks;
+    notes.push(...built.notes);
   }
-  const kept = parsed.filter((hunk) => hunk.length > 0);
-  const changed = kept.reduce((sum, hunk) => sum + hunk.length, 0);
-  if (parsed.length === 0) return { issues: ["patch: no hunk found. Send the patch as GitHub gives it, from the first @@ line."] };
-  if (changed === 0) return { issues: ["patch: no added or removed line"] };
-  if (changed > 12 || kept.length > 6) {
-    return {
-      issues: [
-        `patch: ${changed} changed lines in ${kept.length} hunks. A diff shows at most 12 lines in at most 6 hunks: send hunks with the lines that show the change, copied as they are.`,
-      ],
-    };
+  notes.push(...diffShapeAdvice(out, input.additions, input.deletions));
+  return { block: { ...rest, hunks: out }, notes };
+}
+
+/**
+ * A diff block as a server without diff_lines_v1 takes it: no unchanged lines
+ * and no line numbers. Any other block is returned as it is.
+ */
+export function withoutDiffLineDetailInBlock(block: unknown): { block: unknown; stripped: boolean } {
+  if (typeof block !== "object" || block === null || Array.isArray(block)) return { block, stripped: false };
+  const record = block as Record<string, unknown>;
+  if (record.type !== "diff" || !Array.isArray(record.hunks)) return { block, stripped: false };
+  const hunks = record.hunks.map((hunk) => (Array.isArray(hunk) ? hunk : [])) as DiffLine[][];
+  if (!hasDiffLineDetail(hunks)) return { block, stripped: false };
+  return { block: { ...record, hunks: withoutDiffLineDetail(hunks) }, stripped: true };
+}
+
+/**
+ * A stats or run_history block as a server without figure_extras_v1 takes it:
+ * no stats title, at most four stats and no runs_not_shown. Any other block is
+ * returned as it is. `what` names each thing that was left out.
+ */
+export function withoutFigureExtrasInBlock(block: unknown): { block: unknown; what: string[] } {
+  if (typeof block !== "object" || block === null || Array.isArray(block)) return { block, what: [] };
+  const record = { ...(block as Record<string, unknown>) };
+  const what: string[] = [];
+  if (record.type === "stats") {
+    if (record.title !== undefined) {
+      delete record.title;
+      what.push("the title");
+    }
+    if (Array.isArray(record.items) && record.items.length > MAX_STATS_TILES) {
+      what.push(`${record.items.length - MAX_STATS_TILES} figures after the fourth`);
+      record.items = record.items.slice(0, MAX_STATS_TILES);
+    }
+  } else if (record.type === "run_history" && record.runs_not_shown !== undefined) {
+    delete record.runs_not_shown;
+    what.push("runs_not_shown");
   }
-  const notes = parsed.length !== kept.length ? [`${parsed.length - kept.length} hunks with no + or - line were left out.`] : [];
-  return { block: { ...rest, hunks: kept }, notes };
+  return what.length > 0 ? { block: record, what } : { block, what };
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -1251,8 +1401,11 @@ const describe = (block: Record<string, unknown>): string => {
       return `run_history of ${runs.length} runs (${count("success")} passed, ${count("failure")} failed, ${count("cancelled")} cancelled, ${count("pending")} pending) with ${plural(marks, "mark")}`;
     }
     case "diff": {
-      const lines = (block.hunks as unknown[][]).reduce((a, h) => a + h.length, 0);
-      return `diff of ${block.path} at ${block.ref}: +${block.additions} -${block.deletions} in the whole change, ${plural(lines, "line")} shown`;
+      const lines = (block.hunks as DiffLine[][]).flat();
+      const changed = lines.filter((l) => l.op !== "context").length;
+      const context = lines.length - changed;
+      const numbered = lines.some((l) => l.old_no !== undefined || l.new_no !== undefined);
+      return `diff of ${block.path} at ${block.ref}: +${block.additions} -${block.deletions} in the whole change, ${plural(changed, "changed line")} shown${context > 0 ? ` with ${plural(context, "unchanged line")}` : ""}${numbered ? " and line numbers" : ""}`;
     }
     default:
       return `changes with ${(block.rows as unknown[]).length} rows`;
@@ -1264,7 +1417,7 @@ const describe = (block: Record<string, unknown>): string => {
  * Tellagen accepts. It reshapes and checks. It has no data source of its own
  * and never makes up a value.
  */
-export function buildFigure(input: BuildFigureInput): BuildFigureResult {
+export function buildFigure(input: BuildFigureInput, options: FigureOptions = {}): BuildFigureResult {
   const parsed = figureInputSchema.safeParse(input.figure);
   if (!parsed.success) return { ok: false, issues: issuesOf(parsed.error) };
   const figure = parsed.data;
@@ -1299,7 +1452,7 @@ export function buildFigure(input: BuildFigureInput): BuildFigureResult {
     const failed = take(buildRunHistory(figure));
     if (failed) return failed;
   } else if (figure.type === "diff") {
-    const failed = take(buildDiff(figure));
+    const failed = take(buildDiff(figure, options));
     if (failed) return failed;
   } else if (figure.type === "table") {
     block = {
@@ -1310,6 +1463,13 @@ export function buildFigure(input: BuildFigureInput): BuildFigureResult {
     block = { ...figure };
   }
   block = Object.fromEntries(Object.entries(block!).filter(([, v]) => v !== undefined));
+  if (options.figureExtras !== true) {
+    const stripped = withoutFigureExtrasInBlock(block);
+    if (stripped.what.length > 0) {
+      block = stripped.block as Record<string, unknown>;
+      notes.push(`Left out ${stripped.what.join(" and ")}: this Tellagen does not list ${FIGURE_EXTRAS_CAPABILITY} in server_capabilities.`);
+    }
+  }
 
   if (input.placement === "timeline_block") {
     if (input.slot) block.slot = input.slot;
