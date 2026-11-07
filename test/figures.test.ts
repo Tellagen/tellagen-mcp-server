@@ -154,9 +154,9 @@ describe("compare, stats, table, checks and changes", () => {
     expect(issues(buildFigure({ placement: "step_figure", figure: { ...compare, color: "red" } }))).toContain("color");
   });
 
-  it("limits stats to four items and known tones", () => {
+  it("limits stats to eight items and known tones", () => {
     const item = { label: "a", value: "1" };
-    expect(issues(buildFigure({ placement: "step_figure", figure: { type: "stats", items: Array(5).fill(item) } }))).toContain("items");
+    expect(issues(buildFigure({ placement: "step_figure", figure: { type: "stats", items: Array(9).fill(item) } }, { figureExtras: true }))).toContain("items");
     expect(issues(buildFigure({ placement: "step_figure", figure: { type: "stats", items: [{ ...item, tone: "loud" }] } }))).toContain("items.0.tone");
   });
 
@@ -606,14 +606,16 @@ describe("diff", () => {
       ],
     });
     expect(result.notes.join(" ")).toContain("1 hunks with no + or - line were left out");
-    expect(result.summary).toBe("diff of web/Header.tsx at 4b7a2d1: +14 -3 in the whole change, 4 lines shown");
+    expect(result.summary).toBe("diff of web/Header.tsx at 4b7a2d1: +14 -3 in the whole change, 4 changed lines shown");
   });
 
-  it("refuses a long patch instead of choosing lines, and never counts the change size itself", () => {
+  it("cuts one long hunk after a complete pair, refuses to choose between hunks, and never counts the change size itself", () => {
     const long = ["@@ -1 +1 @@", ...Array.from({ length: 13 }, (_, i) => `+line ${i}`)].join("\n");
-    expect(issues(buildFigure({ placement: "step_figure", figure: { ...base, patch: long } }))).toContain(
-      "patch: 13 changed lines in 1 hunks",
-    );
+    const cut = buildFigure({ placement: "step_figure", figure: { ...base, patch: long } });
+    expect(okBlock(cut).hunks).toHaveLength(1);
+    expect((okBlock(cut).hunks as unknown[][])[0]).toHaveLength(12);
+    const two = ["@@ -1 +1 @@", ...Array.from({ length: 8 }, (_, i) => `+a${i}`), "@@ -50 +60 @@", ...Array.from({ length: 8 }, (_, i) => `+b${i}`)].join("\n");
+    expect(issues(buildFigure({ placement: "step_figure", figure: { ...base, patch: two } }))).toContain("select_hunks");
     const { additions: _a, ...noCount } = base;
     expect(issues(buildFigure({ placement: "step_figure", figure: { ...noCount, patch } }))).toContain("additions");
     expect(issues(buildFigure({ placement: "step_figure", figure: { ...base, patch: "+x" } }))).toContain("no hunk found");
@@ -628,7 +630,7 @@ describe("diff", () => {
     const build = (hunks: unknown) => buildFigure({ placement: "timeline_block", figure: { ...base, hunks } });
     expect(okBlock(build([[line("    indented  ")]]))).toMatchObject({ hunks: [[{ op: "+", text: "    indented  " }]] });
     expect(okBlock(build([[line("")]]))).toMatchObject({ hunks: [[{ op: "+", text: "" }]] });
-    expect(issues(build([Array.from({ length: 13 }, (_, i) => line(String(i)))]))).toContain("hunks: at most 12 lines in all (got 13)");
+    expect(issues(build([Array.from({ length: 13 }, (_, i) => line(String(i)))]))).toContain("hunks: at most 12 changed lines in all (got 13)");
     expect(issues(build([[line("x".repeat(161))]]))).toContain("hunks.0.0.text: at most 160 characters (got 161)");
     expect(issues(build([[line("a\u0007b")]]))).toContain("hunks.0.0.text: must not contain control characters other than tabs");
     expect(issues(build([[{ op: "~", text: "x" }]]))).toContain("hunks.0.0.op");

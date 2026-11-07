@@ -8,19 +8,26 @@ import {
 } from "../version.js";
 import {
   DIAGNOSIS_CHANGES_CAPABILITY,
+  DIFF_LINES_CAPABILITY,
   evidenceRefStructureShape,
   rememberServerCapabilities,
   resultChangeShape,
   resultStructureShape,
   stepStructureShape,
   stripResultChanges,
+  stripResultDiffLines,
+  stripResultFigureExtras,
   stripResultStructure,
   stripTraceStructure,
   summarizeWarnings,
   supportsDiagnosisChanges,
   supportsDiagnosisStructure,
+  supportsDiffLines,
+  supportsFigureExtras,
+  FIGURE_EXTRAS_CAPABILITY,
   traceStructureShape,
   unsupportedNotice,
+  headlineNotice,
 } from "../diagnosis-structure.js";
 
 const resultEvidenceRefSchema = z.object({
@@ -129,7 +136,11 @@ const resultSummarySchema = z
       .object({
         tone: z.enum(["success", "warning", "danger", "neutral"]),
         eyebrow: z.string(),
-        sentence: z.string(),
+        sentence: z
+          .string()
+          .describe(
+            "The headline claim: 15 words or fewer, one cause. Put numbers and other causes in findings, causal_paths and ruled_out.",
+          ),
         show_new_investigation_cta: z.boolean(),
       })
       .describe("Short human-readable conclusion for the RCA record"),
@@ -482,7 +493,7 @@ export function registerInvestigationTools(
     "tellagen_start_investigation",
     {
       description:
-        "Start a new local AI investigation run on a Tellagen incident when you were not given an investigation_run_id. If Tellagen UI already provided a run ID, use tellagen_pick_up_investigation instead. To follow up an earlier run of the same incident (it was wrong, or the fix needs a re-check), pass corrects_run_id; to answer an open diagnosis question (a gap finding), pass question_finding_id. The pickup bundle of a follow-up carries the earlier run as parent.",
+        "Start a new local AI investigation run on a Tellagen incident when you were not given an investigation_run_id. If Tellagen UI already provided a run ID, use tellagen_pick_up_investigation instead. To follow up an earlier run of the same incident (it was wrong, or the fix needs a re-check), pass corrects_run_id; to answer an open diagnosis question (a gap finding), pass question_finding_id. The pickup bundle of a follow-up carries the earlier run as parent. Returns the new run, which you then pick up with tellagen_pick_up_investigation.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
         agent_name: z
@@ -575,7 +586,7 @@ export function registerInvestigationTools(
     "tellagen_get_incident_context",
     {
       description:
-        "Get the full Tellagen investigation context bundle for an existing run: incident, scope, timeline, prior findings, connectors, matched runbooks/skills, and output schema guidance.",
+        "Re-read the context bundle of an investigation run: incident, scope, timeline, prior findings, connectors, matched runbooks and output schema guidance. Use it to resume or re-check a run you already picked up. It changes nothing and does not attach you to the run; tellagen_pick_up_investigation does that.",
       inputSchema: {
         investigation_run_id: z
           .string()
@@ -605,7 +616,7 @@ export function registerInvestigationTools(
     "tellagen_pick_up_investigation",
     {
       description:
-        "Attach this local MCP agent to a Tellagen investigation run created by the UI. Call this first when the prompt includes an investigation_run_id; it moves the run from awaiting_agent to running and returns the full context bundle. The MCP sends its protocol capabilities itself, so there is no parameter for them. Picking the same unfinished run up again from a new MCP process is safe.",
+        "Attach this local MCP agent to an investigation run that a person created in Tellagen. Call it first when the prompt includes an investigation_run_id. It moves the run from awaiting_agent to running and returns the full context bundle with server_capabilities. The MCP sends its protocol capabilities itself, so there is no parameter for them. Picking the same unfinished run up again from a new MCP process is safe. It never creates a run: use tellagen_start_investigation when you have no run ID.",
       inputSchema: {
         investigation_run_id: z
           .string()
@@ -907,7 +918,7 @@ export function registerInvestigationTools(
     "tellagen_get_investigation_workspace",
     {
       description:
-        "Get the incident-level investigation workspace: runs, findings, trace, and review state for an incident.",
+        "Read the incident-level investigation workspace: all runs, findings, trace and review state. Use it for the big picture of an incident; use tellagen_get_incident_context for the bundle of one run. It changes nothing.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
       },
@@ -996,7 +1007,7 @@ export function registerInvestigationTools(
     "tellagen_list_investigation_runs",
     {
       description:
-        "List all investigation runs for a Tellagen incident. Shows run status, agent info, and finding counts.",
+        "List the investigation runs of an incident with each run's status, agent and finding count. Use it to find a run ID. For the bundle of one run, call tellagen_get_incident_context. It changes nothing.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
       },
@@ -1083,7 +1094,7 @@ export function registerInvestigationTools(
     "tellagen_complete_investigation",
     {
       description:
-        'Complete or fail an investigation run. Before you complete a run, post each cause with tellagen_update_cause, build figures with tellagen_build_figure, and post the key moment with tellagen_post_timeline_event. Set status to "completed" when done, or "failed" with a failure_reason if the investigation could not finish. Include result_summary for the shared RCA record whenever possible: causal_paths (2 to 4 steps, each citing finding_ids and a figure), ruled_out, coverage and unknowns, and for a regression or CI failure change_refs (the regression_source, the fix and the verified_by runs after it). The response carries the backend warnings[] verbatim and, only when there are warnings, a one-line warnings_summary; read it and name anything you could not fix in your report. result_summary must have conclusion, likely_cause_label, customer_impact, confidence_percent, signals_checked and takeaways, and should have assessment.diagnosis_state.',
+        'Complete or fail an investigation run. Before you complete a run, post each cause with tellagen_update_cause, build figures with tellagen_build_figure, and post the key moment with tellagen_post_timeline_event. Set status to "completed" when done, or "failed" with a failure_reason if the investigation could not finish. Write the headline claim (result_summary.conclusion.sentence) in 15 words or fewer, with one cause, for example "The checkout pool size of 5 ran out of database connections at 14:02." and not a long sentence that lists the checks you made; the detail goes in the findings. Include result_summary for the shared RCA record whenever possible: causal_paths (2 to 4 steps, each citing finding_ids and a figure), ruled_out, coverage and unknowns, and for a regression or CI failure change_refs (the regression_source, the fix and the verified_by runs after it). The response carries the backend warnings[] verbatim and, only when there are warnings, a one-line warnings_summary; read it and name anything you could not fix in your report. result_summary must have conclusion, likely_cause_label, customer_impact, confidence_percent, signals_checked and takeaways, and should have assessment.diagnosis_state. The result can only propose a cause. A person accepts or rejects the root cause in Tellagen, and an API key cannot do it.',
       inputSchema: {
         run_id: z.string().min(1).describe("Investigation run ID"),
         status: z
@@ -1141,7 +1152,31 @@ export function registerInvestigationTools(
             body.result_summary = changes.summary;
             notices.push(unsupportedNotice(changes.removed, DIAGNOSIS_CHANGES_CAPABILITY));
           }
+          // Unchanged lines and line numbers of a diff figure go only to a
+          // backend that advertises diff_lines_v1; an older one drops the
+          // whole figure (figure_invalid).
+          const diffs = stripResultDiffLines(body.result_summary);
+          if (
+            diffs.removed.length > 0 &&
+            !(await supportsDiffLines(client, run_id))
+          ) {
+            body.result_summary = diffs.summary;
+            notices.push(unsupportedNotice(diffs.removed, DIFF_LINES_CAPABILITY));
+          }
+          // A stats title, stats after the fourth and runs_not_shown go only
+          // to a backend that advertises figure_extras_v1; an older one
+          // rejects them and drops the whole figure (figure_invalid).
+          const extras = stripResultFigureExtras(body.result_summary);
+          if (
+            extras.removed.length > 0 &&
+            !(await supportsFigureExtras(client, run_id))
+          ) {
+            body.result_summary = extras.summary;
+            notices.push(unsupportedNotice(extras.removed, FIGURE_EXTRAS_CAPABILITY));
+          }
         }
+        const headline = headlineNotice(result_summary);
+        if (headline) notices.push(headline);
         const notice = notices.length > 0 ? notices.join(" ") : undefined;
         const data = await client.patch<Record<string, unknown>>(
           `/api/v1/investigations/${run_id}`,

@@ -1,8 +1,8 @@
 {
   "upstream_repository": "https://github.com/tellagen/tellagen",
-  "upstream_commit": "6ec42d33dfb68dd376d31200bfcce7f419314136",
+  "upstream_commit": "ab4a8c7cd5e06a1f344fbea895e0d8ce78e60b08",
   "upstream_worktree_dirty": true,
-  "contract_version": "2026-11-03.1",
-  "bundle_sha256": "5ae7a7fb01007f357ea04a10e002e0b8fbe01b3e59ae509ccc61bd63dc3e455c",
+  "contract_version": "2026-11-07.2",
+  "bundle_sha256": "4c1e53e14220f1aebfbfabe34ffab6e2eef94620a6d7301cdb85b4aede194a3d",
   "bundle_path": "contracts/runbooks"
 }

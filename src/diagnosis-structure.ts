@@ -23,8 +23,11 @@ import {
   figureRuleIssues,
   histogramBlockSchema,
   MAX_STEP_FIGURE_BYTES,
+  FIGURE_EXTRAS_CAPABILITY,
   rangeOverlapBlockSchema,
   runHistoryBlockSchema,
+  withoutDiffLineDetailInBlock,
+  withoutFigureExtrasInBlock,
 } from "./figures.js";
 
 export const DIAGNOSIS_STRUCTURE_CAPABILITY = "diagnosis_structure_v1";
@@ -32,12 +35,17 @@ export const DIAGNOSIS_STRUCTURE_CAPABILITY = "diagnosis_structure_v1";
 export const DIAGNOSIS_CHANGES_CAPABILITY = "diagnosis_changes_v1";
 /** The client reads a run's screenshots with tellagen_get_context_attachment. */
 export const RUN_IMAGES_CAPABILITY = "run_images_v1";
+/** The server takes unchanged lines and line numbers in a diff figure. */
+export const DIFF_LINES_CAPABILITY = "diff_lines_v1";
+export { FIGURE_EXTRAS_CAPABILITY };
 
 /* ------------------------------------------------------------------ */
 /* Capability negotiation                                             */
 /* ------------------------------------------------------------------ */
 
 const capabilityByClient = new WeakMap<TellagenClient, Map<string, ReadonlySet<string>>>();
+/** What the latest pickup or context call told us. One client talks to one backend. */
+const latestCapabilities = new WeakMap<TellagenClient, ReadonlySet<string>>();
 
 function capabilityMap(client: TellagenClient): Map<string, ReadonlySet<string>> {
   let map = capabilityByClient.get(client);
@@ -68,6 +76,7 @@ export function rememberServerCapabilities(
     Array.isArray(list) ? list.filter((item): item is string => typeof item === "string") : [],
   );
   capabilityMap(client).set(runId, advertised);
+  latestCapabilities.set(client, advertised);
 }
 
 /**
@@ -93,6 +102,32 @@ export async function supportsCapability(
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether the backend takes unchanged lines and line numbers in a diff figure.
+ * With a run id it asks for that run. A tool that has no run id (the timeline
+ * tools) goes by the latest pickup of this process; with no pickup yet the
+ * answer is no, so an older backend never gets fields it would reject.
+ */
+export async function supportsDiffLines(
+  client: TellagenClient,
+  runId?: string,
+): Promise<boolean> {
+  if (runId !== undefined) return supportsCapability(client, runId, DIFF_LINES_CAPABILITY);
+  return latestCapabilities.get(client)?.has(DIFF_LINES_CAPABILITY) ?? false;
+}
+
+/**
+ * Whether the backend takes a stats title, more than four stats and
+ * runs_not_shown. Decided like supportsDiffLines.
+ */
+export async function supportsFigureExtras(
+  client: TellagenClient,
+  runId?: string,
+): Promise<boolean> {
+  if (runId !== undefined) return supportsCapability(client, runId, FIGURE_EXTRAS_CAPABILITY);
+  return latestCapabilities.get(client)?.has(FIGURE_EXTRAS_CAPABILITY) ?? false;
 }
 
 /** Whether the backend accepts the diagnosis structure for this run. */
@@ -761,6 +796,54 @@ export function stripFindingChangeLinks(refs: unknown): {
   return { refs: dropChangeLinks(refs, "evidence_refs", removed), removed };
 }
 
+/**
+ * A result summary whose diff figures carry no unchanged lines and no line
+ * numbers. `removed` names each figure that was changed.
+ */
+export function stripResultDiffLines(summary: unknown): {
+  summary: unknown;
+  removed: string[];
+} {
+  const removed: string[] = [];
+  if (!isRecord(summary) || !Array.isArray(summary.causal_paths)) return { summary, removed };
+  const causalPaths = summary.causal_paths.map((path, pathIndex) => {
+    if (!isRecord(path) || !Array.isArray(path.steps)) return path;
+    const steps = path.steps.map((step, stepIndex) => {
+      if (!isRecord(step) || !("figure" in step)) return step;
+      const result = withoutDiffLineDetailInBlock(step.figure);
+      if (!result.stripped) return step;
+      removed.push(`causal_paths[${pathIndex}].steps[${stepIndex}].figure`);
+      return { ...step, figure: result.block };
+    });
+    return { ...path, steps };
+  });
+  return removed.length > 0 ? { summary: { ...summary, causal_paths: causalPaths }, removed } : { summary, removed };
+}
+
+/**
+ * A result summary whose stats and run_history figures carry none of the
+ * figure extras. `removed` names each figure that was changed.
+ */
+export function stripResultFigureExtras(summary: unknown): {
+  summary: unknown;
+  removed: string[];
+} {
+  const removed: string[] = [];
+  if (!isRecord(summary) || !Array.isArray(summary.causal_paths)) return { summary, removed };
+  const causalPaths = summary.causal_paths.map((path, pathIndex) => {
+    if (!isRecord(path) || !Array.isArray(path.steps)) return path;
+    const steps = path.steps.map((step, stepIndex) => {
+      if (!isRecord(step) || !("figure" in step)) return step;
+      const result = withoutFigureExtrasInBlock(step.figure);
+      if (result.what.length === 0) return step;
+      removed.push(`causal_paths[${pathIndex}].steps[${stepIndex}].figure`);
+      return { ...step, figure: result.block };
+    });
+    return { ...path, steps };
+  });
+  return removed.length > 0 ? { summary: { ...summary, causal_paths: causalPaths }, removed } : { summary, removed };
+}
+
 /** The sentence the tool adds when it dropped fields for an older backend. */
 export function unsupportedNotice(
   removed: string[],
@@ -768,6 +851,12 @@ export function unsupportedNotice(
 ): string {
   const shown = removed.slice(0, 6).join(", ");
   const more = removed.length > 6 ? `, and ${removed.length - 6} more` : "";
+  if (capability === DIFF_LINES_CAPABILITY) {
+    return `This Tellagen backend does not advertise ${capability}, so the unchanged lines and line numbers of ${shown}${more} were not sent and the changed lines went through. Update Tellagen to show them.`;
+  }
+  if (capability === FIGURE_EXTRAS_CAPABILITY) {
+    return `This Tellagen backend does not advertise ${capability}, so the stats title, the stats after the fourth and runs_not_shown of ${shown}${more} were not sent and the rest of the figure went through. Update Tellagen to show them.`;
+  }
   const feature =
     capability === DIAGNOSIS_CHANGES_CAPABILITY
       ? "change refs and ci_run, deployment and release links"
@@ -802,6 +891,14 @@ const WARNING_ADVICE: Record<string, string> = {
   regression_source_missing:
     "add the change that introduced it as a change ref with role regression_source, or say in unknowns why it is not known",
   change_refs_dropped: "use a known role and kind, give each ref a ref, sha, title or link, and send at most 6",
+  diff_one_sided:
+    "a diff of a change that adds and removes lines must show both: send each removed line next to the line that replaced it",
+  diff_short_change_cut:
+    "a change of 12 or fewer changed lines is sent whole: send every changed line of it",
+  headline_too_long:
+    "write the headline claim (conclusion.sentence) in 15 words or fewer, with one cause, and keep the detail in findings",
+  question_not_a_question:
+    "write the claim of a gap finding that blocks the diagnosis as one real question that ends with a question mark",
 };
 
 /**
@@ -821,4 +918,45 @@ export function summarizeWarnings(warnings: unknown): string | undefined {
     return advice ? `${count} ${code} (${advice})` : `${count} ${code}`;
   });
   return `${warnings.length} warning${warnings.length === 1 ? "" : "s"}: ${parts.join("; ")}. The run is already complete, so name anything you could not fix in your report and apply the fixes on the next run.`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Headline and blocking question                                     */
+/* ------------------------------------------------------------------ */
+
+export const HEADLINE_MAX_WORDS = 15;
+
+/** Words as the backend counts them: runs of text between white space. */
+function wordCount(text: string): number {
+  return text.split(/\s+/).filter((word) => word !== "").length;
+}
+
+/**
+ * Advice when the headline claim (conclusion.sentence) is over the limit.
+ * Nothing is changed or blocked: the backend accepts any text and only warns.
+ */
+export function headlineNotice(summary: unknown): string | undefined {
+  if (!isRecord(summary) || !isRecord(summary.conclusion)) return undefined;
+  const sentence = summary.conclusion.sentence;
+  if (typeof sentence !== "string") return undefined;
+  const words = wordCount(sentence);
+  if (words <= HEADLINE_MAX_WORDS) return undefined;
+  return `The headline claim (conclusion.sentence) has ${words} words. Write it in ${HEADLINE_MAX_WORDS} words or fewer, with one cause, and keep the numbers and the other causes in the findings. It was sent unchanged.`;
+}
+
+/**
+ * Advice when the claim of a gap finding is not a question. A gap finding
+ * that is open blocks the diagnosis, and a person reads its claim as the
+ * question to answer. A source that was only unavailable is still a gap, so
+ * this is advice and never an error.
+ */
+export function gapQuestionNotice(
+  findingType: string,
+  role: string | undefined,
+  claim: string,
+): string | undefined {
+  if (findingType !== "gap" && role !== "gap") return undefined;
+  const end = claim.replace(/[\s"'`)\]}\u201d\u2019]+$/u, "");
+  if (end === "" || end.endsWith("?") || end.endsWith("\uff1f")) return undefined;
+  return "The claim of a gap finding is the question a person has to answer. Write it as one real question that ends with a question mark, and put what you already checked in evidence_summary. It was sent unchanged.";
 }

@@ -1,0 +1,21 @@
+{
+  "title": "Investigation result: the headline claim and the blocking question",
+  "description": "How to write the two sentences a responder reads first in the result of an investigation run: conclusion.summary (the headline claim, stored as the verdict) and the claim of a gap finding that blocks the diagnosis (the blocking question). The server accepts any text. It adds the advice warnings headline_too_long and question_not_a_question to the completion response and to the run's quality_warnings, and never rejects the result for them. They apply whether or not the client advertised diagnosis_structure_v1.",
+  "x-limits": {"headline_max_words": 15},
+  "x-guidance": [
+    "The headline claim states one cause in at most 15 words. Name what broke and why, in plain words. Put the detail, the numbers and the other possible causes in findings, causal_paths and ruled_out, not in the headline.",
+    "A blocking question is a gap finding that a person has to answer before the diagnosis can be trusted. Write its claim as one real question that ends with a question mark and that a person with access to the system can answer with a fact. Do not write it as a statement about what is unknown.",
+    "Ask one thing in a blocking question. If you have two questions, post two gap findings. Put what you already checked in the evidence summary, not in the question.",
+    "If the headline is over 15 words, completion answers with the warning headline_too_long and keeps the result. If a blocking question does not end with a question mark, completion answers with question_not_a_question and keeps the result. Fix the sentence and send the result again when you can; the run is not failed either way."
+  ],
+  "x-examples": {
+    "headline": {
+      "good": "The checkout pool size of 5 ran out of database connections at 14:02.",
+      "bad": "Based on the metrics, logs and deploy history that were reviewed during the investigation, it is likely that a recent change to the checkout service caused connection pool exhaustion and the resulting elevated error rates."
+    },
+    "blocking_question": {
+      "good": "Did the 14:02 deploy of the billing service lower the retry limit?",
+      "bad": "Whether the retry limit was lowered by the 14:02 deploy of the billing service could not be established from the available data and needs to be confirmed by someone with access to the deploy history."
+    }
+  }
+}

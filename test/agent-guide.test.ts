@@ -138,7 +138,17 @@ describe("SKILL.md figure recipes", () => {
   const recipes = jsonBlocks(section("### Figures for a regression")) as Array<Record<string, unknown>>;
 
   it("covers run_history, checks, stats and diff", () => {
-    expect(recipes.map((recipe) => recipe.type)).toEqual(["run_history", "checks", "stats", "diff"]);
+    expect(recipes.map((recipe) => recipe.type)).toEqual(["run_history", "checks", "stats", "diff", "diff"]);
+  });
+
+  it("builds the diff example with unchanged lines and numbers only for a server that lists diff_lines_v1", () => {
+    const figure = recipes.filter((recipe) => recipe.type === "diff")[1]!;
+    const withLines = buildFigure({ placement: "step_figure", figure }, { diffLines: true });
+    expect(withLines.ok, withLines.ok ? "" : withLines.issues.join("; ")).toBe(true);
+    if (withLines.ok) expect(JSON.stringify(withLines.block)).toContain('"old_no"');
+    const older = buildFigure({ placement: "step_figure", figure });
+    expect(older.ok).toBe(true);
+    if (older.ok) expect(JSON.stringify(older.block)).not.toMatch(/context|old_no|new_no/);
   });
 
   it.each(["run_history", "checks", "stats", "diff"])("builds the %s example as a step figure", (type) => {

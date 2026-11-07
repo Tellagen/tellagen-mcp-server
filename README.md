@@ -1,8 +1,14 @@
 # @tellagen/mcp-server
 
-MCP server for Tellagen — investigate incidents with AI agents.
+An MCP server for [Tellagen](https://tellagen.com), the incident workspace for SRE and DevOps teams. It lets your own AI client (Claude Code, Codex, Cursor and other MCP clients) pick up an investigation, post findings with evidence, and write timeline events and postmortem proposals back to Tellagen. The server runs on your machine. Your client keeps the credentials for Grafana, GitHub and the other tools it reads from, and Tellagen never stores them.
 
-Works with any MCP-compatible client: Claude Code, Cursor, VS Code Copilot, Windsurf.
+```bash
+npx -y @tellagen/mcp-server
+```
+
+Set `TELLAGEN_API_KEY` and `TELLAGEN_API_URL` first (see the quick start below). The MCP Registry name is `io.github.tellagen/mcp-server`.
+
+Works with any MCP-compatible client: Claude Code, Codex, Cursor, VS Code Copilot, Windsurf.
 
 ## Quick start
 
@@ -66,61 +72,98 @@ From Settings → AI diagnostics, click **Check MCP tools**, then copy the diagn
 
 ## Tools
 
-### Read tools
+The server offers 46 tools, all with the prefix `tellagen_`. A tool that reads never changes anything. A person, not an API key, accepts or rejects a root cause in Tellagen: no tool can do it.
 
-| Tool | Description |
-|------|-------------|
-| `tellagen_get_incident` | Get incident details (severity, status, services, timestamps) |
-| `tellagen_list_incidents` | List all incidents, optionally filtered by status |
-| `tellagen_get_incident_timeline` | Get the timeline of events for an incident |
-| `tellagen_list_investigation_runs` | List investigation runs for an incident |
-| `tellagen_get_investigation_coverage` | Preflight exact frozen runbook completion coverage and repair targets |
-| `tellagen_list_investigation_runbook_waivers` | List responder-created check waivers for a run |
-| `tellagen_get_incident_context` | Get the full context bundle for an existing investigation run |
-| `tellagen_list_trace_steps` | List progress trace steps already posted for an investigation run |
-| `tellagen_list_runbooks` | List matched runbooks/skills for a run |
-| `tellagen_get_investigation_workspace` | Get the investigation workspace for an incident |
-| `tellagen_list_findings` | List findings for an incident, optionally filtered by run |
-| `tellagen_get_finding` | Get a single finding with full details |
-| `tellagen_get_timeline_event` | Get one timeline event |
-| `tellagen_list_timeline_comments` | List comments on a timeline event |
-| `tellagen_get_impact_summary` | Get the current impact summary for an incident |
-| `tellagen_list_affected_customers` | List affected customers for an incident |
-| `tellagen_search` | Search Tellagen incidents, findings, timeline entries, and related records |
-| `tellagen_list_services` | List services configured in Tellagen |
-| `tellagen_get_service` | Get one service and its metadata |
-| `tellagen_probe_datasource` | Diagnose a local datasource setup; for Grafana, checks required env vars and `/api/health` reachability without returning credentials |
-| `tellagen_get_diagnostic_session` | Read a `diag_*` MCP diagnostic session from Settings → AI diagnostics |
-| `tellagen_build_source_link` | Build the clickable link for an evidence ref: Grafana Explore / logs / trace / panel, GitHub compare / commit / pull request / Actions run or job (`ci_run`) / release. Kubernetes and sources without a browser URL return a copyable command or guidance. Calls only the Tellagen API |
-| `tellagen_build_figure` | Turn numbers read from a tool result into a figure Tellagen draws (stats, compare, trend, table, checks, changes, range_overlap, histogram, run_history, diff) and check it against Tellagen's limits. No network call; the guide is `resource://tellagen/figure-guide` |
-| `tellagen_get_context_attachment` | Read one screenshot of a run (`pickup.attachments.items[].url`) with the API key: an image block up to 700 KB, plus the temp file path, size, type and pixel size |
+### Incidents
 
-### Write tools
+| Tool | Purpose |
+|------|---------|
+| `tellagen_list_incidents` | Find an incident ID: list incidents, optionally by status |
+| `tellagen_get_incident` | Read one incident (severity, status, services, timestamps, manager) |
+| `tellagen_create_incident` | Create an incident when the user asks for one |
+| `tellagen_update_incident` | Change fields of an incident (title, status, severity, team, impact summary, links, timestamps) |
+| `tellagen_search` | Search incidents, timeline events, issues and services when you do not know an ID |
 
-| Tool | Description |
-|------|-------------|
-| `tellagen_create_incident` | Create an incident; use `title` for the display title, `short_title` for the ID/Slack slug, and `impact_summary` for impact (`gist` remains a legacy alias for `short_title`) |
-| `tellagen_update_incident` | Update the display title, work type, owning team, status, impact summary, links, or timestamps |
-| `tellagen_start_investigation` | Start a local investigation run when no UI-created run ID was provided; `corrects_run_id` starts a follow-up, `question_finding_id` answers an open diagnosis question |
-| `tellagen_pick_up_investigation` | Attach the local agent to a UI-created awaiting run |
-| `tellagen_post_runbook_check_attempt` | Report an exact check/source attempt from a negotiated structured v2 runbook plan |
-| `tellagen_post_trace_step` | Post live progress with a stable step ID and immutable runbook/non-runbook guidance basis |
-| `tellagen_update_investigation_scope` | Update the investigation scope as evidence changes |
-| `tellagen_post_finding` | Post a structured finding to an active investigation |
-| `tellagen_update_cause` | Post or update a cause under test (state, rationale, finding ids) for a run; needs `diagnosis_structure_v1` |
-| `tellagen_complete_investigation` | Mark an investigation as completed or failed, with RCA summary support |
-| `tellagen_update_finding` | Update a finding's status (dismiss or restore) |
+### Investigation runs
+
+| Tool | Purpose |
+|------|---------|
+| `tellagen_start_investigation` | Start a run when no run ID was given; also starts a follow-up of an earlier run |
+| `tellagen_pick_up_investigation` | Attach this agent to a run that a person created in Tellagen, and get its context bundle |
+| `tellagen_get_incident_context` | Re-read the context bundle of a run you already picked up |
+| `tellagen_get_investigation_workspace` | Read all runs, findings, trace and review state of an incident |
+| `tellagen_list_investigation_runs` | List the runs of an incident |
+| `tellagen_update_investigation_scope` | Change the target services, aliases and time range of the investigation |
+| `tellagen_list_runbooks` | List the runbooks that matched a run |
+| `tellagen_complete_investigation` | Complete or fail a run with the result summary (the cause chain, what was ruled out, coverage, unknowns and change refs) |
+
+### Trace and runbook checks
+
+| Tool | Purpose |
+|------|---------|
+| `tellagen_post_trace_step` | Post or update a readable progress step, with the guidance basis |
+| `tellagen_post_runbook_check_attempt` | Post an attempt at one frozen runbook check and source |
+| `tellagen_list_trace_steps` | List the steps already posted, to avoid repeating work when you resume |
+| `tellagen_get_investigation_coverage` | Check which frozen checks and evidence are still missing before you complete |
+| `tellagen_list_investigation_runbook_waivers` | List the checks a responder waived |
+
+### Findings and causes
+
+| Tool | Purpose |
+|------|---------|
+| `tellagen_post_finding` | Post one finding with its evidence refs, screenshots and links |
+| `tellagen_list_findings` | List the findings of an incident or run |
+| `tellagen_get_finding` | Read one finding with all its evidence refs |
+| `tellagen_update_finding` | Dismiss a finding or restore it to draft |
 | `tellagen_promote_finding` | Promote a finding to the incident timeline |
-| `tellagen_post_postmortem` | Create an immutable LLM postmortem version, snapshotting a changed shared draft first |
-| `tellagen_update_postmortem` | Promote a revision as the next LLM major version, guarded by the current immutable version ID |
-| `tellagen_get_postmortem_analysis_request` | Read the exact document, captured evidence, and selection for an analysis request |
-| `tellagen_submit_postmortem_runbook_candidates` | Submit zero to three Structured v2 candidates for review; does not change the postmortem or publish runbooks |
-| `tellagen_get_postmortem_revision_request` | Read the captured base draft, evidence, selection, and requested changes |
-| `tellagen_submit_postmortem_revision_proposal` | Store an immutable proposal for human review; does not apply or submit it |
-| `tellagen_post_timeline_event` | Add a timeline event directly |
-| `tellagen_update_timeline_event` | Update a timeline event |
+| `tellagen_update_cause` | Post or update a cause under test while the run is live |
+
+### Evidence helpers
+
+| Tool | Purpose |
+|------|---------|
+| `tellagen_build_source_link` | Build the link or the copyable command for an evidence ref (Grafana, GitHub, Kubernetes) |
+| `tellagen_build_figure` | Turn numbers from a tool result into a figure that Tellagen draws, and check it against the limits |
+| `tellagen_get_context_attachment` | Read one screenshot that a responder attached to a run |
+| `tellagen_probe_datasource` | Check the local setup of a datasource before you query it |
+
+### Timeline
+
+| Tool | Purpose |
+|------|---------|
+| `tellagen_get_incident_timeline` | Read the timeline of an incident |
+| `tellagen_get_timeline_event` | Read one timeline event |
+| `tellagen_post_timeline_event` | Add a timestamped fact to the timeline, optionally with figures |
+| `tellagen_update_timeline_event` | Change a timeline event |
 | `tellagen_add_timeline_comment` | Comment on a timeline event |
-| `tellagen_report_diagnostic_tools` | Post sanitized MCP tool availability and access reports for a diagnostic session |
+| `tellagen_list_timeline_comments` | List the comments on a timeline event |
+
+### Postmortems
+
+| Tool | Purpose |
+|------|---------|
+| `tellagen_get_postmortem_revision_request` | Read the draft, evidence and requested changes of a revision request |
+| `tellagen_submit_postmortem_revision_proposal` | Store a proposed postmortem for human review |
+| `tellagen_get_postmortem_analysis_request` | Read the document and evidence of a standalone runbook analysis request |
+| `tellagen_submit_postmortem_runbook_candidates` | Submit zero to three runbook candidates for review |
+| `tellagen_post_postmortem` | Legacy import: create an immutable postmortem version |
+| `tellagen_update_postmortem` | Legacy import: create the next major postmortem version |
+
+### Impact and services
+
+| Tool | Purpose |
+|------|---------|
+| `tellagen_get_impact_summary` | Read the customer-impact summary of an incident |
+| `tellagen_list_affected_customers` | List the customers an incident affected |
+| `tellagen_list_services` | List the services in the catalog |
+| `tellagen_get_service` | Read one service |
+
+### Diagnostics
+
+| Tool | Purpose |
+|------|---------|
+| `tellagen_get_diagnostic_session` | Read an MCP diagnostic session (a `diag_*` ID) |
+| `tellagen_report_diagnostic_tools` | Report which MCP tools are visible and usable |
 
 ## Auditable runbook guidance
 
@@ -249,6 +292,10 @@ Tellagen shows a source on every proof in the Diagnosis tab. Evidence refs (`tel
 
 `tellagen_complete_investigation` also accepts the causal chain with `finding_ids` (the numeric ids that `tellagen_post_finding` returns), one `figure` per step (a timeline block of any type except `table` and `changes`, validated before the request is sent; see Figures), `ruled_out[]`, `coverage[]`, `unknowns[]` and `change_refs[]` (see Change refs). `tellagen_post_trace_step` accepts `outcome` (supports, rules_out, nothing_notable, inconclusive, unavailable) and `cause_key`. `tellagen_update_cause` posts the causes you are testing while the run is live (`PUT /api/v1/investigation-runs/{id}/causes/{key}`, at most 8 per run); it is sent only when the run advertises `diagnosis_structure_v1`, otherwise the result carries an `mcp_notice` and nothing is sent. The response carries the backend `warnings[]` verbatim and a one-line `warnings_summary` the agent can act on.
 
+### Short headlines and real questions
+
+The headline claim (`conclusion.sentence` of `result_summary`) states one cause in 15 words or fewer. The `claim` of a `gap` finding that blocks the diagnosis is one real question that ends with a question mark. For example, a good headline is "The checkout pool size of 5 ran out of database connections at 14:02." and a good question is "Did the 14:02 deploy of the billing service lower the retry limit?". Tellagen accepts any text and answers a longer headline with the warning `headline_too_long` and a gap claim that is not a question with `question_not_a_question`. The tool descriptions and the skill guide give the rule, and the server adds an `mcp_notice` to the response of `tellagen_complete_investigation` and `tellagen_post_finding` when the text breaks it. The notice is advice: the call is sent unchanged, and it works the same against an older Tellagen.
+
 ### Capability negotiation
 
 At pickup the MCP server advertises, in `protocol_capabilities`, the runbook v2 bundle plus three optional capabilities. Tellagen lists the ones it accepts in the top-level `server_capabilities` of the pickup (and of `tellagen_get_incident_context`), for example `["diagnosis_structure_v1", "diagnosis_changes_v1", "run_images_v1"]`.
@@ -258,6 +305,10 @@ At pickup the MCP server advertises, in `protocol_capabilities`, the runbook v2 
 | `diagnosis_structure_v1` | evidence ref `links`, `command`, `datasource`; `causal_paths` with `finding_ids`, `figure`, `links`; `ruled_out`, `coverage`, `unknowns`; trace `outcome` and `cause_key`; live causes | a confirmed or likely diagnosis without `causal_paths` is a hard error; every other check is a warning |
 | `diagnosis_changes_v1` | `change_refs`, and the `ci_run`, `deployment` and `release` link kinds | enables the warning `regression_source_missing` |
 | `run_images_v1` | (nothing extra) it reads screenshots with `tellagen_get_context_attachment` | the web says the client reads images; without it the responder is told the agent gets each caption and a link |
+
+One more capability is the server's alone: Tellagen lists `diff_lines_v1` in `server_capabilities` when a diff figure may carry unchanged lines (`op: "context"`) and line numbers (`old_no`, `new_no`). The MCP does not advertise it. Without it, a diff goes out with only its `+` and `-` lines and no numbers (an older Tellagen would drop the whole figure), and the tool result carries an `mcp_notice`. `tellagen_build_figure` takes the `run_id` for this check; the timeline tools go by the latest pickup of the process.
+
+Likewise Tellagen lists `figure_extras_v1` when a `stats` figure may carry a `title` and more than four items, and a `run_history` figure may carry `runs_not_shown`. Without it the MCP cuts a stats figure to its first four items and drops the title and `runs_not_shown`, and the tool result carries an `mcp_notice`; `tellagen_build_figure` says so in `notes`. `tellagen_build_figure` takes the `run_id` for this check, and the timeline tools and `tellagen_complete_investigation` apply it to the figures they send.
 
 The fields behind a capability go **only** to a run whose response lists it in `server_capabilities`. Against an older Tellagen they are removed before the request leaves, the call still succeeds, and the tool result carries an `mcp_notice` naming what was not sent. A run this process did not pick up is checked once through `GET /api/v1/investigations/{id}/context`.
 
@@ -292,7 +343,7 @@ Each ref needs one of `ref`, `sha`, `title` or `links`; the MCP refuses an unkno
 
 | Type | Step figure | Timeline block | Limits |
 | --- | --- | --- | --- |
-| `stats` | yes | yes | 1 to 4 items |
+| `stats` | yes | yes | 1 to 8 items (4 or fewer is best; the first four are tiles), optional `title` up to 80 characters; with `figure_extras_v1` only |
 | `compare` | yes | yes | 1 to 8 rows, 3 details per row |
 | `trend` | yes | yes | 2 to 500 points, 3 marks; raw samples are put on an even grid |
 | `table` | no | yes | 1 to 6 columns, 1 to 12 rows |
@@ -300,8 +351,8 @@ Each ref needs one of `ref`, `sha`, `title` or `links`; the MCP refuses an unkno
 | `changes` | no | yes | 1 to 8 rows |
 | `range_overlap` | yes | yes | 2 to 4 rows `{label, from, to}`, optional `min`/`max` and `window`; the overlap is computed by Tellagen |
 | `histogram` | yes | yes | 3 to 61 `edges`, one count per bucket in `before` and `after`; the builder also takes Prometheus cumulative `le` buckets |
-| `run_history` | yes | yes | 2 to 30 runs oldest first, 4 marks, a span; the builder also takes the GitHub Actions run list (`github_runs`) and places marks by sha |
-| `diff` | yes | yes | `path`, `ref`, `additions`, `deletions`, 1 to 6 hunks and 12 lines in all; the builder also takes a unified `patch` |
+| `run_history` | yes | yes | 2 to 30 runs oldest first, `runs_not_shown` (how many runs of a longer history were left out; with `figure_extras_v1` only), 4 marks, a span; the builder also takes the GitHub Actions run list (`github_runs`) and places marks by sha |
+| `diff` | yes | yes | `path`, `ref`, `additions`, `deletions`, 1 to 6 hunks and 12 changed lines in all (a short change is sent whole, each removed line next to its replacement); with `diff_lines_v1` also unchanged lines and line numbers; the builder also takes a unified `patch` and `select_hunks` |
 
 A step figure is at most 16 KB. The builder never sets `example` (demo data). The tool listing shows the four newer types by type only to keep it small; their fields are in `resource://tellagen/figure-guide`, and the tool checks them in full when it runs. A Tellagen that does not know a figure type yet answers a timeline block with `400 invalid_block`, and drops a step figure with the completion warning `figure_invalid`.
 

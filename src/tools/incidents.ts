@@ -11,7 +11,7 @@ export function registerIncidentTools(
     "tellagen_get_incident",
     {
       description:
-        "Get details of a Tellagen incident by ID. Returns severity, status, services, timestamps, and manager info.",
+        "Read one incident by ID. Use it to get the current severity, status, services, timestamps and manager. Returns the incident record. It changes nothing.",
       inputSchema: {
         incident_id: z
           .number()
@@ -41,7 +41,7 @@ export function registerIncidentTools(
     "tellagen_list_incidents",
     {
       description:
-        "List all incidents for the current Tellagen workspace. Returns an array of incidents with summary info.",
+        "List the incidents of the workspace, optionally by status (active, resolved or all). Use it to find an incident ID. Returns an array of summary records; call tellagen_get_incident for full details. It changes nothing.",
       inputSchema: {
         status: z
           .enum(["active", "resolved", "all"])
@@ -69,7 +69,7 @@ export function registerIncidentTools(
     "tellagen_get_incident_timeline",
     {
       description:
-        "Get the timeline of events for a Tellagen incident. Shows status changes, key decisions, findings, and notes.",
+        "Read the timeline of one incident: status changes, key decisions, findings and notes. Use it to learn what has already happened. To read a single event, use tellagen_get_timeline_event. It changes nothing.",
       inputSchema: {
         incident_id: z
           .number()
@@ -99,7 +99,7 @@ export function registerIncidentTools(
     "tellagen_create_incident",
     {
       description:
-        "Create a new incident in Tellagen. Use title for the editable display title, short_title only for the ID/Slack slug, and impact_summary for the separate impact narrative. Returns the created incident with its ID and details.",
+        "Create a new incident. Use it only when the user asks for one. Use title for the editable display title, short_title only for the ID and Slack slug, and impact_summary for the separate impact narrative. Returns the created incident with its ID. It does not start an investigation: call tellagen_start_investigation for that.",
       inputSchema: {
         title: z
           .string()
@@ -211,7 +211,7 @@ export function registerIncidentTools(
     "tellagen_update_incident",
     {
       description:
-        "Update incident fields that are useful during investigation: display title, status, severity, impact summary, links, and key timestamps.",
+        "Change fields of an existing incident: display title, service, regions, severity, status, owning team, impact summary, links and key timestamps. Send only the fields to change. Returns the updated incident. It cannot delete an incident or record a root cause.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
         title: z

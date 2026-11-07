@@ -1,6 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { buildFigure, figureToolInputSchema } from "../figures.js";
+import type { TellagenClient } from "../client.js";
+import { supportsDiffLines, supportsFigureExtras } from "../diagnosis-structure.js";
+import { buildFigure, figureToolInputSchema, withoutFigureExtrasInBlock } from "../figures.js";
 
 export const FIGURE_GUIDE_URI = "resource://tellagen/figure-guide";
 
@@ -27,7 +29,7 @@ Use tellagen_build_figure to make one. It reshapes the numbers you already read 
 
 | The question | Widget | Step figure | Timeline block | Limits |
 | --- | --- | --- | --- | --- |
-| What are the few numbers that matter? | stats | yes | yes | 1 to 4 items, label 48, value 32, caption 64 |
+| What are the few numbers that matter? | stats | yes | yes | 1 to 8 items (4 or fewer is best), title 80, label 48, value 32, caption 64 |
 | Did it get better, and is it inside the line? | compare | yes | yes | 1 to 8 rows, 3 details per row |
 | When did it start, and what happened around then? | trend | yes | yes | 2 to 500 points, 3 marks |
 | Which items rank highest? | table | no | yes | 1 to 6 columns, 1 to 12 rows, cell 64 |
@@ -35,8 +37,8 @@ Use tellagen_build_figure to make one. It reshapes the numbers you already read 
 | What moved from one thing to another? | changes | no | yes | 1 to 8 rows, from and to 80, note 160 |
 | Where do two or more ranges meet? | range_overlap | yes | yes | 2 to 4 rows, label 80, unit 12 |
 | Did the slow tail move, when the average did not? | histogram | yes | yes | 3 to 61 edges (2 to 60 buckets), one count per bucket |
-| Which build broke, and which fixed it? | run_history | yes | yes | 2 to 30 runs, 4 marks, ref 80, sha 64, job 80, url 500 |
-| What exactly changed in the code? | diff | yes | yes | path 200, ref 64, 1 to 6 hunks, 12 lines in all, line 160 |
+| Which build broke, and which fixed it? | run_history | yes | yes | 2 to 30 runs, runs_not_shown, 4 marks, ref 80, sha 64, job 80, url 500 |
+| What exactly changed in the code? | diff | yes | yes | path 200, ref 64, 1 to 6 hunks, 12 changed lines in all, line 160 |
 
 ## How to plot data on each widget
 
@@ -75,9 +77,11 @@ If the values are already on an even grid, send series with start and step_secon
 
 ### stats: the few numbers that matter
 
-Up to four. Each has a short label, a value, a caption that says what it is measured on, and a tone.
+Aim for four or fewer. Each has a short label, a value, a caption that says what it is measured on, and a tone. The first four are tiles in one row, so put the total first and give a tone only to the exception. Items five to eight are drawn as plain rows under the tiles. When this Tellagen lists figure_extras_v1 in server_capabilities you may also send a title (up to 80 characters) to name the tiles, for example "Tests of the run", and up to eight items. Pass run_id to tellagen_build_figure for this check. Without figure_extras_v1 the builder drops the title and every item after the fourth, and says so in notes, because an older Tellagen rejects them and drops the whole figure.
 
     { "type": "stats", "items": [ { "label": "Failed e2e tests", "value": "1 of 121", "caption": "master, Oct 30", "tone": "bad" } ] }
+
+A tile caption says what the number is measured on. The name of the source, such as "node --test summary", belongs in a source chip (the step's evidence refs), not in a caption.
 
 ### table: a ranked list
 
@@ -130,6 +134,7 @@ Use it for a regression in CI or a bad deploy. Runs go oldest first, each with a
 3. Add job to the failing runs: the name of the job that failed, from the run's jobs list.
 4. Add marks for the change that broke it (change_ref regression) and the one that fixed it (fix). Give the sha of the change and the builder places the mark before the first run built from it, or give between with the refs of the two neighbouring runs. change_ref may be a change_refs role: regression_source and first_bad become regression, fix stays fix, others become change.
 5. Set repo to owner/name so each run links to its page, and an optional span such as { "from": "#4151", "to": "#4163", "label": "E2E Tests failed" }.
+6. A history holds at most 30 runs. If yours has more, send the 30 that matter (the runs around the break and the fix, oldest first) and set runs_not_shown to how many you left out; the strip then says "N more runs not shown." Only when this Tellagen lists figure_extras_v1; without it the builder drops runs_not_shown and says so in notes.
 
     { "type": "run_history", "title": "E2E on master", "repo": "acme/shop", "branch": "master",
       "github_runs": [ { "run_number": 4150, "head_sha": "9f2c1e0", "conclusion": "success", "created_at": "2026-10-30T08:00:00Z", "event": "push" },
@@ -138,14 +143,24 @@ Use it for a regression in CI or a bad deploy. Runs go oldest first, each with a
 
 ### diff: the change that broke or fixed it
 
-Use it for the lines that matter in the change, not the whole diff.
+Use it for the lines of the change that broke or fixed it. A short change is sent whole.
 
 1. Read the commit or pull request file from GitHub. additions and deletions are the size of the whole change, from the commit or the pull request, never counted by you from a part of it.
-2. Send the file's patch as patch: the builder keeps its + and - lines, one hunk per @@ header. It must have at most 12 such lines in at most 6 hunks; otherwise copy the lines that show the change into hunks yourself, as they are, indentation kept.
-3. Set path, ref (the commit sha) and repo.
+2. If the change has 12 or fewer changed lines (in at most 6 hunks), send all of them. Send the file's patch as patch: the builder keeps every line, one hunk per @@ header.
+3. If it has more, send the whole hunks the claim cites, in file order, at most 3 hunks and at most 12 changed lines in all: give their numbers in select_hunks (1 is the first @@ header). If one hunk alone is longer than 12 changed lines, the builder cuts it after a complete pair of removed and added lines.
+4. Never send a changed line without its counterpart: each removed line comes with the line that replaced it, next to it, as a patch lists them. If you write hunks yourself, keep that order and keep the indentation.
+5. When the pickup lists diff_lines_v1 in server_capabilities, a hunk may also carry up to 2 unchanged lines (op context) before and after it, and old_no and new_no (1-based) on every line. The builder adds them from the patch headers when you pass run_id. Never invent a number: if you do not have the real numbers, leave all of them out. Without diff_lines_v1 the builder sends only changed lines and no numbers, and says so in notes.
+6. Set path, ref (the commit sha) and repo.
 
-    { "type": "diff", "path": "web/components/Header.tsx", "repo": "acme/shop", "ref": "4b7a2d1", "additions": 14, "deletions": 3,
+    { "type": "diff", "path": "web/components/Header.tsx", "repo": "acme/shop", "ref": "4b7a2d1", "additions": 1, "deletions": 1,
       "hunks": [ [ { "op": "-", "text": "  position: static;" }, { "op": "+", "text": "  position: sticky;" } ] ] }
+
+With diff_lines_v1 the same change, with the unchanged lines around it and the numbers of the real file:
+
+    { "type": "diff", "path": "web/components/Header.tsx", "repo": "acme/shop", "ref": "4b7a2d1", "additions": 1, "deletions": 1,
+      "hunks": [ [ { "op": "context", "text": ".header {", "old_no": 11, "new_no": 11 },
+                   { "op": "-", "text": "  position: static;", "old_no": 12 }, { "op": "+", "text": "  position: sticky;", "new_no": 12 },
+                   { "op": "context", "text": "}", "old_no": 13, "new_no": 13 } ] ] }
 
 ## Where the figure goes
 
@@ -168,13 +183,19 @@ Call tellagen_build_figure with placement step_figure or timeline_block, and use
 The builder names the field. For a timeline block the API answers 400 invalid_block with field and details.errors. Fix exactly those fields and send once more. Do not drop a figure to get past an error unless the data in it is not real.
 `;
 
-export function registerFigureTools(server: McpServer): void {
+const isDiff = (figure: unknown): boolean =>
+  typeof figure === "object" && figure !== null && (figure as { type?: unknown }).type === "diff";
+
+const usesFigureExtras = (figure: unknown): boolean =>
+  withoutFigureExtrasInBlock(figure).what.length > 0;
+
+export function registerFigureTools(server: McpServer, client: TellagenClient): void {
   server.registerTool(
     "tellagen_build_figure",
     {
       title: "Build a figure",
       description:
-        "Turn numbers you already read from a tool result into a figure (a typed widget) that Tellagen draws, and check it against Tellagen's limits before you send it. Widgets: stats (up to 4 headline numbers), compare (before and after per host, route or job, with an SLO line), trend (a series over time with up to 3 marks), table (a ranked list, up to 12 rows), checks (pass or fail per check, up to 12), changes (a value that moved from one thing to another), range_overlap (2 to 4 ranges that meet), histogram (bucket counts before and after), run_history (CI or deploy runs with the regression and fix marks), diff (up to 12 changed lines). For a time series send raw samples as points and the deploy, alert or rollback times as events: the tool puts them on an even grid of at most 500 points and works out the mark positions. For a histogram send Prometheus cumulative le buckets as buckets; for a run history send the GitHub Actions run list as github_runs; for a diff send the patch. It has no data of its own and never invents a value, so send only numbers from a tool result you can cite. placement step_figure is for a causal step (any type except table and changes, one per step). placement timeline_block is for a timeline event (any type). Read resource://tellagen/figure-guide to choose the widget and to see how to plot data on it.",
+        "Turn numbers you already read from a tool result into a figure (a typed widget) that Tellagen draws, and check it against Tellagen's limits before you send it. Widgets: stats (headline numbers: aim for 4, up to 8 with figure_extras_v1, and an optional title), compare (before and after per host, route or job, with an SLO line), trend (a series over time with up to 3 marks), table (a ranked list, up to 12 rows), checks (pass or fail per check, up to 12), changes (a value that moved from one thing to another), range_overlap (2 to 4 ranges that meet), histogram (bucket counts before and after), run_history (CI or deploy runs with the regression and fix marks), diff (the changed lines of a code change). For a time series send raw samples as points and the deploy, alert or rollback times as events: the tool puts them on an even grid of at most 500 points and works out the mark positions. For a histogram send Prometheus cumulative le buckets as buckets; for a run history send the GitHub Actions run list as github_runs; for a diff send the patch of one file: a change of 12 or fewer changed lines is sent whole with each removed line next to the line that replaced it, a longer one needs select_hunks (at most 3 hunks). Pass run_id so unchanged lines and line numbers are added only when this Tellagen lists diff_lines_v1, and a stats title, more than 4 stats and runs_not_shown only when it lists figure_extras_v1. It has no data of its own and never invents a value, so send only numbers from a tool result you can cite. placement step_figure is for a causal step (any type except table and changes, one per step). placement timeline_block is for a timeline event (any type). Read resource://tellagen/figure-guide to choose the widget and to see how to plot data on it.",
       inputSchema: {
         placement: z
           .enum(["step_figure", "timeline_block"])
@@ -183,10 +204,17 @@ export function registerFigureTools(server: McpServer): void {
         slot: z.literal("summary").optional().describe("timeline_block only: draw the block above the note. Not together with anchor."),
         anchor: z.string().max(80).optional().describe("timeline_block only: the exact heading text in the note that the block sits under. Not together with slot."),
         postmortem: z.boolean().optional().describe("timeline_block only: false keeps the block out of the postmortem."),
+        run_id: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("The investigation run you are working on. For a diff, a stats or a run_history figure, Tellagen is asked which features it lists in server_capabilities (diff_lines_v1: unchanged lines and line numbers; figure_extras_v1: a stats title, more than 4 stats, runs_not_shown). Without it the latest pickup of this process decides."),
       },
     },
-    async (input) => {
-      const result = buildFigure(input);
+    async ({ run_id, ...input }) => {
+      const diffLines = isDiff(input.figure) ? await supportsDiffLines(client, run_id) : false;
+      const figureExtras = usesFigureExtras(input.figure) ? await supportsFigureExtras(client, run_id) : false;
+      const result = buildFigure(input, { diffLines, figureExtras });
       if (!result.ok) {
         return {
           content: [

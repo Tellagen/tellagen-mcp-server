@@ -4,14 +4,14 @@
   "title": "Tellagen timeline event blocks",
   "description": "The blocks field of a timeline event: typed widgets that hold the numbers behind a note. Send it with the REST timeline create (POST /api/v1/incidents/{id}/timeline) or update (PATCH /api/v1/timeline/{id}); the MCP tools tellagen_post_timeline_event and tellagen_update_timeline_event pass it through. The server validates every block and answers one bad block with 400 invalid_block, a message, the path of the first bad field in field and up to ten bad fields in details.errors. An update that sends blocks replaces the whole array; [] removes them; leaving the field out keeps them. Strings are trimmed, one line and free of control characters (only source.query may hold line breaks; a diff line's text is the one string that is not trimmed, so it keeps its indentation, and it may hold tabs). The same blocks, except table and changes, are the figure of a Diagnosis chain step (causal_paths[].steps[].figure). Numbers are finite and between -1e12 and 1e12. An event carries at most 12 blocks and 64 KB of block JSON.",
   "x-guidance": [
-    "Put the few numbers a responder scans for in one stats block: at most four, each with a short label, a value, a caption that says what it is measured on, and a tone.",
+    "Put the few numbers a responder scans for in one stats block, each with a short label, a value, a caption that says what it is measured on, and a tone. Send at most four when you can: the first four are drawn as tiles in one row, the total first, and colour goes only on the exception. A block may hold up to eight figures, and the web draws the ones after the fourth as plain rows under the tiles. Give the block a title of at most 80 characters when the tiles need a name. A title and more than four figures are optional, and a client that picked up a run sends them only when server_capabilities lists figure_extras_v1. In the figure of a Diagnosis step, a source name such as a test runner summary belongs in a source chip (the step's evidence), not in a tile caption.",
     "Use a compare block for a metric that has a value before, a value after and a threshold (an SLO or alert line). Give the unit, say which direction is better, and put one row per host, route or query.",
     "Use a trend block for a series over time. Send start and step_seconds together, reduce the range to at most 500 points, add at most three marks for the events that explain the shape, and fill source with the query that produced the series (kind, datasource, query, step, and artifact_id when you have it).",
     "Use a table block for a ranked list (top queries, failing routes), a checks block for a recovery checklist with a result per check, and a changes block for a value that moved from one thing to another.",
     "Use a range_overlap block when the cause is two ranges meeting (layout offsets, a maintenance window against an error spike, memory or port ranges): two to four rows with a from and a to, in one unit. Tellagen computes the overlap and zooms to it; send min and max for the whole range, and a window only to choose the zoom yourself.",
     "Use a histogram block when an average hides a slow tail: bucket edges (3 to 61, increasing) and one count per bucket for before and for after, plus the threshold (an SLO). Tellagen computes p50, p95, p99 and the share over the threshold from the buckets, so send counts, never percentiles.",
-    "Use a run_history block for CI builds, scheduled jobs, canaries or deploys: runs oldest first, each with a ref, a result (success, failure, cancelled, pending) and the failing job, repo as owner/name so each run links to its page, marks for the change that introduced and the one that fixed it (between two neighbouring run refs, change_ref regression or fix), and an optional span with a label such as E2E Tests failed.",
-    "Use a diff block for the change that broke something or fixed it: the file path, the commit ref, the added and removed counts of the whole change, and at most 12 lines in hunks, each with op + or - and the text with its indentation. Do not send the whole diff.",
+    "Use a run_history block for CI builds, scheduled jobs, canaries or deploys: runs oldest first, each with a ref, a result (success, failure, cancelled, pending) and the failing job, repo as owner/name so each run links to its page, marks for the change that introduced and the one that fixed it (between two neighbouring run refs, change_ref regression or fix), and an optional span with a label such as E2E Tests failed. If the history has more than 30 runs, send the 30 that matter (the runs around the break and the fix) and set runs_not_shown to how many you left out, so the strip can say so. A client that picked up a run sends runs_not_shown only when server_capabilities lists figure_extras_v1.",
+    "Use a diff block for the change that broke something or fixed it: the file path, the commit ref, the added and removed counts of the whole change (additions and deletions are the size of the whole change, not of the lines you send), and the changed lines in hunks, each with op + or - and the text with its indentation. If the change has 12 or fewer changed lines (in at most 6 hunks), send all of them. If it has more, send the whole hunks the claim cites, in file order, at most 3, and at most 12 changed lines in all; if one hunk alone is longer, cut it after a complete pair of removed and added lines. Never send a changed line without its counterpart: a removed line comes with the line that replaced it, next to it. Add up to 2 unchanged lines (op context) before and after each hunk, and old_no and new_no (1-based) on every line when you know them. Unchanged lines and line numbers are optional, and a client that picked up a run sends them only when server_capabilities lists diff_lines_v1. Never invent a line number: if you do not have the real ones, leave every number out.",
     "Set example: true only on a block that stands in for data you did not read from a tool result (a demo or an illustration); a block built from a tool result never sets it.",
     "Tone is a meaning, not decoration: good for a figure that is healthy or recovered, warn for one that needs attention, bad for one that is failing, neutral or no tone for a plain fact. Never use tone to emphasise.",
     "A block owns its numbers. Do not repeat in the note a number that a block already shows; the note says what happened and why, the block says how much.",
@@ -77,10 +77,12 @@
         "anchor": {"$ref": "#/$defs/anchor"},
         "postmortem": {"$ref": "#/$defs/postmortem"},
         "example": {"$ref": "#/$defs/example"},
+        "title": {"type": "string", "maxLength": 80, "description": "A name for the tiles, drawn above them. Needs figure_extras_v1."},
         "items": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 4,
+          "maxItems": 8,
+          "description": "The first four are drawn as tiles, the others as plain rows under them. More than four needs figure_extras_v1.",
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -382,6 +384,7 @@
         "title": {"type": "string", "maxLength": 80},
         "repo": {"$ref": "#/$defs/repo"},
         "branch": {"type": "string", "maxLength": 80},
+        "runs_not_shown": {"type": "integer", "minimum": 0, "maximum": 1000000, "description": "How many runs of the history are left out of runs. Needs figure_extras_v1."},
         "runs": {
           "type": "array",
           "minItems": 2,
@@ -438,7 +441,7 @@
     },
     "diff": {
       "type": "object",
-      "description": "The change that broke or fixed something: the file, the commit, the size of the whole change and at most 12 of its lines.",
+      "description": "The change that broke or fixed something: the file, the commit, the size of the whole change and at most 12 of its changed lines, each hunk with up to 2 unchanged lines on either side.",
       "additionalProperties": false,
       "required": ["type", "path", "ref", "additions", "deletions", "hunks"],
       "properties": {
@@ -452,14 +455,16 @@
         "repo": {"$ref": "#/$defs/repo"},
         "ref": {"type": "string", "minLength": 1, "maxLength": 64, "description": "The commit."},
         "at": {"type": "string", "format": "date-time", "description": "When it was committed."},
-        "additions": {"type": "integer", "minimum": 0, "maximum": 1000000},
-        "deletions": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "additions": {"type": "integer", "minimum": 0, "maximum": 1000000, "description": "The added lines of the whole change."},
+        "deletions": {"type": "integer", "minimum": 0, "maximum": 1000000, "description": "The removed lines of the whole change."},
         "hunks": {
           "type": "array",
           "minItems": 1,
           "maxItems": 6,
-          "x-maxLinesInAll": 12,
-          "description": "Hunks of lines, at most 12 lines in all (a JSON Schema cannot count across hunks; the API does). A line's text is not trimmed: leading spaces are indentation.",
+          "x-maxChangedLinesInAll": 12,
+          "x-maxContextLinesAtEdge": 2,
+          "x-maxContextLinesBetween": 4,
+          "description": "Hunks of lines in file order, at most 12 changed lines (op + or -) in all; unchanged lines (op context) do not count (a JSON Schema cannot count across hunks; the API does). A hunk has at least one changed line, at most 2 unchanged lines before the first and after the last of them and at most 4 between two. A line's text is not trimmed: leading spaces are indentation. A diff carries old_no and new_no on every line or on none, and each column counts up through the diff.",
           "items": {
             "type": "array",
             "minItems": 1,
@@ -468,8 +473,10 @@
               "additionalProperties": false,
               "required": ["op", "text"],
               "properties": {
-                "op": {"enum": ["+", "-"]},
-                "text": {"type": "string", "maxLength": 160}
+                "op": {"enum": ["+", "-", "context"], "description": "+ for an added line, - for a removed one, context for an unchanged line shown for orientation."},
+                "text": {"type": "string", "maxLength": 160},
+                "old_no": {"type": "integer", "minimum": 1, "maximum": 10000000, "description": "The line number in the old file. For a removed line and a context line; never on an added line."},
+                "new_no": {"type": "integer", "minimum": 1, "maximum": 10000000, "description": "The line number in the new file. For an added line and a context line; never on a removed line. A context line has old_no and new_no together."}
               }
             }
           }

@@ -1,7 +1,25 @@
 {
   "name": "@tellagen/mcp-server",
-  "version": "0.4.2",
-  "description": "Tellagen MCP server — investigate incidents with AI agents",
+  "version": "0.4.3",
+  "description": "Tellagen MCP server: let your own AI client investigate incidents, post findings with evidence and write timeline events back to Tellagen.",
+  "mcpName": "io.github.tellagen/mcp-server",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "incident-management",
+    "sre",
+    "claude-code",
+    "codex",
+    "postmortem"
+  ],
+  "homepage": "https://tellagen.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Tellagen/tellagen-mcp-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Tellagen/tellagen-mcp-server/issues"
+  },
   "license": "MIT",
   "type": "module",
   "bin": {

@@ -10,6 +10,7 @@ import {
   supportsDiagnosisChanges,
   supportsDiagnosisStructure,
   unsupportedNotice,
+  gapQuestionNotice,
 } from "../diagnosis-structure.js";
 
 const screenshotSchema = z.object({
@@ -130,7 +131,7 @@ export function registerFindingTools(
     "tellagen_post_finding",
     {
       description:
-        "Post a structured finding to an active investigation run on a Tellagen incident. Post findings incrementally as you discover them — do not batch. The response is {finding:{id,...}}: keep the numeric id, because causal_paths steps, ruled_out, coverage and unknowns cite findings by finding_ids when you complete the run.",
+        "Post a structured finding to an active investigation run on a Tellagen incident. Post findings incrementally as you discover them, and do not batch them. The response is {finding:{id,...}}: keep the numeric id, because causal_paths steps, ruled_out, coverage and unknowns cite findings by finding_ids when you complete the run. The claim of a gap finding that blocks the diagnosis is a real question that ends with a question mark and that a person can answer, for example: Did the 14:02 deploy of the billing service lower the retry limit?; put what you already checked in evidence_summary. It cannot accept or reject a root cause: only a person does that in Tellagen.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
         investigation_run_id: z
@@ -159,7 +160,9 @@ export function registerFindingTools(
         claim: z
           .string()
           .min(1)
-          .describe("One-sentence finding statement"),
+          .describe(
+            "One-sentence finding statement. For a gap finding, one real question that ends with a question mark.",
+          ),
         evidence_summary: z
           .string()
           .min(1)
@@ -221,6 +224,8 @@ export function registerFindingTools(
         if ((evidence_refs ?? []).some((ref) => ref.evidence_fact_key && !hasStableId(ref))) {
           notice = factKeyAloneNotice;
         }
+        const question = gapQuestionNotice(finding_type, role, claim);
+        if (question) notice = notice ? `${notice} ${question}` : question;
         const stripped = stripFindingEvidenceStructure(reqBody.evidence_refs);
         if (
           stripped.removed.length > 0 &&
@@ -269,7 +274,7 @@ export function registerFindingTools(
     "tellagen_list_findings",
     {
       description:
-        "List all findings for a Tellagen incident. Returns findings with type, confidence, status, and evidence.",
+        "List the findings of an incident, optionally for one run. Returns each finding's type, confidence, status and evidence. To read one finding with all its evidence refs, use tellagen_get_finding. It changes nothing.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
         run_id: z
@@ -300,7 +305,7 @@ export function registerFindingTools(
     "tellagen_get_finding",
     {
       description:
-        "Get a single finding by ID. Returns full finding details including evidence refs.",
+        "Read one finding by ID. Returns the full finding with its evidence refs. It changes nothing.",
       inputSchema: {
         finding_id: z.number().int().positive().describe("Finding ID"),
       },
@@ -324,7 +329,7 @@ export function registerFindingTools(
     "tellagen_update_finding",
     {
       description:
-        "Update a finding's status (dismiss or restore to draft). Promoted findings are immutable.",
+        "Dismiss a finding or restore it to draft. Use it to withdraw a finding that new evidence contradicts. Promoted findings cannot be changed. It cannot accept or reject a root cause: only a person does that in Tellagen.",
       inputSchema: {
         finding_id: z.number().int().positive().describe("Finding ID"),
         status: z

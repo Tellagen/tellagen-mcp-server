@@ -297,7 +297,7 @@ Every finding requires:
 | `incident_id` | number | Which incident |
 | `investigation_run_id` | string | Your active run ID |
 | `finding_type` | enum | `observation`, `correlation`, `hypothesis`, `evidence`, `recommendation`, `negative`, `gap` |
-| `claim` | string | One-sentence statement of the finding |
+| `claim` | string | One-sentence statement of the finding. For a `gap` finding, one real question that ends with a question mark |
 | `evidence_summary` | string | Detailed explanation with supporting data |
 | `confidence` | number | 0.0–1.0 (0.9+ near-certain, 0.5–0.7 plausible, <0.5 speculative) |
 | `confidence_reason` | string | Why you have this confidence level |
@@ -460,6 +460,19 @@ The MCP checks `result_summary` before it sends anything and refuses a completio
 }
 ```
 
+### The headline and the blocking question
+
+Responders read two sentences first. Write both for a person.
+
+- **The headline claim** is `conclusion.sentence`. Use 15 words or fewer and name one cause: what broke and why. Put the numbers, the other possible causes and the checks you made in the findings, `causal_paths` and `ruled_out`.
+  - Good: "The checkout pool size of 5 ran out of database connections at 14:02."
+  - Bad: "Based on the metrics, logs and deploy history that were reviewed during the investigation, it is likely that a recent change to the checkout service caused connection pool exhaustion and the resulting elevated error rates."
+- **A blocking question** is a `gap` finding that a person has to answer before the diagnosis can be trusted. Write its `claim` as one real question that ends with a question mark, that asks one thing, and that a person with access to the system can answer with a fact. Put what you already checked in `evidence_summary`.
+  - Good: "Did the 14:02 deploy of the billing service lower the retry limit?"
+  - Bad: "Whether the retry limit was lowered by the 14:02 deploy of the billing service could not be established from the available data and needs to be confirmed by someone with access to the deploy history."
+
+Tellagen accepts any text. A headline over 15 words gets the warning `headline_too_long`, and a gap claim that does not end with a question mark gets `question_not_a_question`. The MCP server also adds an `mcp_notice` before it sends the call. Neither fails the run: fix the sentence and send the result again when you can.
+
 ### The chain, ruled out, coverage and unknowns
 
 **Cause chain: `causal_paths`.** One primary path of 2 to 4 steps, from the trigger to the customer impact (for example deploy, then pool exhaustion, then 5xx). Each step is one sentence of `claim`, a `verification` (`confirmed`, `likely` or `unknown`), the numeric `finding_ids` that prove it (from `tellagen_post_finding`, never made-up keys), `links` for the whole step when useful, and a `figure`. A confirmed or likely diagnosis with no chain is rejected with a 400, so send the chain.
@@ -475,7 +488,7 @@ The MCP checks `result_summary` before it sends anything and refuses a completio
 | Two to four ranges that meet | `range_overlap` | `rows` of `{label, from, to}` in one `unit`; optional `min` and `max`. Tellagen computes the overlap; never send it |
 | A distribution before and after | `histogram` | `edges` (3 to 61, increasing) and one count per bucket in `before` and `after`. The builder takes Prometheus cumulative `le` buckets as `buckets`. Tellagen computes the percentiles; never send them |
 | CI builds, jobs or deploys in order | `run_history` | `runs` oldest first (2 to 30) with `ref` and `result`, `marks` for the regression and the fix between two neighbouring runs. The builder takes the GitHub Actions run list as `github_runs` |
-| The lines that broke or fixed it | `diff` | `path`, `ref`, `additions` and `deletions` of the whole change, at most 12 `+`/`-` lines in `hunks`. The builder takes a file's `patch` |
+| The lines that broke or fixed it | `diff` | `path`, `ref`, `additions` and `deletions` of the whole change, every changed line of a change up to 12 lines (at most 6 hunks) in `hunks`, each removed line next to the line that replaced it. The builder takes a file's `patch` |
 
 `table` and `changes` are timeline blocks only, never a step figure. Every number comes from a tool result you can cite. If you do not have the number, leave the `figure` out. A figure is at most 16 KB. Put the unit in `unit`, not in the number. Never set `example`: that flag is for demo data. A Tellagen that does not know a figure type yet drops the figure and says so in `warnings` (`figure_invalid`).
 
@@ -567,7 +580,9 @@ Each change ref needs `ref`, `sha`, `title` or `links`, and should cite `finding
 
 Build each one with `tellagen_build_figure` (placement `step_figure`, or `timeline_block` for a timeline event). The builder checks the limits and never invents a value, so send only numbers you read from a tool result. These recipes are the same as in `resource://tellagen/figure-guide`, which some clients cannot read.
 
-**`run_history`: which build broke and which fixed it.** Send the output of `gh run list` (or the GitHub Actions run list) as `github_runs`. The builder maps each run: `#<run number>` as the ref, the head sha, the start time, the event, the run page, and the conclusion as the result (`cancelled` stays `cancelled`; `timed_out` and `startup_failure` count as `failure`). A run that is skipped, neutral, stale or action_required has no result: leave it out. Runs are put oldest first; send 2 to 30. Add `job` (the failing job's name, from `gh run view <run id> --json jobs`) to the failing runs. Add up to 4 `marks`: `change_ref` is `regression` or `fix`, with the `sha` of the change (the mark goes before the first run built from it) or `between` with the refs of the two neighbouring runs. Set `repo` to `owner/name` so each run links to its page, and an optional `span` such as `{"from": "#4151", "to": "#4163", "label": "E2E Tests failed"}`.
+**`stats`: the few numbers that matter.** Aim for four or fewer: the first four are tiles in one row, so put the total first and give a tone only to the exception. A source name belongs in a source chip, not in a caption. When `server_capabilities` in the pickup lists `figure_extras_v1` you may add a `title` of up to 80 characters that names the tiles (for example "Tests of the run") and send up to eight items; items five to eight are drawn as plain rows. From a test summary, put the total first, then passed, failed and skipped. Without `figure_extras_v1` the MCP drops the title and every item after the fourth and says so in `mcp_notice`, because an older Tellagen drops a figure that carries them. Pass the `run_id` to `tellagen_build_figure`.
+
+**`run_history`: which build broke and which fixed it.** Send the output of `gh run list` (or the GitHub Actions run list) as `github_runs`. The builder maps each run: `#<run number>` as the ref, the head sha, the start time, the event, the run page, and the conclusion as the result (`cancelled` stays `cancelled`; `timed_out` and `startup_failure` count as `failure`). A run that is skipped, neutral, stale or action_required has no result: leave it out. Runs are put oldest first; send 2 to 30. Add `job` (the failing job's name, from `gh run view <run id> --json jobs`) to the failing runs. If the history has more than 30 runs, send the 30 that matter (the runs around the break and the fix, oldest first) and set `runs_not_shown` to how many you left out; the strip then says "N more runs not shown." (`figure_extras_v1` only, otherwise the MCP drops it). Add up to 4 `marks`: `change_ref` is `regression` or `fix`, with the `sha` of the change (the mark goes before the first run built from it) or `between` with the refs of the two neighbouring runs. Set `repo` to `owner/name` so each run links to its page, and an optional `span` such as `{"from": "#4151", "to": "#4163", "label": "E2E Tests failed"}`.
 
 ```json
 { "type": "run_history", "title": "E2E on master", "repo": "acme/shop", "branch": "master",
@@ -583,17 +598,31 @@ Build each one with `tellagen_build_figure` (placement `step_figure`, or `timeli
   "items": [ { "label": "Frontend Tests", "state": "fail", "detail": "1 failed of 13516" }, { "label": "E2E Tests", "state": "pass" } ] }
 ```
 
-**`stats`: the few numbers that matter.** 1 to 4 items. Each has a short `label`, a `value` written as text, a `caption` that says what it is measured on, and a `tone` (`good`, `warn`, `bad` or `neutral`).
+**`stats`: the few numbers that matter.** 1 to 4 items. Each has a short `label`, a `value` written as text, a `caption` that says what it is measured on, and a `tone` (`good`, `warn`, `bad` or `neutral`). The name of a source, such as "node --test summary", belongs in a source chip (the step's evidence refs), not in a tile caption.
 
 ```json
 { "type": "stats", "items": [ { "label": "Failed e2e tests", "value": "1 of 121", "caption": "master, Oct 30", "tone": "bad" } ] }
 ```
 
-**`diff`: the lines that broke it or fixed it.** Send `path`, `ref` (the commit sha), `repo`, `additions` and `deletions`, and either `hunks` or `patch`. `patch` is the file's patch from GitHub, for one file only: the builder keeps its `+` and `-` lines, one hunk per `@@` header, and refuses more than 12 changed lines or 6 hunks. Then copy the lines that show the change into `hunks` yourself, as they are, indentation kept. Do not send the whole diff.
+**`diff`: the lines that broke it or fixed it.** Send `path`, `ref` (the commit sha), `repo`, `additions` and `deletions`, and either `hunks` or `patch`. `patch` is the file's patch from GitHub, for one file only, and the builder reads it for you.
+
+- If the change has 12 or fewer changed lines (in at most 6 hunks), send all of them. Do not pick the lines you think matter.
+- If it has more, send the whole hunks the claim cites, in file order, at most 3 hunks and at most 12 changed lines in all. With `patch`, give their numbers in `select_hunks` (1 is the first `@@` header). If one hunk alone is longer, the builder cuts it after a complete pair of removed and added lines.
+- Never send a changed line without its counterpart: each removed line comes with the line that replaced it, next to it, as a patch lists them. If you write `hunks` yourself, keep that order and the indentation.
+- When `server_capabilities` in the pickup lists `diff_lines_v1`, a hunk may also carry up to 2 unchanged lines (`op: "context"`) before and after it, and `old_no` and `new_no` (1-based) on every line. Pass the `run_id` to `tellagen_build_figure` and it adds them from the patch headers. Never invent a number: if you do not have the real numbers, leave all of them out. Against a Tellagen without `diff_lines_v1` the MCP sends only the changed lines, with no numbers, and says so in `mcp_notice`, because an older Tellagen drops a whole figure that carries them.
 
 ```json
 { "type": "diff", "path": "web/components/Header.tsx", "repo": "acme/shop", "ref": "4b7a2d1", "additions": 14, "deletions": 3,
   "hunks": [ [ { "op": "-", "text": "  position: static;" }, { "op": "+", "text": "  position: sticky;" } ] ] }
+```
+
+With `diff_lines_v1`, the same hunk with its unchanged lines and the numbers of the real file:
+
+```json
+{ "type": "diff", "path": "web/components/Header.tsx", "repo": "acme/shop", "ref": "4b7a2d1", "additions": 14, "deletions": 3,
+  "hunks": [ [ { "op": "context", "text": ".header {", "old_no": 11, "new_no": 11 },
+               { "op": "-", "text": "  position: static;", "old_no": 12 }, { "op": "+", "text": "  position: sticky;", "new_no": 12 },
+               { "op": "context", "text": "}", "old_no": 13, "new_no": 13 } ] ] }
 ```
 
 `additions` and `deletions` are the size of the whole change, from the commit or pull request, as the block contract says. Tellagen draws them beside the file path, and writes "Excerpt: N of M changed lines" with M as their sum. So when the change touches several files, M counts lines of the other files too: say so in the figure `title` (for example "Header.tsx, 1 of 4 files"). Never count the numbers yourself from the part of the patch you kept.
