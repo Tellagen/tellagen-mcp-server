@@ -895,6 +895,10 @@ const WARNING_ADVICE: Record<string, string> = {
     "a diff of a change that adds and removes lines must show both: send each removed line next to the line that replaced it",
   diff_short_change_cut:
     "a change of 12 or fewer changed lines is sent whole: send every changed line of it",
+  headline_too_long:
+    "write the headline claim (conclusion.sentence) in 15 words or fewer, with one cause, and keep the detail in findings",
+  question_not_a_question:
+    "write the claim of a gap finding that blocks the diagnosis as one real question that ends with a question mark",
 };
 
 /**
@@ -914,4 +918,45 @@ export function summarizeWarnings(warnings: unknown): string | undefined {
     return advice ? `${count} ${code} (${advice})` : `${count} ${code}`;
   });
   return `${warnings.length} warning${warnings.length === 1 ? "" : "s"}: ${parts.join("; ")}. The run is already complete, so name anything you could not fix in your report and apply the fixes on the next run.`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Headline and blocking question                                     */
+/* ------------------------------------------------------------------ */
+
+export const HEADLINE_MAX_WORDS = 15;
+
+/** Words as the backend counts them: runs of text between white space. */
+function wordCount(text: string): number {
+  return text.split(/\s+/).filter((word) => word !== "").length;
+}
+
+/**
+ * Advice when the headline claim (conclusion.sentence) is over the limit.
+ * Nothing is changed or blocked: the backend accepts any text and only warns.
+ */
+export function headlineNotice(summary: unknown): string | undefined {
+  if (!isRecord(summary) || !isRecord(summary.conclusion)) return undefined;
+  const sentence = summary.conclusion.sentence;
+  if (typeof sentence !== "string") return undefined;
+  const words = wordCount(sentence);
+  if (words <= HEADLINE_MAX_WORDS) return undefined;
+  return `The headline claim (conclusion.sentence) has ${words} words. Write it in ${HEADLINE_MAX_WORDS} words or fewer, with one cause, and keep the numbers and the other causes in the findings. It was sent unchanged.`;
+}
+
+/**
+ * Advice when the claim of a gap finding is not a question. A gap finding
+ * that is open blocks the diagnosis, and a person reads its claim as the
+ * question to answer. A source that was only unavailable is still a gap, so
+ * this is advice and never an error.
+ */
+export function gapQuestionNotice(
+  findingType: string,
+  role: string | undefined,
+  claim: string,
+): string | undefined {
+  if (findingType !== "gap" && role !== "gap") return undefined;
+  const end = claim.replace(/[\s"'`)\]}\u201d\u2019]+$/u, "");
+  if (end === "" || end.endsWith("?") || end.endsWith("\uff1f")) return undefined;
+  return "The claim of a gap finding is the question a person has to answer. Write it as one real question that ends with a question mark, and put what you already checked in evidence_summary. It was sent unchanged.";
 }

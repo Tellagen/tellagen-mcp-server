@@ -1,6 +1,6 @@
 {
-  "contract_version": "2026-11-07.1",
-  "bundle_sha256": "f665ff0e8079dda725466a090d33bb72c73ad39b20e6d5bb4a356f3004e0ca42",
+  "contract_version": "2026-11-07.2",
+  "bundle_sha256": "4c1e53e14220f1aebfbfabe34ffab6e2eef94620a6d7301cdb85b4aede194a3d",
   "bundle_digest_algorithm": "sha256(sorted(path + NUL + file_sha256 + LF))",
   "files": [
     {
@@ -32,6 +32,11 @@
       "path": "v2/fixtures/timeline-event-with-blocks.json",
       "sha256": "944f8fcaaaacd81c2f2b0d42bd5e3baa32c26c33ce04d71a0187968158d2a7fe",
       "bytes": 3361
+    },
+    {
+      "path": "v2/result-summary.guidance.json",
+      "sha256": "8d9372a00de80e4326205e0fbdb50269005dffc8f54ad594ec259ea03071cde4",
+      "bytes": 2418
     },
     {
       "path": "v2/runbook-definition.schema.json",

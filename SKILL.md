@@ -293,7 +293,7 @@ Every finding requires:
 | `incident_id` | number | Which incident |
 | `investigation_run_id` | string | Your active run ID |
 | `finding_type` | enum | `observation`, `correlation`, `hypothesis`, `evidence`, `recommendation`, `negative`, `gap` |
-| `claim` | string | One-sentence statement of the finding |
+| `claim` | string | One-sentence statement of the finding. For a `gap` finding, one real question that ends with a question mark |
 | `evidence_summary` | string | Detailed explanation with supporting data |
 | `confidence` | number | 0.0–1.0 (0.9+ near-certain, 0.5–0.7 plausible, <0.5 speculative) |
 | `confidence_reason` | string | Why you have this confidence level |
@@ -452,6 +452,19 @@ The MCP checks `result_summary` before it sends anything and refuses a completio
   ]}]
 }
 ```
+
+### The headline and the blocking question
+
+Responders read two sentences first. Write both for a person.
+
+- **The headline claim** is `conclusion.sentence`. Use 15 words or fewer and name one cause: what broke and why. Put the numbers, the other possible causes and the checks you made in the findings, `causal_paths` and `ruled_out`.
+  - Good: "The checkout pool size of 5 ran out of database connections at 14:02."
+  - Bad: "Based on the metrics, logs and deploy history that were reviewed during the investigation, it is likely that a recent change to the checkout service caused connection pool exhaustion and the resulting elevated error rates."
+- **A blocking question** is a `gap` finding that a person has to answer before the diagnosis can be trusted. Write its `claim` as one real question that ends with a question mark, that asks one thing, and that a person with access to the system can answer with a fact. Put what you already checked in `evidence_summary`.
+  - Good: "Did the 14:02 deploy of the billing service lower the retry limit?"
+  - Bad: "Whether the retry limit was lowered by the 14:02 deploy of the billing service could not be established from the available data and needs to be confirmed by someone with access to the deploy history."
+
+Tellagen accepts any text. A headline over 15 words gets the warning `headline_too_long`, and a gap claim that does not end with a question mark gets `question_not_a_question`. The MCP server also adds an `mcp_notice` before it sends the call. Neither fails the run: fix the sentence and send the result again when you can.
 
 ### The chain, ruled out, coverage and unknowns
 

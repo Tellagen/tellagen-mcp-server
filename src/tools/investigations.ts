@@ -27,6 +27,7 @@ import {
   FIGURE_EXTRAS_CAPABILITY,
   traceStructureShape,
   unsupportedNotice,
+  headlineNotice,
 } from "../diagnosis-structure.js";
 
 const resultEvidenceRefSchema = z.object({
@@ -135,7 +136,11 @@ const resultSummarySchema = z
       .object({
         tone: z.enum(["success", "warning", "danger", "neutral"]),
         eyebrow: z.string(),
-        sentence: z.string(),
+        sentence: z
+          .string()
+          .describe(
+            "The headline claim: 15 words or fewer, one cause. Put numbers and other causes in findings, causal_paths and ruled_out.",
+          ),
         show_new_investigation_cta: z.boolean(),
       })
       .describe("Short human-readable conclusion for the RCA record"),
@@ -1089,7 +1094,7 @@ export function registerInvestigationTools(
     "tellagen_complete_investigation",
     {
       description:
-        'Complete or fail an investigation run. Before you complete a run, post each cause with tellagen_update_cause, build figures with tellagen_build_figure, and post the key moment with tellagen_post_timeline_event. Set status to "completed" when done, or "failed" with a failure_reason if the investigation could not finish. Include result_summary for the shared RCA record whenever possible: causal_paths (2 to 4 steps, each citing finding_ids and a figure), ruled_out, coverage and unknowns, and for a regression or CI failure change_refs (the regression_source, the fix and the verified_by runs after it). The response carries the backend warnings[] verbatim and, only when there are warnings, a one-line warnings_summary; read it and name anything you could not fix in your report. result_summary must have conclusion, likely_cause_label, customer_impact, confidence_percent, signals_checked and takeaways, and should have assessment.diagnosis_state. The result can only propose a cause. A person accepts or rejects the root cause in Tellagen, and an API key cannot do it.',
+        'Complete or fail an investigation run. Before you complete a run, post each cause with tellagen_update_cause, build figures with tellagen_build_figure, and post the key moment with tellagen_post_timeline_event. Set status to "completed" when done, or "failed" with a failure_reason if the investigation could not finish. Write the headline claim (result_summary.conclusion.sentence) in 15 words or fewer, with one cause, for example "The checkout pool size of 5 ran out of database connections at 14:02." and not a long sentence that lists the checks you made; the detail goes in the findings. Include result_summary for the shared RCA record whenever possible: causal_paths (2 to 4 steps, each citing finding_ids and a figure), ruled_out, coverage and unknowns, and for a regression or CI failure change_refs (the regression_source, the fix and the verified_by runs after it). The response carries the backend warnings[] verbatim and, only when there are warnings, a one-line warnings_summary; read it and name anything you could not fix in your report. result_summary must have conclusion, likely_cause_label, customer_impact, confidence_percent, signals_checked and takeaways, and should have assessment.diagnosis_state. The result can only propose a cause. A person accepts or rejects the root cause in Tellagen, and an API key cannot do it.',
       inputSchema: {
         run_id: z.string().min(1).describe("Investigation run ID"),
         status: z
@@ -1170,6 +1175,8 @@ export function registerInvestigationTools(
             notices.push(unsupportedNotice(extras.removed, FIGURE_EXTRAS_CAPABILITY));
           }
         }
+        const headline = headlineNotice(result_summary);
+        if (headline) notices.push(headline);
         const notice = notices.length > 0 ? notices.join(" ") : undefined;
         const data = await client.patch<Record<string, unknown>>(
           `/api/v1/investigations/${run_id}`,
