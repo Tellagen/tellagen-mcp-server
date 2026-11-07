@@ -150,7 +150,7 @@ Every investigation follows this sequence. Do not skip steps.
 - **Attribute every trace step.** Copy exact frozen runbook identifiers from `request.skills`, or declare the honest non-runbook origin. Never invent a citation.
 - **Keep a step's basis immutable.** Reuse the same `guidance` object when changing a step from `running` to `done` or `error`.
 - **Keep every finding's numeric `id`.** `tellagen_post_finding` returns `{finding:{id,...}}`. The cause chain, `ruled_out`, `coverage` and `unknowns` cite findings by `finding_ids`, so note the id of each finding as you post it (see Diagnosis structure).
-- **Give every proof a source.** Call `tellagen_build_source_link` for Grafana and GitHub evidence and send the result as `links`; send a `command` for kubectl and other local sources.
+- **Give every proof a source.** Call `tellagen_build_source_link` for GitHub evidence, and for Grafana evidence when `GRAFANA_URL` is set (see Links, command and datasource); send the result as `links`. Send a `command` for kubectl and other local sources.
 
 When a terminal read-only check reveals a repeatable diagnostic pattern, attach reuse_hint to the done trace/check attempt. Generalize the diagnostic intent and trigger, choose confirmed or falsified, and list parameter names without values. Never hint remediation, mutation, failed/skipped work, incident-specific one-offs, secrets, customer identifiers, URLs, commands, or a check already fully covered by the frozen runbook unless the evidence supports a specific extension. Copy the returned stable evidence identifiers into a qualifying finding when the result materially changes confidence.
 
@@ -218,6 +218,10 @@ When pickup returns `request.protocol_version: "runbook_plan_v2"`, each included
 Before completing, call `tellagen_get_investigation_coverage` with the same `mitigation_state` you will submit to `tellagen_complete_investigation`. Repair every returned missing check/evidence ID you can. Use `tellagen_list_investigation_runbook_waivers` to distinguish responder-approved waivers from missing work. If completion is blocked, the MCP error preserves the backend `coverage` object; use those exact IDs instead of guessing.
 
 `request.coverage_mode` is `warning` during rollout unless Tellagen explicitly freezes an enforced run. A warning is still diagnostic work to account for, not permission to discard checks.
+
+If the coverage response says `coverage_mode: "legacy"`, the run has no frozen runbook checks. Nothing can be missing, the decision is ready and `warnings` is empty, so there is nothing to repair and no waiver to look for. Do not invent checks to satisfy it. Complete the run as usual, and keep the `coverage` entries in your `result_summary`: they describe the sources you used or could not read, and the Diagnosis tab shows them. If a client sends no `diagnosis_structure_v1`, Tellagen accepts the result and derives the layout from your findings, so the quality warnings about the chain and coverage do not apply to you; still post a `gap` finding for each source you could not read.
+
+**Choose `mitigation_state`.** The values are `none`, `proposed`, `applied` and `recovered`. Tellagen uses them only for the frozen remediation check: with `applied` or `recovered`, a run whose runbook plan has a remediation needs that verification check to be done. Send the same value to the coverage preflight and to the completion. If a revert, rollback or fix happened outside the run (a responder did it, or a deploy did it), do not send `none`: that says nothing was done. Send `applied` when you can show the change was made, with a link to the revert and a `fix` or `rollback` entry in `change_refs`. Send `recovered` only when you also checked, in data you read, that the symptom stopped. Send `proposed` only for a change nobody has made yet. If the plan needs the verification check and you cannot run it, say so in `unknowns`.
 
 ## Causal resource identity
 
@@ -361,7 +365,10 @@ Responders open the source of every proof from the Diagnosis tab. Three fields m
 | `command` | Kubernetes and any local source with no browser address (kubectl, a SQL client, a local script) | A read-only command that reproduces the evidence, up to 1000 characters, no credentials (Tellagen redacts what it finds and drops a longer command) |
 | `datasource` | A Grafana or similar source | The data source name or uid the query ran against |
 
-**Always call `tellagen_build_source_link`** for Grafana and GitHub instead of writing the address yourself, and copy the `links[]` it returns into the ref unchanged:
+**Call `tellagen_build_source_link`** for GitHub and Grafana instead of writing the address yourself, and copy the `links[]` it returns into the ref unchanged. A GitHub link needs only `repo`. A Grafana link needs a Grafana address, so decide first:
+
+- If `GRAFANA_URL` is set in the MCP client environment, call the tool for every Grafana source.
+- If `GRAFANA_URL` is not set, the tool reads the `base_url` of the Tellagen Grafana datasource. You cannot see that setting, so call the tool once, for your first Grafana source. If it fails with "No enabled Grafana datasource" or "no usable base_url", do not call it again for Grafana. Send a read-only `command` and the `datasource` on each Grafana evidence ref, and add a `coverage` entry that says the Grafana address was not configured.
 
 ```
 tellagen_build_source_link(kind: "logs", datasource: "<loki uid>", query: '{app="checkout"} |= "error"', investigation_run_id: <run_id>)
@@ -374,7 +381,7 @@ tellagen_build_source_link(kind: "ci_run", repo: "acme/checkout", run_id: 412893
 tellagen_build_source_link(kind: "release", repo: "acme/checkout", tag: "v2.4.0")
 ```
 
-With `investigation_run_id` the time range defaults to the incident window; otherwise pass `from` and `to`. For Kubernetes pass `source: "kubernetes"` and a `k8s_url` (or your kubectl text in `query`) and it returns a `command`; it never returns a Kubernetes link. If it reports no Grafana address, say so in `coverage` instead of inventing a link. Keep the older `url` field only for an address you already have from the vendor tool.
+With `investigation_run_id` the time range defaults to the incident window; otherwise pass `from` and `to`. For Kubernetes pass `source: "kubernetes"` and a `k8s_url` (or your kubectl text in `query`) and it returns a `command`; it never returns a Kubernetes link. If it reports no Grafana address, say so in `coverage` (see above) instead of inventing a link. Keep the older `url` field only for an address you already have from the vendor tool.
 
 The MCP sends these fields only when the pickup response lists `diagnosis_structure_v1` in `server_capabilities`. For an older Tellagen it removes them and adds an `mcp_notice` to the tool result; do not retry.
 
