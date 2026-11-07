@@ -1,12 +1,12 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.tellagen/mcp-server",
-  "description": "Tellagen MCP server — investigate incidents with AI agents, post structured findings, and build incident timelines.",
+  "description": "Investigate incidents with your own AI client and post findings and timelines to Tellagen.",
   "repository": {
-    "url": "https://github.com/tellagen/tellagen-mcp-server",
+    "url": "https://github.com/Tellagen/tellagen-mcp-server",
     "source": "github"
   },
-  "version": "0.4.2",
+  "version": "0.4.3",
   "packages": [
     {
       "registryType": "npm",
