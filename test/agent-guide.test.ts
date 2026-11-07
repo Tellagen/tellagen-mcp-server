@@ -221,3 +221,32 @@ describe("SKILL.md guidance that the tool schemas back", () => {
     expect(skill).toContain("it is present only when `warnings` is not empty");
   });
 });
+
+describe("the guide answers three gaps agents had to guess", () => {
+  it("puts the GRAFANA_URL condition before the source link rule", () => {
+    const links = section("#### Links, command and datasource (diagnosis_structure_v1)");
+    const rule = links.indexOf("- If `GRAFANA_URL` is set");
+    const call = links.indexOf("tellagen_build_source_link(kind:");
+    expect(rule).toBeGreaterThan(-1);
+    expect(rule).toBeLessThan(call);
+    expect(links).toContain("- If `GRAFANA_URL` is not set");
+    expect(links).toContain("do not call it again for Grafana");
+    expect(links).not.toContain("**Always call `tellagen_build_source_link`**");
+    expect(skill).toContain("for Grafana evidence when `GRAFANA_URL` is set");
+  });
+
+  it("names every mitigation_state value and the revert-outside-the-run case", () => {
+    const text = skill.slice(skill.indexOf("**Choose `mitigation_state`.**"));
+    for (const state of ["none", "proposed", "applied", "recovered"]) {
+      expect(text.slice(0, 1400), state).toContain(`\`${state}\``);
+    }
+    expect(text).toContain("outside the run");
+    expect(text).toContain("do not send `none`");
+  });
+
+  it("says what to do with coverage advice in legacy mode", () => {
+    expect(skill).toContain('`coverage_mode: "legacy"`');
+    expect(skill).toContain("there is nothing to repair");
+    expect(skill).toContain("derives the layout from your findings");
+  });
+});
