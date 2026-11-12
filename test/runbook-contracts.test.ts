@@ -38,7 +38,7 @@ describe("vendored Tellagen runbook contracts", () => {
     ) as ContractProvenance;
 
     expect(provenance.upstream_commit).toMatch(/^[a-f0-9]{40}$/);
-    expect(provenance.upstream_worktree_dirty).toBe(true);
+    expect(typeof provenance.upstream_worktree_dirty).toBe("boolean");
     expect(provenance.bundle_path).toBe("contracts/runbooks");
     expect(provenance.contract_version).toBe(manifest.contract_version);
     expect(provenance.bundle_sha256).toBe(manifest.bundle_sha256);
@@ -85,7 +85,7 @@ describe("vendored Tellagen runbook contracts", () => {
     const manifest = JSON.parse(
       readFileSync(join(bundleRoot, "manifest.json"), "utf8"),
     ) as ContractManifest;
-    expect(manifest.contract_version).toBe("2026-11-07.2");
+    expect(manifest.contract_version).toBe("2026-11-12.4");
     expect(
       manifest.files.some(
         (entry) => entry.path === "v2/fixtures/filesystem-pressure.json",

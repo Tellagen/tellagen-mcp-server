@@ -30,6 +30,9 @@ import {
   withoutFigureExtrasInBlock,
 } from "./figures.js";
 
+import { RECORDED_STEPS_CAPABILITY } from "./trace-record.js";
+
+export { RECORDED_STEPS_CAPABILITY };
 export const DIAGNOSIS_STRUCTURE_CAPABILITY = "diagnosis_structure_v1";
 /** change_refs on the result and the ci_run, deployment and release link kinds. */
 export const DIAGNOSIS_CHANGES_CAPABILITY = "diagnosis_changes_v1";
@@ -128,6 +131,27 @@ export async function supportsFigureExtras(
 ): Promise<boolean> {
   if (runId !== undefined) return supportsCapability(client, runId, FIGURE_EXTRAS_CAPABILITY);
   return latestCapabilities.get(client)?.has(FIGURE_EXTRAS_CAPABILITY) ?? false;
+}
+
+/** The capability a Tellagen can list to say that it answers a completion dry run. */
+export const COMPLETION_REPAIRS_CAPABILITY = "completion_repairs_v1";
+
+/**
+ * Whether the backend answers a completion with `dry_run: true` and a list of
+ * repairs. An older backend would drop the unknown field and complete the run,
+ * so a dry run is sent only when the pickup listed `completion_repairs_v1`.
+ */
+export function supportsCompletionRepairs(client: TellagenClient, runId: string): boolean {
+  return knownCapability(client, runId, COMPLETION_REPAIRS_CAPABILITY);
+}
+
+/**
+ * Whether the pickup of this run, in this process, listed a capability. It
+ * never asks Tellagen: a run this process did not pick up counts as "not
+ * known", which is the safe answer for the callers that use it.
+ */
+export function knownCapability(client: TellagenClient, runId: string, capability: string): boolean {
+  return capabilityMap(client).get(runId)?.has(capability) ?? false;
 }
 
 /** Whether the backend accepts the diagnosis structure for this run. */

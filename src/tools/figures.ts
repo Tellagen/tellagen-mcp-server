@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { activeRunId } from "../active-run.js";
 import type { TellagenClient } from "../client.js";
 import { supportsDiffLines, supportsFigureExtras } from "../diagnosis-structure.js";
 import { buildFigure, figureToolInputSchema, withoutFigureExtrasInBlock } from "../figures.js";
@@ -211,7 +212,8 @@ export function registerFigureTools(server: McpServer, client: TellagenClient): 
           .describe("The investigation run you are working on. For a diff, a stats or a run_history figure, Tellagen is asked which features it lists in server_capabilities (diff_lines_v1: unchanged lines and line numbers; figure_extras_v1: a stats title, more than 4 stats, runs_not_shown). Without it the latest pickup of this process decides."),
       },
     },
-    async ({ run_id, ...input }) => {
+    async ({ run_id: givenRunId, ...input }) => {
+      const run_id = activeRunId(client, givenRunId);
       const diffLines = isDiff(input.figure) ? await supportsDiffLines(client, run_id) : false;
       const figureExtras = usesFigureExtras(input.figure) ? await supportsFigureExtras(client, run_id) : false;
       const result = buildFigure(input, { diffLines, figureExtras });

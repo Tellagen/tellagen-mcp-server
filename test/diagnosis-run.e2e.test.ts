@@ -13,13 +13,20 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { TellagenClient } from "../src/client.js";
 import { createServer } from "../src/server.js";
+import { MCP_SERVER_VERSION } from "../src/version.js";
 import {
   commitLink,
   compareFigure,
   exploreLink,
 } from "./helpers/diagnosis-fixtures.js";
 
-type Recorded = { method: string; path: string; auth?: string; body?: any };
+type Recorded = {
+  method: string;
+  path: string;
+  auth?: string;
+  headers: Record<string, string | string[] | undefined>;
+  body?: any;
+};
 
 type FakeBackend = {
   url: string;
@@ -59,6 +66,7 @@ async function startBackend(options: { capable: boolean }): Promise<FakeBackend>
         method: req.method ?? "",
         path,
         auth: req.headers.authorization,
+        headers: req.headers,
         body: raw ? JSON.parse(raw) : undefined,
       });
       const send = (status: number, body: unknown) => {
@@ -113,7 +121,8 @@ async function startBackend(options: { capable: boolean }): Promise<FakeBackend>
 async function connect(apiUrl: string) {
   const tellagen = new TellagenClient({ apiUrl, apiKey: "tllg_test" });
   const server = createServer(tellagen);
-  const client = new Client({ name: "test-agent", version: "0.0.1" });
+  // What Claude Code sends in the handshake. No environment variable names the client.
+  const client = new Client({ name: "claude-code", version: "2.1.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   const call = async (name: string, args: Record<string, unknown>) => {
@@ -284,7 +293,7 @@ describe("a replayed run against a fake Tellagen REST server", () => {
   });
   beforeEach(() => {
     vi.stubEnv("GRAFANA_URL", "");
-    vi.stubEnv("TELLAGEN_MCP_CLIENT", "claude");
+    vi.stubEnv("TELLAGEN_MCP_CLIENT", "");
     vi.stubEnv("TELLAGEN_MCP_PROFILE_ID", "");
   });
 
@@ -334,8 +343,18 @@ describe("a replayed run against a fake Tellagen REST server", () => {
       "diagnosis_structure_v1",
       "diagnosis_changes_v1",
       "run_images_v1",
+      "guidance_default_v1",
+      "strict_fields_v1",
+      "cause_lead_v1",
+      "responder_notes_v1",
     ]);
-    expect(pickup.body.client.name).toBe("claude");
+    // Tellagen shows this short name as "Claude Code".
+    expect(pickup.body.client.name).toBe("claude-code");
+    expect(pickup.body.client.version).toBe("2.1.0");
+    expect(pickup.body.client.mcp_server_version).toBe(MCP_SERVER_VERSION);
+    expect(pickup.headers["x-tellagen-client"]).toBe("claude-code");
+    expect(pickup.headers["x-tellagen-client-version"]).toBe("2.1.0");
+    expect(pickup.headers["x-tellagen-server-version"]).toBe(MCP_SERVER_VERSION);
 
     expect(trace.body).toEqual({
       step_id: "errors-1",

@@ -1,8 +1,23 @@
 {
-  "contract_version": "2026-11-07.2",
-  "bundle_sha256": "4c1e53e14220f1aebfbfabe34ffab6e2eef94620a6d7301cdb85b4aede194a3d",
+  "contract_version": "2026-11-12.4",
+  "bundle_sha256": "be6b865611486f0643b93475e12f5aa110baeedb2b40e8e1c577f5af90951e70",
   "bundle_digest_algorithm": "sha256(sorted(path + NUL + file_sha256 + LF))",
   "files": [
+    {
+      "path": "v2/cause-lead.guidance.json",
+      "sha256": "0ad3548b1b2f43605ad76f7f5c4b742d1ab399788618c0fb7806b7ad7b7dfb2c",
+      "bytes": 2641
+    },
+    {
+      "path": "v2/client-protocol.json",
+      "sha256": "7e56204abb9244224da34e16f7a03ab9a98ec011ee6818238a0070445b5e2124",
+      "bytes": 26452
+    },
+    {
+      "path": "v2/client-writes.guidance.json",
+      "sha256": "21308777a7e2df31becfaf0d30d15d34d15209c82a74d5ce722412de9641b6a0",
+      "bytes": 5623
+    },
     {
       "path": "v2/compiled-plan.schema.json",
       "sha256": "6526c68439fef418de0f04099a0119dd6673550bb9e2f302dc84bf2df6bd0fe5",

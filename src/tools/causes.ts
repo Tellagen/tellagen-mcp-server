@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { optionalRunIdSchema, resolveRunId } from "../active-run.js";
 import { TellagenClient } from "../client.js";
 import { formatError } from "../errors.js";
 import {
@@ -11,10 +12,7 @@ import {
 export const CAUSE_STATES = ["leading", "open", "ruled_out"] as const;
 
 export const updateCauseInputShape = {
-  investigation_run_id: z
-    .string()
-    .min(1)
-    .describe("Active investigation run ID"),
+  investigation_run_id: optionalRunIdSchema,
   cause_key: z
     .string()
     .min(1)
@@ -85,7 +83,8 @@ export function registerCauseTools(
     },
     async (input) => {
       try {
-        const { investigation_run_id, cause_key, ...fields } = input;
+        const { investigation_run_id: givenRunId, cause_key, ...fields } = input;
+        const investigation_run_id = resolveRunId(client, givenRunId);
         if (!(await supportsDiagnosisStructure(client, investigation_run_id))) {
           return {
             content: [

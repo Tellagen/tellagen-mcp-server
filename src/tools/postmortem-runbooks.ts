@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { legacyClientName } from "../identity.js";
 import { TellagenClient } from "../client.js";
 import { formatError } from "../errors.js";
 import { MCP_SERVER_VERSION } from "../version.js";
@@ -305,16 +306,6 @@ export const postmortemRunbookCandidatesInputSchema =
     });
   });
 
-function localClientName(): "codex" | "claude" {
-  const value = (process.env.TELLAGEN_MCP_CLIENT || "codex")
-    .trim()
-    .toLowerCase();
-  if (value !== "codex" && value !== "claude") {
-    throw new Error("TELLAGEN_MCP_CLIENT must be either codex or claude");
-  }
-  return value;
-}
-
 function localProfileID(): string | undefined {
   const value = (process.env.TELLAGEN_MCP_PROFILE_ID || "").trim();
   if (!value) return undefined;
@@ -395,7 +386,8 @@ export function registerPostmortemRunbookTools(
           {
             ...submission,
             client: {
-              name: localClientName(),
+              // This route accepts only the two old short names.
+              name: legacyClientName(client.session.identity),
               ...(profileID ? { profile_id: profileID } : {}),
               mcp_server_version: MCP_SERVER_VERSION,
             },

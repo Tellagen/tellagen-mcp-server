@@ -102,10 +102,13 @@ describe("TellagenClient.getBinary", () => {
     const bytes = png(10, 10);
     fetchSpy.mockResolvedValueOnce(imageResponse(bytes, { "Content-Type": "image/png; charset=binary" }));
     const out = await client.getBinary(PATH, { maxBytes: 1024, accept: "image/png" });
-    expect(fetchSpy).toHaveBeenCalledWith(`https://test.api.tellagen.com${PATH}`, {
-      method: "GET",
-      headers: { Authorization: "Bearer tllg_test", Accept: "image/png" },
-    });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      `https://test.api.tellagen.com${PATH}`,
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({ Authorization: "Bearer tllg_test", Accept: "image/png" }),
+      }),
+    );
     expect(Array.from(out.bytes)).toEqual(Array.from(bytes));
     expect(out.contentType).toBe("image/png");
     expect(out.etag).toMatch(/^"[0-9a-f]{64}"$/);

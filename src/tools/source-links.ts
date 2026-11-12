@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { activeRunId } from "../active-run.js";
 import { TellagenClient } from "../client.js";
 import { formatError } from "../errors.js";
 import {
@@ -176,7 +177,7 @@ export const sourceLinkInputSchema = {
     .min(1)
     .optional()
     .describe(
-      "Run whose incident window is the default time range (read from its context)",
+      "Run whose incident window is the default time range (read from its context). Defaults to the run this session picked up",
     ),
   dashboard_uid: z.string().optional().describe("Grafana dashboard uid (panel)"),
   panel_id: z.number().int().min(0).optional().describe("Grafana panel id (panel)"),
@@ -320,8 +321,9 @@ export async function buildSourceLinks(
   const base = await grafanaBaseUrl(client, input.connector);
   let from = input.from;
   let to = input.to;
-  if ((!from || !to) && input.investigation_run_id) {
-    const window = await incidentWindow(client, input.investigation_run_id);
+  const windowRunId = activeRunId(client, input.investigation_run_id);
+  if ((!from || !to) && windowRunId) {
+    const window = await incidentWindow(client, windowRunId);
     from = from || window.from;
     to = to || window.to;
   }

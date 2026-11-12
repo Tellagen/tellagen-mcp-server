@@ -5,6 +5,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { TellagenClient } from "../src/client.js";
 import { TellagenAPIError } from "../src/errors.js";
 import { createServer } from "../src/server.js";
+import { TOOL_CATALOG } from "../src/tools/catalog.js";
 import { MCP_SERVER_VERSION } from "../src/version.js";
 import {
   postmortemRunbookCandidatesInputSchema,
@@ -21,7 +22,7 @@ type RegisteredTool = {
 function createHarness() {
   const post = vi.fn();
   const get = vi.fn();
-  const client = { post, get } as unknown as TellagenClient;
+  const client = { post, get, session: { identity: undefined } } as unknown as TellagenClient;
   const tools = new Map<string, RegisteredTool>();
   const server = {
     registerTool: (
@@ -490,6 +491,7 @@ describe("postmortem runbook candidate contract", () => {
         apiUrl: "https://test.api.tellagen.com",
         apiKey: "tllg_test",
       }),
+      { toolsets: "all" },
     );
     const mcpClient = new Client(
       { name: "postmortem-runbook-contract-test", version: "1.0.0" },
@@ -504,7 +506,7 @@ describe("postmortem runbook candidate contract", () => {
 
       expect(mcpClient.getServerCapabilities()?.experimental).toMatchObject({ "tellagen/postmortem-analysis": { protocol_version: 2 } });
       const tools = await mcpClient.listTools();
-      expect(tools.tools).toHaveLength(46);
+      expect(tools.tools).toHaveLength(TOOL_CATALOG.length + 2);
       const candidateTool = tools.tools.find(
         (tool) =>
           tool.name === "tellagen_submit_postmortem_runbook_candidates",

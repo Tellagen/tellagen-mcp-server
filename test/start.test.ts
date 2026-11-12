@@ -24,7 +24,7 @@ describe("Tellagen MCP startup", () => {
     }
   });
 
-  it("advertises tools without contacting the Tellagen API", async () => {
+  it("advertises tools when the Tellagen API cannot be reached", async () => {
     const apiClient = new TellagenClient({
       apiUrl: "https://test.api.tellagen.com",
       apiKey: "tllg_test",
@@ -45,7 +45,11 @@ describe("Tellagen MCP startup", () => {
       const tools = await mcpClient.listTools();
 
       expect(tools.tools.length).toBeGreaterThan(0);
-      expect(fetchSpy).not.toHaveBeenCalled();
+      // The one call at the start asks whether the key works. It runs after
+      // the handshake and its failure leaves the answer open.
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+      expect(String(fetchSpy.mock.calls[0]![0])).toBe("https://test.api.tellagen.com/api/v1/auth/me");
+      expect(apiClient.auth()).toBe("unknown");
     } finally {
       await mcpClient.close();
       await server.close();
