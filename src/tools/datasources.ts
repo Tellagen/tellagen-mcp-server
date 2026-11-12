@@ -1,7 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { TellagenClient } from "../client.js";
+import { activeRunId } from "../active-run.js";
 import { formatError } from "../errors.js";
+import {
+  type AddressSource,
+  chooseGrafanaBase,
+  knownSourceBases,
+  type SourceBase,
+} from "../source-bases.js";
 
 type CheckStatus = "ok" | "warning" | "error" | "skipped";
 
@@ -39,9 +46,23 @@ type SafeDatasource = {
   required_env_vars: string[];
 };
 
+/**
+ * One address of a Grafana datasource and where it came from. `used` marks the
+ * one the probe calls. `token_sent` is true only for GRAFANA_URL, the address
+ * the person paired with the local token.
+ */
+type ProbeAddress = {
+  source: AddressSource;
+  url: string;
+  used: boolean;
+  token_sent: boolean;
+};
+
 type ProbeResult = {
   ok: boolean;
   datasource?: SafeDatasource;
+  /** For Grafana: every address that is known, in the order links use them (pickup, GRAFANA_URL, datasource). */
+  addresses?: ProbeAddress[];
   available_datasources?: SafeDatasource[];
   checks: ProbeCheck[];
   missing_env_vars: string[];
@@ -101,6 +122,7 @@ export function registerDatasourceTools(
         const result = await probeDatasource(
           selected.datasource,
           timeout_ms ?? 3000,
+          knownSourceBases(client, activeRunId(client)),
         );
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result) }],
@@ -198,8 +220,12 @@ function selectDatasource(
 async function probeDatasource(
   datasource: Datasource,
   timeoutMs: number,
+  pickupBases: readonly SourceBase[] = [],
 ): Promise<ProbeResult> {
   const safe = safeDatasource(datasource);
+  const isGrafana = datasource.type?.toLowerCase() === "grafana";
+  const addresses = isGrafana ? grafanaAddresses(safe, pickupBases) : [];
+  const pickupUrl = addresses.find((address) => address.source === "pickup")?.url;
   const checks: ProbeCheck[] = [
     {
       name: "metadata_lookup",
@@ -208,7 +234,10 @@ async function probeDatasource(
     },
   ];
   const missingEnvVars = safe.required_env_vars.filter(
-    (envVar) => process.env[envVar]?.trim() === undefined || process.env[envVar]?.trim() === "",
+    (envVar) =>
+      // An address Tellagen sent with the pickup makes GRAFANA_URL optional.
+      !(envVar === "GRAFANA_URL" && pickupUrl) &&
+      (process.env[envVar]?.trim() === undefined || process.env[envVar]?.trim() === ""),
   );
 
   if (missingEnvVars.length > 0) {
@@ -220,6 +249,7 @@ async function probeDatasource(
     return {
       ok: false,
       datasource: safe,
+      ...(addresses.length > 0 ? { addresses } : {}),
       checks,
       missing_env_vars: missingEnvVars,
       recommended_action:
@@ -233,7 +263,7 @@ async function probeDatasource(
     message: "All required local environment variables are present.",
   });
 
-  if (datasource.type?.toLowerCase() !== "grafana") {
+  if (!isGrafana) {
     checks.push({
       name: "provider_probe",
       status: "skipped",
@@ -247,12 +277,32 @@ async function probeDatasource(
     };
   }
 
-  const grafanaURL = grafanaURLForDatasource(safe);
   const tokenEnvVar = grafanaTokenEnvVar(safe.required_env_vars);
   const token = process.env[tokenEnvVar]?.trim();
-  if (!grafanaURL || !token) {
+
+  // GRAFANA_URL is the only address that gets the local token. A value that is
+  // not an http or https address is a setup error, not something to skip.
+  const envUrl = process.env.GRAFANA_URL?.trim();
+  if (envUrl && !addresses.some((address) => address.source === "GRAFANA_URL")) {
+    checks.push({
+      name: "grafana_url",
+      status: "error",
+      message: "GRAFANA_URL is not an http or https address, so nothing was called.",
+    });
+    return {
+      ok: false,
+      datasource: safe,
+      ...(addresses.length > 0 ? { addresses } : {}),
+      checks,
+      missing_env_vars: [],
+      recommended_action: "Set GRAFANA_URL to an http or https address, or remove it.",
+    };
+  }
+
+  const target = addresses.find((address) => address.used);
+  if (!target || !token) {
     const missing = [
-      ...(!grafanaURL ? ["GRAFANA_URL"] : []),
+      ...(!target ? ["GRAFANA_URL"] : []),
       ...(!token ? [tokenEnvVar] : []),
     ];
     checks.push({
@@ -263,6 +313,7 @@ async function probeDatasource(
     return {
       ok: false,
       datasource: safe,
+      ...(addresses.length > 0 ? { addresses } : {}),
       checks,
       missing_env_vars: missing,
       recommended_action:
@@ -270,18 +321,24 @@ async function probeDatasource(
     };
   }
 
-  checks.push(await probeGrafanaHealth(grafanaURL, token, timeoutMs));
+  // The token goes only to GRAFANA_URL. An address that Tellagen sent (the
+  // pickup or the datasource) is called without it: /api/health needs no sign-in.
+  checks.push(await probeGrafanaHealth(target.url, target.token_sent ? token : undefined, timeoutMs));
   return {
     ok: checks.every((check) => check.status === "ok" || check.status === "skipped"),
     datasource: safe,
+    ...(addresses.length > 0 ? { addresses } : {}),
     checks,
     missing_env_vars: [],
+    ...(target.token_sent
+      ? {}
+      : { recommended_action: "Set GRAFANA_URL to check the service account token against your own Grafana." }),
   };
 }
 
 async function probeGrafanaHealth(
   grafanaURL: string,
-  token: string,
+  token: string | undefined,
   timeoutMs: number,
 ): Promise<ProbeCheck> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -292,7 +349,7 @@ async function probeGrafanaHealth(
       method: "GET",
       headers: {
         Accept: "application/json",
-        Authorization: `Bearer ${token}`,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       signal: controller.signal,
     });
@@ -300,7 +357,9 @@ async function probeGrafanaHealth(
       return {
         name: "grafana_health",
         status: "ok",
-        message: "Grafana /api/health responded successfully.",
+        message: token
+          ? "Grafana /api/health responded successfully."
+          : "Grafana /api/health responded successfully at the address Tellagen sent. No token was sent to it, so the token was not checked.",
         http_status: response.status,
       };
     }
@@ -359,9 +418,36 @@ function requiredEnvVarsForDatasource(
   return [];
 }
 
-function grafanaURLForDatasource(datasource: SafeDatasource): string | undefined {
-  const envURL = process.env.GRAFANA_URL?.trim();
-  return envURL || datasource.base_url;
+/**
+ * The addresses of a Grafana datasource and where each came from, listed in the
+ * order links use them: the pickup `source_bases`, GRAFANA_URL, then the
+ * datasource `base_url`. The probe calls GRAFANA_URL when it is valid, else the
+ * first address Tellagen sent. Only GRAFANA_URL gets the local token.
+ */
+function grafanaAddresses(
+  datasource: SafeDatasource,
+  pickupBases: readonly SourceBase[],
+): ProbeAddress[] {
+  const found: Array<{ source: AddressSource; url: string | undefined }> = [
+    { source: "pickup", url: safeURL(pickupBaseFor(datasource, pickupBases)?.base_url) },
+    { source: "GRAFANA_URL", url: safeURL(process.env.GRAFANA_URL?.trim()) },
+    { source: "datasource", url: datasource.base_url },
+  ];
+  const known = found.filter(
+    (item): item is { source: AddressSource; url: string } => Boolean(item.url) && /^https?:\/\//i.test(item.url!),
+  );
+  const usedSource = known.some((item) => item.source === "GRAFANA_URL") ? "GRAFANA_URL" : known[0]?.source;
+  return known.map((item) => ({
+    ...item,
+    used: item.source === usedSource,
+    token_sent: item.source === "GRAFANA_URL" && item.source === usedSource,
+  }));
+}
+
+/** The pickup base of this datasource: the one with its name, else the only Grafana base. */
+function pickupBaseFor(datasource: SafeDatasource, bases: readonly SourceBase[]): SourceBase | undefined {
+  const named = datasource.name ? chooseGrafanaBase(bases, datasource.name).base : undefined;
+  return named ?? chooseGrafanaBase(bases).base;
 }
 
 function grafanaTokenEnvVar(requiredEnvVars: string[]): string {

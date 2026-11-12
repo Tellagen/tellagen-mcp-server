@@ -6,7 +6,7 @@
     "url": "https://github.com/Tellagen/tellagen-mcp-server",
     "source": "github"
   },
-  "version": "0.5.0",
+  "version": "0.5.1",
   "packages": [
     {
       "registryType": "npm",
@@ -16,15 +16,15 @@
       },
       "environmentVariables": [
         {
-          "description": "Tellagen API key (starts with tllg_). Generate one in Settings > API Keys.",
-          "isRequired": true,
+          "description": "Optional. A Tellagen API key (starts with tllg_) that wins over a browser sign-in. Without it, sign in with npx @tellagen/mcp-server login or the tellagen_sign_in tool.",
+          "isRequired": false,
           "format": "string",
           "isSecret": true,
           "name": "TELLAGEN_API_KEY"
         },
         {
-          "description": "Tellagen API base URL (e.g., https://mycompany.api.tellagen.com)",
-          "isRequired": true,
+          "description": "Optional. The Tellagen API base URL (e.g., https://mycompany.api.tellagen.com). Without it, the browser sign-in finds the workspace.",
+          "isRequired": false,
           "format": "string",
           "isSecret": false,
           "name": "TELLAGEN_API_URL"

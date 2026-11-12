@@ -14,6 +14,12 @@ import {
   looksLikeKubectl,
   sanitizeSourceUrl,
 } from "../source-links.js";
+import {
+  type AddressSource,
+  chooseGithubBase,
+  chooseGrafanaBase,
+  knownSourceBases,
+} from "../source-bases.js";
 
 export const SOURCE_LINK_KINDS = [
   "explore",
@@ -58,22 +64,31 @@ function fail(message: string): never {
 }
 
 /**
- * The Grafana address: GRAFANA_URL in the MCP client environment wins (the
- * same override tellagen_probe_datasource honours), otherwise the Grafana
- * connector's base_url from the Tellagen datasources. Only the Tellagen API is
+ * The Grafana address, in this order:
+ *   1. the `source_bases` that Tellagen sent when the run was picked up (or
+ *      read), so a signed-in client needs no setting;
+ *   2. GRAFANA_URL in the MCP client environment, for a workspace whose
+ *      Tellagen sends no (or no single) Grafana address;
+ *   3. the Grafana connector's base_url from the Tellagen datasources.
+ * With several Grafana addresses in the pickup and no connector name, the
+ * pickup cannot choose, so the next source decides. Only the Tellagen API is
  * called, and credentials in the address are stripped.
  */
-async function grafanaBaseUrl(
+export async function grafanaBaseUrl(
   client: TellagenClient,
   connector?: string,
-): Promise<string> {
+  runId?: string,
+): Promise<{ url: string; source: AddressSource }> {
+  const fromPickup = chooseGrafanaBase(knownSourceBases(client, runId), connector).base;
+  if (fromPickup) return { url: fromPickup.base_url, source: "pickup" };
+
   const envUrl = process.env.GRAFANA_URL?.trim();
   if (envUrl) {
     const safe = sanitizeSourceUrl(envUrl);
     if (!safe || safe.example) {
       fail("GRAFANA_URL must be an http or https address.");
     }
-    return safe.url;
+    return { url: safe.url, source: "GRAFANA_URL" };
   }
 
   const data = await client.get<{ datasources?: Datasource[] }>(
@@ -115,7 +130,7 @@ async function grafanaBaseUrl(
       "The Grafana datasource has no usable base_url (Tellagen shows connector settings to settings managers only). Set GRAFANA_URL in the MCP client environment.",
     );
   }
-  return safe.url;
+  return { url: safe.url, source: "datasource" };
 }
 
 /** The incident window from the run's context, when it is a real range. */
@@ -209,7 +224,9 @@ export const sourceLinkInputSchema = {
   github_url: z
     .string()
     .optional()
-    .describe("GitHub Enterprise base address; defaults to https://github.com"),
+    .describe(
+      "GitHub Enterprise base address; defaults to the GitHub address Tellagen sent with the pickup, else https://github.com",
+    ),
   k8s_url: z
     .string()
     .optional()
@@ -267,7 +284,12 @@ export async function buildSourceLinks(
       runId: input.run_id,
       jobId: input.job_id,
       tag: input.tag,
-      githubUrl: input.github_url,
+      githubUrl:
+        input.github_url ??
+        chooseGithubBase(
+          knownSourceBases(client, activeRunId(client, input.investigation_run_id)),
+          input.repo,
+        )?.base_url,
     });
     if (!url) {
       fail(
@@ -318,10 +340,10 @@ export async function buildSourceLinks(
       return { links: [], guidance: NO_LINK_GUIDANCE };
     }
   }
-  const base = await grafanaBaseUrl(client, input.connector);
+  const windowRunId = activeRunId(client, input.investigation_run_id);
+  const base = (await grafanaBaseUrl(client, input.connector, windowRunId)).url;
   let from = input.from;
   let to = input.to;
-  const windowRunId = activeRunId(client, input.investigation_run_id);
   if ((!from || !to) && windowRunId) {
     const window = await incidentWindow(client, windowRunId);
     from = from || window.from;
@@ -385,7 +407,7 @@ export function registerSourceLinkTools(
     "tellagen_build_source_link",
     {
       description:
-        "Build the clickable link (or copyable command) for an evidence source, to put in evidence_refs[].links[]. Grafana Explore, panel and trace links come from the Grafana address (GRAFANA_URL in the MCP environment, else the Tellagen Grafana datasource); GitHub compare, commit, pull request, Actions run (ci_run) and release links come from repo. Kubernetes and other sources without a browser URL return a command or guidance instead. Calls only the Tellagen API, puts no credentials in a URL, and returns {links:[{kind,label,url}]} that you copy into the ref unchanged.",
+        "Build the clickable link (or copyable command) for an evidence source, to put in evidence_refs[].links[]. Grafana Explore, panel and trace links come from the Grafana address that Tellagen sent when you picked the run up, else GRAFANA_URL in the MCP environment, else the Tellagen Grafana datasource; GitHub compare, commit, pull request, Actions run (ci_run) and release links come from repo and the GitHub address Tellagen sent. Kubernetes and other sources without a browser URL return a command or guidance instead. Calls only the Tellagen API, puts no credentials in a URL, and returns {links:[{kind,label,url}]} that you copy into the ref unchanged.",
       inputSchema: sourceLinkInputSchema,
     },
     async (input) => {

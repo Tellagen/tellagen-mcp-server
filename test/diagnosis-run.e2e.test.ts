@@ -42,7 +42,7 @@ const WARNINGS = [
   },
 ];
 
-async function startBackend(options: { capable: boolean }): Promise<FakeBackend> {
+async function startBackend(options: { capable: boolean; sourceBases?: unknown }): Promise<FakeBackend> {
   const requests: Recorded[] = [];
   let nextFindingId = 10;
   const context = {
@@ -55,6 +55,7 @@ async function startBackend(options: { capable: boolean }): Promise<FakeBackend>
     },
     pickup: { investigation_run_id: "run-1", incident_id: 42 },
     ...(options.capable ? { server_capabilities: ["diagnosis_structure_v1"] } : {}),
+    ...(options.sourceBases !== undefined ? { source_bases: options.sourceBases } : {}),
   };
   const server: Server = createHttpServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -427,6 +428,62 @@ describe("a replayed run against a fake Tellagen REST server", () => {
     expect(out.warnings).toEqual(WARNINGS);
     expect(out.warnings_summary).toContain("1 evidence_without_link");
     expect(out.mcp_notice).toBeUndefined();
+  });
+
+  it("gives a finding a working Explore link from the pickup address, with no GRAFANA_URL and no datasource list", async () => {
+    backend = await startBackend({
+      capable: true,
+      sourceBases: [{ kind: "grafana", name: "Grafana prod", base_url: "https://grafana.pickup.example.com" }],
+    });
+    const agent = await connect(backend.url);
+    const pickup = await agent.call("tellagen_pick_up_investigation", { investigation_run_id: "run-1" });
+    expect(pickup.isError).toBe(false);
+    const built = await agent.call("tellagen_build_source_link", {
+      kind: "logs",
+      datasource: "loki-uid-1",
+      query: '{app="checkout"} |= "error"',
+    });
+    expect(built.isError).toBe(false);
+    const links = built.json().links as Array<{ kind: string; label: string; url: string }>;
+    expect(links).toHaveLength(1);
+    expect(links[0].url.startsWith("https://grafana.pickup.example.com/explore?left=")).toBe(true);
+    const pane = JSON.parse(decodeURIComponent(links[0].url.split("left=")[1]));
+    expect(pane.datasource).toBe("loki-uid-1");
+    expect(pane.queries[0].expr).toBe('{app="checkout"} |= "error"');
+
+    const posted = await agent.call("tellagen_post_finding", {
+      incident_id: 42,
+      investigation_run_id: "run-1",
+      finding_type: "evidence",
+      role: "confirms",
+      claim: "Checkout logged errors at 09:03",
+      evidence_summary: "The checkout logs hold timeout errors from 09:03.",
+      confidence: 0.8,
+      confidence_reason: "the log lines name the timeout",
+      evidence_refs: [
+        { source: "grafana-loki", query: '{app="checkout"} |= "error"', result_summary: "412 error lines", links, datasource: "loki-uid-1" },
+      ],
+    });
+    await agent.close();
+    expect(posted.isError).toBe(false);
+
+    // The backend is not asked for the datasource list. The context read is the incident window of the link.
+    expect(backend.requests.map((r) => `${r.method} ${r.path}`)).toEqual([
+      "POST /api/v1/investigations/run-1/pickup",
+      "GET /api/v1/investigations/run-1/context",
+      "POST /api/v1/incidents/42/findings",
+    ]);
+    expect(backend.requests[2].body.evidence_refs[0].links).toEqual(links);
+  });
+
+  it("falls back to the datasource address when the backend sends no source_bases", async () => {
+    backend = await startBackend({ capable: true });
+    const agent = await connect(backend.url);
+    await agent.call("tellagen_pick_up_investigation", { investigation_run_id: "run-1" });
+    const built = await agent.call("tellagen_build_source_link", { kind: "explore", datasource: "prom-uid-1", query: "up" });
+    await agent.close();
+    expect(built.json().links[0].url.startsWith("https://grafana.example.com/explore?")).toBe(true);
+    expect(backend.requests.map((r) => `${r.method} ${r.path}`)).toContain("GET /api/v1/datasources");
   });
 
   it("an older backend without server_capabilities receives the old payload shape", async () => {
