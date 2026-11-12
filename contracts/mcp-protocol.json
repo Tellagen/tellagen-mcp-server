@@ -1,0 +1,155 @@
+{
+  "format": 1,
+  "about": "What this server sends to Tellagen and relies on, for the diagnosis path. A test keeps this file equal to the source, and a second test compares it with the protocol file that Tellagen publishes in the contract bundle (contracts/runbooks/v2/client-protocol.json) once the pinned bundle has one. A name that Tellagen no longer knows turns the second test red and names the route and the field.",
+  "protocol_capabilities_sent": [
+    "cause_lead_v1",
+    "completion_coverage_v2",
+    "diagnosis_changes_v1",
+    "diagnosis_structure_v1",
+    "finding_roles_v2",
+    "gap_findings_v2",
+    "guidance_default_v1",
+    "responder_notes_v1",
+    "run_images_v1",
+    "runbook_plan_v2",
+    "strict_fields_v1",
+    "trace_check_id_v2"
+  ],
+  "server_capabilities_used": [
+    "client_heartbeat_v1",
+    "completion_repairs_v1",
+    "diagnosis_changes_v1",
+    "diagnosis_structure_v1",
+    "diff_lines_v1",
+    "figure_extras_v1",
+    "recorded_steps_v1",
+    "run_images_v1"
+  ],
+  "client_headers_sent": [
+    "X-Tellagen-Client",
+    "X-Tellagen-Client-Session",
+    "X-Tellagen-Client-Version",
+    "X-Tellagen-Computer",
+    "X-Tellagen-Server-Version"
+  ],
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/device/start",
+      "request_fields": ["client_name", "client_version", "server_version", "computer_name"],
+      "response_fields": ["device_code", "user_code", "verification_uri", "verification_uri_complete", "expires_in", "interval"],
+      "error_codes": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/device/token",
+      "request_fields": ["device_code"],
+      "response_fields": ["status", "interval", "api_key", "api_base_url", "key", "key.expires_at", "workspace", "workspace.name", "workspace.url"],
+      "error_codes": ["expired", "denied", "invalid_device_code"]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/me",
+      "request_fields": [],
+      "response_fields": ["user"],
+      "error_codes": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investigations",
+      "query": ["status", "wait", "listening", "listener_reason", "listener_run"],
+      "request_fields": [],
+      "response_fields": ["runs", "runs.run_id", "runs.incident_human_id", "runs.incident_title", "listener", "listener.take_runs_automatically"],
+      "error_codes": ["too_many_waiting_requests", "rate_limited"]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investigations/{id}/pickup",
+      "request_fields": [
+        "client",
+        "client.name",
+        "client.version",
+        "client.mcp_server_version",
+        "client.computer",
+        "client.profile_id",
+        "client.session_id",
+        "model",
+        "protocol_capabilities",
+        "available_sources",
+        "takeover"
+      ],
+      "response_fields": ["server_capabilities", "request", "run", "source_bases", "client_update_available", "ignored_sources"],
+      "error_codes": ["run_has_active_client", "unknown_field", "client_upgrade_required", "pickup_client_context_mismatch"]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investigations/{id}/context",
+      "request_fields": [],
+      "response_fields": ["server_capabilities"],
+      "error_codes": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investigation-runs/{id}/trace",
+      "request_fields": [
+        "step_id",
+        "step_index",
+        "status",
+        "title",
+        "tool_name",
+        "tool_use_id",
+        "input_json",
+        "result_json",
+        "result_summary",
+        "result_bytes",
+        "truncated",
+        "error",
+        "guidance",
+        "outcome",
+        "cause_key",
+        "reuse_hint",
+        "recorded_by",
+        "started_at",
+        "completed_at",
+        "duration_ms"
+      ],
+      "response_fields": ["steps", "note", "run_state", "responder_notes"],
+      "error_codes": ["run_taken_over", "investigation_run_ended"]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investigation-runs/{id}/heartbeat",
+      "request_fields": ["session_id"],
+      "response_fields": ["client_state", "run_state", "responder_notes"],
+      "error_codes": ["run_taken_over", "investigation_run_ended"]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investigation-runs/{id}/check-attempts",
+      "request_fields": ["runbook_id", "runbook_version", "check_id", "source_resolution_id", "step_id", "status"],
+      "response_fields": [],
+      "error_codes": ["run_taken_over", "investigation_run_ended"]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/investigation-runs/{id}/causes/{key}",
+      "request_fields": ["label", "state", "rationale", "evidence_for", "evidence_against", "finding_ids", "sources"],
+      "response_fields": [],
+      "error_codes": ["run_taken_over", "investigation_run_ended"]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/incidents/{id}/investigations",
+      "request_fields": ["agent_name", "model_used", "data_sources", "execution_mode", "question", "evidence_budget_preset", "corrects_run_id", "question_finding_id"],
+      "response_fields": [],
+      "error_codes": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/incidents/{id}/findings",
+      "request_fields": ["investigation_run_id", "finding_type", "claim", "evidence_summary", "confidence", "confidence_reason", "evidence_refs"],
+      "response_fields": [],
+      "error_codes": ["run_taken_over", "investigation_run_ended"]
+    }
+  ]
+}

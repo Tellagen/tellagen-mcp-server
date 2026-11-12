@@ -1,5 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { createHash } from "node:crypto";
+import { optionalRunIdSchema, resolveRunId } from "../active-run.js";
+import { httpDefaults } from "../client.js";
 import { TellagenClient } from "../client.js";
 import { formatError } from "../errors.js";
 import {
@@ -123,6 +126,82 @@ const evidenceRefSchema = z
       ),
   });
 
+/** The screenshot limits of a finding, as Tellagen enforces them. */
+export const SCREENSHOT_LIMITS = {
+  count: 20,
+  bytesEach: 10 * 1024 * 1024,
+  bytesTogether: 15 * 1024 * 1024,
+} as const;
+
+type ScreenshotInput = { base64?: string; url?: string };
+type RefWithScreenshots = { screenshots?: ScreenshotInput[] };
+
+function allScreenshots(
+  screenshots: ScreenshotInput[] | undefined,
+  refs: RefWithScreenshots[] | undefined,
+): ScreenshotInput[] {
+  return [...(screenshots ?? []), ...(refs ?? []).flatMap((ref) => ref.screenshots ?? [])];
+}
+
+function hasScreenshots(
+  screenshots: ScreenshotInput[] | undefined,
+  refs: RefWithScreenshots[] | undefined,
+): boolean {
+  return allScreenshots(screenshots, refs).length > 0;
+}
+
+/** The size in bytes of the data a base64 text holds. */
+export function base64Bytes(value: string): number {
+  const text = value.replace(/^data:[^,]*,/, "").replace(/\s+/g, "");
+  const padding = text.endsWith("==") ? 2 : text.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((text.length * 3) / 4) - padding);
+}
+
+const megabytes = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
+/**
+ * Refuses screenshots Tellagen would refuse, before anything is sent, and
+ * names the limit. A screenshot given as a URL is fetched by Tellagen and is
+ * only counted here.
+ */
+export function checkScreenshotSizes(
+  screenshots: ScreenshotInput[] | undefined,
+  refs: RefWithScreenshots[] | undefined,
+): void {
+  const all = allScreenshots(screenshots, refs);
+  if (all.length > SCREENSHOT_LIMITS.count) {
+    throw new Error(
+      `A finding takes at most ${SCREENSHOT_LIMITS.count} screenshots; this one has ${all.length}. Nothing was sent.`,
+    );
+  }
+  let together = 0;
+  all.forEach((shot, index) => {
+    if (!shot.base64) return;
+    const size = base64Bytes(shot.base64);
+    if (size > SCREENSHOT_LIMITS.bytesEach) {
+      throw new Error(
+        `Screenshot ${index + 1} is ${megabytes(size)}; the limit is ${megabytes(SCREENSHOT_LIMITS.bytesEach)} for one screenshot. Nothing was sent. Send a smaller image or crop it.`,
+      );
+    }
+    together += size;
+  });
+  if (together > SCREENSHOT_LIMITS.bytesTogether) {
+    throw new Error(
+      `The screenshots are ${megabytes(together)} together; the limit is ${megabytes(SCREENSHOT_LIMITS.bytesTogether)} for one finding. Nothing was sent. Send fewer or smaller images.`,
+    );
+  }
+}
+
+/**
+ * The idempotency key of a finding: a hash of what is sent. The same finding
+ * sent twice (a repeat after a timeout, by this server or by the model)
+ * carries the same key, and Tellagen returns the first finding.
+ */
+export function findingIdempotencyKey(incidentId: number, body: Record<string, unknown>): string {
+  const hash = createHash("sha256").update(JSON.stringify([incidentId, body])).digest("hex");
+  return `mcp-finding-${hash.slice(0, 48)}`;
+}
+
 export function registerFindingTools(
   server: McpServer,
   client: TellagenClient,
@@ -134,10 +213,7 @@ export function registerFindingTools(
         "Post a structured finding to an active investigation run on a Tellagen incident. Post findings incrementally as you discover them, and do not batch them. The response is {finding:{id,...}}: keep the numeric id, because causal_paths steps, ruled_out, coverage and unknowns cite findings by finding_ids when you complete the run. The claim of a gap finding that blocks the diagnosis is a real question that ends with a question mark and that a person can answer, for example: Did the 14:02 deploy of the billing service lower the retry limit?; put what you already checked in evidence_summary. It cannot accept or reject a root cause: only a person does that in Tellagen.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
-        investigation_run_id: z
-          .string()
-          .min(1)
-          .describe("Active investigation run ID"),
+        investigation_run_id: optionalRunIdSchema,
         finding_type: z
           .enum([
             "observation",
@@ -196,7 +272,7 @@ export function registerFindingTools(
     },
     async ({
       incident_id,
-      investigation_run_id,
+      investigation_run_id: givenRunId,
       finding_type,
       role,
       claim,
@@ -207,6 +283,8 @@ export function registerFindingTools(
       screenshots,
     }) => {
       try {
+        const investigation_run_id = resolveRunId(client, givenRunId);
+        checkScreenshotSizes(screenshots, evidence_refs);
         const reqBody: Record<string, unknown> = {
           investigation_run_id,
           finding_type,
@@ -248,6 +326,13 @@ export function registerFindingTools(
         const data = await client.post(
           `/api/v1/incidents/${incident_id}/findings`,
           reqBody,
+          {
+            // The key makes a repeat return the first finding, not a second one.
+            idempotencyKey: findingIdempotencyKey(incident_id, reqBody),
+            timeoutMs: hasScreenshots(screenshots, evidence_refs)
+              ? httpDefaults.uploadTimeoutMs
+              : undefined,
+          },
         );
         return {
           content: [

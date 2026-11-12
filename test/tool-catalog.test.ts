@@ -6,6 +6,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { TellagenClient } from "../src/client.js";
+import { CredentialVault, MemoryStore } from "../src/credentials.js";
+import { SignInIndex } from "../src/signin-index.js";
+import { SignInManager } from "../src/signin.js";
 import { registerAllTools } from "../src/tools/index.js";
 import { MCP_SERVER_VERSION } from "../src/version.js";
 
@@ -15,13 +18,17 @@ const readJson = (file: string) => JSON.parse(readText(file));
 
 async function listTools() {
   const server = new McpServer({ name: "catalog-test", version: "0.0.1" });
-  registerAllTools(
-    server,
-    new TellagenClient({
-      apiUrl: "https://test.api.tellagen.com",
-      apiKey: "tllg_test",
+  const api = new TellagenClient({
+    apiUrl: "https://test.api.tellagen.com",
+    apiKey: "tllg_test",
+  });
+  // The sign-in tool is listed in a real server, so the README must list it.
+  registerAllTools(server, api, {
+    signIn: new SignInManager(api, {
+      vault: new CredentialVault(new MemoryStore(), new MemoryStore("file"), false),
+      index: new SignInIndex(undefined),
     }),
-  );
+  });
   const client = new Client({ name: "catalog-client", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

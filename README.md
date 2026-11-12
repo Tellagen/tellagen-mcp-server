@@ -6,50 +6,77 @@ An MCP server for [Tellagen](https://tellagen.com), the incident workspace for S
 npx -y @tellagen/mcp-server
 ```
 
-Set `TELLAGEN_API_KEY` and `TELLAGEN_API_URL` first (see the quick start below). The MCP Registry name is `io.github.tellagen/mcp-server`.
+Sign in with `npx @tellagen/mcp-server login`, or ask your client to sign in to Tellagen (see the quick start below). Without a sign-in the server still starts, and the first tool call tells you the steps. The MCP Registry name is `io.github.tellagen/mcp-server`.
 
 Works with any MCP-compatible client: Claude Code, Codex, Cursor, VS Code Copilot, Windsurf.
 
 ## Quick start
 
-### 1. Create an API key
+### 1. Sign in
 
-In Tellagen, go to **Settings > API Keys** and create a key with both `incidents:read` and `incidents:write` scopes.
+Run `npx @tellagen/mcp-server login`, or ask your client to sign in to Tellagen (it calls `tellagen_sign_in`). The server shows a short code and opens your browser. Check that the code on the page matches, then approve. There is no key to copy.
 
-> **Important:** `incidents:write` does NOT imply `incidents:read`. You need both scopes for full investigation capabilities.
+- The key goes to your system keychain: the macOS Keychain, the Secret Service on Linux, or Windows Credential Manager. On a computer with no keychain it goes to a file that only your user can read (mode 600), and the server says so. It is never written anywhere else.
+- Over SSH, or with no display, the server prints the address and the code and opens nothing. `--no-browser` does the same.
+- The key is personal, works for 30 or 90 days, and one sign-in is kept for each workspace address.
+- `npx @tellagen/mcp-server status` shows the sign-in.
+- **Sign out.** `npx @tellagen/mcp-server logout` removes the key from this computer only. Tellagen keeps the key valid until it expires or you sign the client out on the server: in Tellagen, open **Settings > Local diagnosis**, find the client under **Connected clients**, and choose **Sign out**. That revokes the key.
 
-### 2. Add to your MCP client config
+`TELLAGEN_API_KEY` and `TELLAGEN_API_URL` still work, and they win over a stored sign-in (see "Use an API key instead" below).
 
-**Claude Code** (`~/.claude.json` or project `.mcp.json`):
+### 2. Add the server to your client
+
+Use `@latest` in every setup, so the client starts the newest release.
+
+**Claude Code with the plugin** (the easiest way; it also adds `/tellagen:connect` and `/tellagen:diagnose`):
+
+```
+/plugin marketplace add tellagen/tellagen-marketplace
+/plugin install tellagen@tellagen-marketplace
+```
+
+Then run `/tellagen:connect`.
+
+**Claude Code without the plugin:**
+
+```bash
+claude mcp add tellagen -- npx -y @tellagen/mcp-server@latest
+```
+
+**Codex:**
+
+```bash
+codex mcp add tellagen -- npx -y @tellagen/mcp-server@latest
+```
+
+**Cursor** (`.cursor/mcp.json`) and **Claude Desktop** (`claude_desktop_config.json`: `~/Library/Application Support/Claude/` on macOS, `%APPDATA%\Claude\` on Windows; restart Claude Desktop after you edit it):
 
 ```json
 {
   "mcpServers": {
     "tellagen": {
       "command": "npx",
-      "args": ["-y", "@tellagen/mcp-server"],
-      "env": {
-        "TELLAGEN_API_KEY": "tllg_...",
-        "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.com",
-        "TELLAGEN_MCP_CLIENT": "claude"
-      }
+      "args": ["-y", "@tellagen/mcp-server@latest"]
     }
   }
 }
 ```
 
-**Cursor** (`.cursor/mcp.json`):
+Then ask the client to sign in to Tellagen. If you already have other servers in the file, add the `tellagen` entry to them.
+
+**Update.** Restart the client: `@latest` then starts the newest release. If `npx` still starts an old copy from its cache, run `npx -y @tellagen/mcp-server@latest --version` once, then restart the client. With the plugin, open `/plugin` and update Tellagen.
+
+**Use an API key instead.** In Tellagen, open **Settings > API Keys**, create a key with the **Local Diagnosis** preset (it sets `incidents:read` and `incidents:write`; `incidents:write` does not imply `incidents:read`, so a key made by hand needs both), and put the key and your workspace API address in the `env` block of the server:
 
 ```json
 {
   "mcpServers": {
     "tellagen": {
       "command": "npx",
-      "args": ["-y", "@tellagen/mcp-server"],
+      "args": ["-y", "@tellagen/mcp-server@latest"],
       "env": {
         "TELLAGEN_API_KEY": "tllg_...",
-        "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.com",
-        "TELLAGEN_MCP_CLIENT": "codex"
+        "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.com"
       }
     }
   }
@@ -58,118 +85,205 @@ In Tellagen, go to **Settings > API Keys** and create a key with both `incidents
 
 Optionally set `TELLAGEN_MCP_PROFILE_ID` to a stable opaque name for this local MCP profile (for example, `work-laptop-codex`). Tellagen uses it only to avoid borrowing access observations from another client profile; never put a username, filesystem path, or secret in it.
 
-Set `TELLAGEN_MCP_CLIENT` to the host running this MCP server: `codex` or `claude`. It defaults to `codex` for existing installations. This value scopes local source observations so a Claude pickup cannot borrow a Codex diagnostic result, or vice versa.
+The server reads the name and version of your client (Claude Code, Codex, Cursor and so on) from the MCP handshake and sends them to Tellagen, so a run shows which client ran it. You do not set the client anywhere. `TELLAGEN_MCP_CLIENT` is deprecated: it is read for one more release, only when a client sends no name, and for a Tellagen workspace that still accepts only `codex` or `claude`.
 
-Cursor is not a third Tellagen client identity. Set the selector to the Codex or Claude launcher/profile that will actually pick up the investigation; the Cursor example above uses the Codex identity.
+### 3. Diagnose
 
-### 3. Investigate
+In Tellagen, open the incident, go to the **Diagnosis** tab and choose **Run diagnosis**. The tab then says it is waiting for your client and shows one short command: `/tellagen:diagnose` in Claude Code (or choose **Open in Claude Code**), and "Diagnose the waiting Tellagen run." in any other client. **Copy the full prompt** gives the whole text. You do not need a run ID: the client calls `tellagen_next_investigation`, which finds the run that waits for it, and then picks it up. With several waiting runs you are asked which one.
 
-From a Tellagen incident, click **Investigate with AI**, then copy the Codex or Claude command. The command includes an `investigation_run_id`; your local agent should call `tellagen_pick_up_investigation` with that ID before doing any evidence work.
+You can also ask your client directly: *"Diagnose with Tellagen"* or *"Start a Tellagen diagnosis for incident #42"*. In a client that shows MCP prompts as commands, run the `diagnose` prompt (in Claude Code without the plugin: `/mcp__tellagen__diagnose`). If you do have a run ID, the client calls `tellagen_pick_up_investigation` with it.
 
-If you are starting outside the Tellagen UI, ask your AI agent: *"Start a local Tellagen investigation for incident #42"*.
+After a restart of the client, ask it to continue. `tellagen_resume` picks the remembered run up again and lists what is already posted.
 
-From Settings → AI diagnostics, click **Check MCP tools**, then copy the diagnostic prompt. That prompt includes a `diagnostic_session_id` such as `diag_abc123`. Diagnostic sessions are not investigation runs: your local agent should inspect visible MCP tools, run safe read-only checks, and call `tellagen_report_diagnostic_tools`.
+In **Settings > Local diagnosis**, under **For admins**, **Check MCP tools** gives a prompt with a `diagnostic_session_id` such as `diag_abc123`. That is a tool check, not a run: the client turns on the `settings` toolset, runs safe read-only checks and calls `tellagen_report_diagnostic_tools`.
+
+### If something is not set up
+
+The server always starts, so the client shows it as connected. What a tool call answers when it cannot work:
+
+| Situation | The answer |
+|-----------|------------|
+| No sign-in and no `TELLAGEN_API_KEY` or `TELLAGEN_API_URL` | `tellagen_not_set_up`, with the steps to sign in (or to create a key and where to put it) |
+| Tellagen refuses the key (wrong, revoked or expired) | HTTP 401, with the steps to replace the key |
+| The seat of the key's owner is paused | `seat_access_suspended`, with who can restore it |
+
+The server asks Tellagen once, right after the MCP handshake, whether the key works. It does not wait for the answer, so a slow or unreachable API never keeps the client from listing the tools. A key that was refused is asked about again after 15 seconds, so a restored seat needs no restart. No message contains the key.
 
 ## Tools
 
-The server offers 46 tools, all with the prefix `tellagen_`. A tool that reads never changes anything. A person, not an API key, accepts or rejects a root cause in Tellagen: no tool can do it.
+The server offers 50 tools, all with the prefix `tellagen_`, in five toolsets. A tool that reads never changes anything. A person, not an API key, accepts or rejects a root cause in Tellagen: no tool can do it.
 
-### Incidents
+### Toolsets
 
-| Tool | Purpose |
-|------|---------|
-| `tellagen_list_incidents` | Find an incident ID: list incidents, optionally by status |
-| `tellagen_get_incident` | Read one incident (severity, status, services, timestamps, manager) |
-| `tellagen_create_incident` | Create an incident when the user asks for one |
-| `tellagen_update_incident` | Change fields of an incident (title, status, severity, team, impact summary, links, timestamps) |
-| `tellagen_search` | Search incidents, timeline events, issues and services when you do not know an ID |
+A client pays for every tool it lists, in the model's context. So the server lists only the sets a task needs. `diagnosis` and `incidents` are on when you choose nothing.
 
-### Investigation runs
+| Your task | Toolsets |
+|-----------|----------|
+| Diagnose an incident | `diagnosis,incidents` (the default) |
+| Edit the timeline of an incident | add `timeline` |
+| Answer a postmortem revision request or a runbook analysis request | add `postmortem` |
+| Run **Check MCP tools** from Tellagen settings, or inspect a run | add `settings` |
+| Everything | `all` |
 
-| Tool | Purpose |
-|------|---------|
-| `tellagen_start_investigation` | Start a run when no run ID was given; also starts a follow-up of an earlier run |
-| `tellagen_pick_up_investigation` | Attach this agent to a run that a person created in Tellagen, and get its context bundle |
-| `tellagen_get_incident_context` | Re-read the context bundle of a run you already picked up |
-| `tellagen_get_investigation_workspace` | Read all runs, findings, trace and review state of an incident |
-| `tellagen_list_investigation_runs` | List the runs of an incident |
-| `tellagen_update_investigation_scope` | Change the target services, aliases and time range of the investigation |
-| `tellagen_list_runbooks` | List the runbooks that matched a run |
-| `tellagen_complete_investigation` | Complete or fail a run with the result summary (the cause chain, what was ruled out, coverage, unknowns and change refs) |
+Choose the sets with the `--toolsets` argument or the `TELLAGEN_TOOLSETS` variable, as a comma-separated list:
 
-### Trace and runbook checks
+```json
+"args": ["-y", "@tellagen/mcp-server", "--toolsets", "diagnosis,incidents,timeline"]
+```
 
-| Tool | Purpose |
-|------|---------|
-| `tellagen_post_trace_step` | Post or update a readable progress step, with the guidance basis |
-| `tellagen_post_runbook_check_attempt` | Post an attempt at one frozen runbook check and source |
-| `tellagen_list_trace_steps` | List the steps already posted, to avoid repeating work when you resume |
-| `tellagen_get_investigation_coverage` | Check which frozen checks and evidence are still missing before you complete |
-| `tellagen_list_investigation_runbook_waivers` | List the checks a responder waived |
+The model can also turn a set on in a running session with `tellagen_enable_toolset`; the server then tells the client that the tool list changed. Tools are always listed in the same order, and every tool carries the MCP annotations `readOnlyHint`, `destructiveHint` and `idempotentHint`. In the tables below, "reads" changes nothing, "adds" creates a record or moves a run forward, and "changes" overwrites fields of a record or ends a run.
 
-### Findings and causes
+### `diagnosis`
 
-| Tool | Purpose |
-|------|---------|
-| `tellagen_post_finding` | Post one finding with its evidence refs, screenshots and links |
-| `tellagen_list_findings` | List the findings of an incident or run |
-| `tellagen_get_finding` | Read one finding with all its evidence refs |
-| `tellagen_update_finding` | Dismiss a finding or restore it to draft |
-| `tellagen_promote_finding` | Promote a finding to the incident timeline |
-| `tellagen_update_cause` | Post or update a cause under test while the run is live |
+Run a diagnosis from pickup to completion. On by default.
 
-### Evidence helpers
+| Tool | Effect | Purpose |
+|------|--------|---------|
+| `tellagen_next_investigation` | reads | Find the run that waits for a client, so nobody pastes a run ID |
+| `tellagen_pick_up_investigation` | adds | Attach this session to a run, report the client, the model and the data sources it can reach, and get the context bundle |
+| `tellagen_resume` | adds | Continue the run this computer was working on, after a restart of the client |
+| `tellagen_get_incident_context` | reads | Re-read the context bundle of a run you already picked up |
+| `tellagen_post_trace_step` | adds | Post or update a readable progress step, with the guidance basis |
+| `tellagen_post_runbook_check_attempt` | adds | Post an attempt at one frozen runbook check and source |
+| `tellagen_update_cause` | changes | Post or update a cause under test while the run is live |
+| `tellagen_post_finding` | adds | Post one finding with its evidence refs, screenshots and links |
+| `tellagen_update_finding` | changes | Dismiss a finding or restore it to draft |
+| `tellagen_build_figure` | reads | Turn numbers from a tool result into a figure that Tellagen draws, and check it against the limits |
+| `tellagen_build_source_link` | reads | Build the link or the copyable command for an evidence ref (Grafana, GitHub, Kubernetes) |
+| `tellagen_get_context_attachment` | reads | Read one screenshot that a responder attached to a run |
+| `tellagen_get_investigation_coverage` | reads | Check which frozen checks and evidence are still missing before you complete |
+| `tellagen_post_timeline_event` | adds | Add a timestamped fact to the timeline, optionally with figures |
+| `tellagen_complete_investigation` | changes | Complete or fail a run with the result summary (the cause chain, what was ruled out, coverage, unknowns and change refs) |
 
-| Tool | Purpose |
-|------|---------|
-| `tellagen_build_source_link` | Build the link or the copyable command for an evidence ref (Grafana, GitHub, Kubernetes) |
-| `tellagen_build_figure` | Turn numbers from a tool result into a figure that Tellagen draws, and check it against the limits |
-| `tellagen_get_context_attachment` | Read one screenshot that a responder attached to a run |
-| `tellagen_probe_datasource` | Check the local setup of a datasource before you query it |
+### `incidents`
 
-### Timeline
+Read and edit incidents, services and impact, search, start a run, and read the runs and findings of an incident. On by default.
 
-| Tool | Purpose |
-|------|---------|
-| `tellagen_get_incident_timeline` | Read the timeline of an incident |
-| `tellagen_get_timeline_event` | Read one timeline event |
-| `tellagen_post_timeline_event` | Add a timestamped fact to the timeline, optionally with figures |
-| `tellagen_update_timeline_event` | Change a timeline event |
-| `tellagen_add_timeline_comment` | Comment on a timeline event |
-| `tellagen_list_timeline_comments` | List the comments on a timeline event |
+| Tool | Effect | Purpose |
+|------|--------|---------|
+| `tellagen_list_incidents` | reads | Find an incident ID: list incidents, optionally by status |
+| `tellagen_get_incident` | reads | Read one incident (severity, status, services, timestamps, manager) |
+| `tellagen_get_incident_timeline` | reads | Read the timeline of an incident |
+| `tellagen_create_incident` | adds | Create an incident when the user asks for one |
+| `tellagen_update_incident` | changes | Change fields of an incident (title, status, severity, team, impact summary, links, timestamps) |
+| `tellagen_search` | reads | Search incidents, timeline events, issues and services when you do not know an ID |
+| `tellagen_list_services` | reads | List the services in the catalog |
+| `tellagen_get_service` | reads | Read one service |
+| `tellagen_get_impact_summary` | reads | Read the customer-impact summary of an incident |
+| `tellagen_list_affected_customers` | reads | List the customers an incident affected |
+| `tellagen_start_investigation` | adds | Start a run when no run ID was given; also starts a follow-up of an earlier run |
+| `tellagen_list_investigation_runs` | reads | List the runs of an incident |
+| `tellagen_get_investigation_workspace` | reads | Read all runs, findings, trace and review state of an incident |
+| `tellagen_list_findings` | reads | List the findings of an incident or run |
+| `tellagen_get_finding` | reads | Read one finding with all its evidence refs |
 
-### Postmortems
+### `timeline`
 
-| Tool | Purpose |
-|------|---------|
-| `tellagen_get_postmortem_revision_request` | Read the draft, evidence and requested changes of a revision request |
-| `tellagen_submit_postmortem_revision_proposal` | Store a proposed postmortem for human review |
-| `tellagen_get_postmortem_analysis_request` | Read the document and evidence of a standalone runbook analysis request |
-| `tellagen_submit_postmortem_runbook_candidates` | Submit zero to three runbook candidates for review |
-| `tellagen_post_postmortem` | Legacy import: create an immutable postmortem version |
-| `tellagen_update_postmortem` | Legacy import: create the next major postmortem version |
+Read and edit timeline events and comments, and promote a finding to the timeline.
 
-### Impact and services
+| Tool | Effect | Purpose |
+|------|--------|---------|
+| `tellagen_get_timeline_event` | reads | Read one timeline event |
+| `tellagen_update_timeline_event` | changes | Change a timeline event |
+| `tellagen_list_timeline_comments` | reads | List the comments on a timeline event |
+| `tellagen_add_timeline_comment` | adds | Comment on a timeline event |
+| `tellagen_promote_finding` | adds | Promote a finding to the incident timeline |
 
-| Tool | Purpose |
-|------|---------|
-| `tellagen_get_impact_summary` | Read the customer-impact summary of an incident |
-| `tellagen_list_affected_customers` | List the customers an incident affected |
-| `tellagen_list_services` | List the services in the catalog |
-| `tellagen_get_service` | Read one service |
+### `postmortem`
 
-### Diagnostics
+Postmortem revision proposals, legacy imports and runbook candidates.
 
-| Tool | Purpose |
-|------|---------|
-| `tellagen_get_diagnostic_session` | Read an MCP diagnostic session (a `diag_*` ID) |
-| `tellagen_report_diagnostic_tools` | Report which MCP tools are visible and usable |
+| Tool | Effect | Purpose |
+|------|--------|---------|
+| `tellagen_get_postmortem_revision_request` | reads | Read the draft, evidence and requested changes of a revision request |
+| `tellagen_submit_postmortem_revision_proposal` | adds | Store a proposed postmortem for human review |
+| `tellagen_post_postmortem` | adds | Legacy import: create an immutable postmortem version |
+| `tellagen_update_postmortem` | adds | Legacy import: create the next major postmortem version |
+| `tellagen_get_postmortem_analysis_request` | reads | Read the document and evidence of a standalone runbook analysis request |
+| `tellagen_submit_postmortem_runbook_candidates` | adds | Submit zero to three runbook candidates for review |
+
+### `settings`
+
+Setup checks and run inspection.
+
+| Tool | Effect | Purpose |
+|------|--------|---------|
+| `tellagen_probe_datasource` | reads | Check the local setup of a datasource before you query it |
+| `tellagen_get_diagnostic_session` | reads | Read an MCP diagnostic session (a `diag_*` ID) |
+| `tellagen_report_diagnostic_tools` | adds | Report which MCP tools are visible and usable |
+| `tellagen_list_trace_steps` | reads | List the steps already posted, to avoid repeating work when you resume |
+| `tellagen_list_runbooks` | reads | List the runbooks that matched a run |
+| `tellagen_list_investigation_runbook_waivers` | reads | List the checks a responder waived |
+| `tellagen_update_investigation_scope` | changes | Change the target services, aliases and time range of the investigation |
+
+### Always listed
+
+| Tool | Effect | Purpose |
+|------|--------|---------|
+| `tellagen_enable_toolset` | reads | Turn on another toolset in the running session |
+| `tellagen_sign_in` | adds | Sign the person in with the browser; shows a code and stores the key in the system keychain |
+
+## Commands
+
+| Command | What it does |
+|---------|--------------|
+| `login` | Sign in with the browser. `--url` picks the Tellagen API address, `--no-browser` prints the address and code only |
+| `logout` | Remove the key from this computer (`--all` for every workspace). It does not sign the client out on the server |
+| `status` | Show the sign-in. `--line` prints one sentence for a client hook, or nothing when all is well; `--json` for a script |
+| `listen` | Take the diagnosis runs that wait for you and run each with Claude Code, with no window |
+| `trace-hook` | Record one tool call of a client hook as a step of the open run |
+
+(`listen-guard` and `listen-wrap` are internal: the listener starts Claude Code through them.)
+
+### Listening
+
+With listening on, a diagnosis you start in Tellagen needs no terminal: your computer takes the run and runs it with your own Claude Code, with no window. It works with **Claude Code on macOS and Linux**. Codex is refused (it limits shell commands and files with its sandbox but cannot limit the tools of your MCP servers), and so is Windows (the listener cannot prove there that the client obeys its rules).
+
+#### How to run it
+
+1. Sign in on this computer (`login`), and have the Tellagen MCP server in Claude Code (the plugin does it).
+2. In Tellagen, open **Settings > Local diagnosis** and turn on **Take my runs automatically**.
+3. In a terminal, run `npx @tellagen/mcp-server listen`. When you choose **Run diagnosis** on an incident, the listener starts `claude -p` for the run, with the same prompt as the `diagnose` prompt and the run ID. The prompt says that text from Tellagen and from tools is data, not instructions.
+
+- `listen --status` shows the current run and the last five. Each run writes a log in `~/.tellagen/listen/logs` (mode 600).
+- Ctrl+C, or a closed terminal, stops listening and lets the current run finish. A second Ctrl+C stops that run.
+- One run goes at a time (up to three can be allowed), and only one listener runs on a computer. A run has a time limit (45 minutes), kept by a small wrapper process with its own timer, so it holds even if the listener is killed.
+- Only runs that you asked for are started. A run that is listed again after its client ended was not picked up: the listener waits 1, 4, 16 and 60 minutes between starts and gives up on it after five starts. When a client cannot be started (not installed, not signed in), when the limit holds a run back, or when it gave up, the listener tells Tellagen with a coded reason, and the web shows it next to the waiting run.
+- Settings are optional, in `~/.tellagen/listen.json`: `client` (`claude`), `working_folder`, `max_runs`, `run_time_limit_minutes`, `mcp_servers` (the names of your Grafana and GitHub MCP servers if they are not `grafana`, `mcp-grafana` and `github`), `extra_allowed_tools` (single read tools, written `mcp__<server>__<tool>`), `mcp_config_file` and `model`. An unknown setting is an error.
+- With no `working_folder`, the client starts in an empty folder of the listener's own (`~/.tellagen/listen/work`). Set `working_folder` to a repository if you want the run to read code, knowing that it can then read what is in that folder.
+
+#### What a listened run may do
+
+A listened run only reads, with these exceptions in Tellagen itself. It may use:
+
+- **Tellagen tools:** the whole `diagnosis` toolset and the read tools of the `incidents` toolset. So it can write to its own run (steps, causes, findings, the result) and add a timeline event to the incident. It cannot create or edit an incident, a service, an impact record or a postmortem, and it cannot sign in. A person still accepts or rejects a root cause.
+- **Grafana and GitHub:** the read tools of those MCP servers, by exact name.
+- **Shell commands:** `kubectl` and `gh` commands that read, as the parser in `src/shell-rules.ts` allows.
+
+The shell rule refuses by default at every level:
+
+1. Any shell syntax is refused: a quote, `$`, `;`, `|`, `&`, `<`, `>`, a bracket, a star, a tilde, a backslash, a tab or line break, and a leading `VAR=value`. There are no pipes and no text filters.
+2. The program is `kubectl` or `gh`, by name, with no path.
+3. The verb is from a fixed list. For `kubectl`: `get`, `describe`, `logs`, `top`, `events`, `rollout history`, `version` (with or without `--client`), `api-resources`, `api-versions` and `cluster-info` (with no word after it). For `gh`: `pr view|list|diff|checks|status`, `issue view|list|status`, `run view|list`, `workflow view|list`, `release view|list`, `repo view|list`, `search code|commits|issues|prs|repos`, and `auth status` with no flag.
+4. Each flag is from a fixed list for that verb, with a value that matches a pattern. A flag that is not listed is refused. Never listed: the server, identity and credentials (`-s`, `--server`, `--kubeconfig`, `--context`, `--cluster`, `--user`, `--token`, `--as`, `--as-group`, `--insecure-skip-tls-verify`, the certificate flags, `--hostname`), anything that writes a file or a folder, `--raw`, `-f`, `-k`, and every watch or follow that never ends (`-w`, `--watch`, `--follow`, `rollout status`, `gh pr checks --watch`).
+5. `kubectl get`, `describe`, `events --for` and `rollout history` may name only these kinds, in lower case, and EVERY resource argument is checked (`kubectl top` takes pods and nodes only): pods, deployments, replica sets, stateful sets, daemon sets, jobs, cron jobs, services, endpoints, ingresses, nodes, namespaces, events, horizontal pod autoscalers, pod disruption budgets, persistent volume claims and volumes, and network policies. `all`, config maps, secrets, service accounts, roles, bindings, certificate requests and custom resources are refused. A word that names a secret, token or credential is refused anywhere.
+6. In `gh`, the argument of `view`, `diff` and `checks` is a number, a branch or a tag, never an address. `gh api`, `gh secret`, `gh ssh-key`, `gh gpg-key` and `gh auth` beyond a plain `gh auth status` are refused.
+
+**How the client is held to it.** The listener starts Claude Code with `--permission-mode dontAsk`, never with a mode that skips permission prompts. A `PreToolUse` hook on the shell tool runs the same rule (`listen-guard`) before every shell call, and the client has no allow rule for the shell at all: the call runs only when the hook prints an explicit pass. A crash, a timeout or a missing hook means no pass, and the client refuses. The MCP tools it may use are listed by exact name, and a short deny list stays as an outer layer. The tests run one table of good and bad commands against the parser and against what the client is given, so the two cannot drift apart.
+
+**Checks at the start.** Before a client is started for the first time, and again when its version changes, the listener runs a canary. It puts a stand-in `kubectl` first on the client's PATH and asks the client to make two shell calls: one the rule passes and one it refuses (`kubectl get pods --server=https://canary.invalid`). It reads the guard's log and checks what the stand-in saw: the passed command must have run, and the refused one must not have. If the client did not call the guard, or ran what the guard refused, the listener will not start it. This costs one short model call. Run the listener from the installed package: the guard is part of the built server.
+
+Before it starts, and again before each run, the listener reads the allow rules in your own Claude Code settings (the user settings, `CLAUDE_CONFIG_DIR`, the settings of the working folder and of every folder above it, and the managed settings file). Your rules would be added to its own, and a shell rule of yours would let a shell call through without the hook, so it refuses to start a run when one goes beyond its list, names the rule, and says how to fix it. Set `working_folder` to a folder whose settings are clean, or narrow the rule; a rule in your user settings applies in every folder.
+
+### Recording steps from a hook
+
+`trace-hook` reads the event of a client hook on standard input and posts one trace step for the open run: the tool, the query or command (tokens and passwords masked), the time range when there is one, how long it took, the size of the result and its first 300 characters. It never sends the whole result. The model cannot see the id of a tool call, so the hook leaves the step id in the remembered-run file and the server names it in the next tool answer; the model adds its outcome with `tellagen_post_trace_step` and that `step_id`, or `recorded:latest` for the newest recorded step. It does nothing when no run is open, when the server does not list `recorded_steps_v1`, or when `TELLAGEN_RECORD_STEPS=0`; it stops after two seconds and always exits with 0, so it never holds a tool call. The Tellagen plugin for Claude Code installs the hooks and has the option to turn the recording off; its README ([tellagen-plugin](https://github.com/Tellagen/tellagen-plugin#hooks)) says what the hook sends.
 
 ## Auditable runbook guidance
 
-Every `tellagen_post_trace_step` call requires a stable `step_id` and a `guidance` basis. When a runbook guided the check, copy the exact frozen values from the pickup/context response: `request.skills[].id` → `runbook_id`, `request.skills[].version` → `version`, and optionally `request.skills[].sections[].id` → `section_id`.
+A `tellagen_post_trace_step` call needs a stable `step_id`. The `guidance` basis is optional: when you leave it out, Tellagen records your own judgment with the step title as the reason. When a runbook guided the check, copy the exact frozen values from the pickup/context response: `request.skills[].id` → `runbook_id`, `request.skills[].version` → `version`, and optionally `request.skills[].sections[].id` → `section_id`.
 
-The backend may advertise `request.attribution_policy: "optional_v1"` during compatibility rollout, but MCP server 0.3 still requires this basis for every legacy trace step. When pickup returns `request.protocol_version: "runbook_plan_v2"`, use `tellagen_post_runbook_check_attempt` for compiled checks and copy the exact frozen `runbook_id`, `runbook_version`, `check_id`, and matching `source_resolution_id`.
+When pickup returns `request.protocol_version: "runbook_plan_v2"`, use `tellagen_post_runbook_check_attempt` for compiled checks and copy the exact frozen `runbook_id`, `runbook_version`, `check_id`, and matching `source_resolution_id`.
 
 ```json
 {
@@ -240,11 +354,7 @@ The Tellagen MCP server is designed to work alongside vendor MCP servers for obs
   "mcpServers": {
     "tellagen": {
       "command": "npx",
-      "args": ["-y", "@tellagen/mcp-server"],
-      "env": {
-        "TELLAGEN_API_KEY": "tllg_...",
-        "TELLAGEN_API_URL": "https://yourcompany.api.tellagen.com"
-      }
+      "args": ["-y", "@tellagen/mcp-server@latest"]
     },
     "grafana": {
       "command": "uvx",
@@ -255,8 +365,8 @@ The Tellagen MCP server is designed to work alongside vendor MCP servers for obs
       }
     },
     "github": {
-      "command": "npx",
-      "args": ["@anthropic-ai/github-mcp-server"],
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "ghcr.io/github/github-mcp-server"],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..."
       }
@@ -265,9 +375,11 @@ The Tellagen MCP server is designed to work alongside vendor MCP servers for obs
 }
 ```
 
+The Tellagen entry needs no `env` after you sign in. The tokens in the Grafana and GitHub entries are those servers' own credentials: your client keeps them, and Tellagen never sees them. (`github` here is the official GitHub MCP server, run with Docker; use whichever server and way of running it you prefer.)
+
 The agent uses Tellagen tools to manage the investigation lifecycle and vendor tools to gather evidence:
 
-1. **Pick up** the Tellagen run if the UI command included `investigation_run_id`
+1. **Pick up** the Tellagen run that waits for the client (`tellagen_next_investigation`, then `tellagen_pick_up_investigation`)
 2. **Read** the returned context bundle, including runbooks and investigation scope
 3. **Probe** Grafana setup with `tellagen_probe_datasource` before querying evidence
 4. **Post trace steps** before and after meaningful checks, preserving the same exact guidance basis for each stable step ID
@@ -384,16 +496,66 @@ The pickup bundle may carry `attachments` (the run's screenshots and a `safety_n
 
 ## Authentication
 
-- API key is passed via `TELLAGEN_API_KEY` environment variable (never in args)
-- MCP startup performs no network request, so API or sandbox failures cannot
-  prevent Codex from discovering the tools. Each tool call reports its own
-  authentication or connectivity error.
-- All requests include `Authorization: Bearer tllg_...` header
-- The MCP server acts as the API key's creating user
+- The API key comes from `TELLAGEN_API_KEY`, or from the system keychain after a sign-in (see "Quick start"). It is never passed in args. It is never written to a log, an error, a tool result or the remembered-run file.
+- The MCP handshake performs no network request. Right after it, the server asks Tellagen once whether the key works; see "If something is not set up".
+- All requests include the `Authorization: Bearer tllg_...` header.
+- The MCP server acts as the API key's creating user.
+
+## What the server sends about the client
+
+Every request carries these headers, so Tellagen can show which client is connected:
+
+| Header | Value |
+|--------|-------|
+| `X-Tellagen-Client` | The client name from the MCP handshake, for example `claude-code` (Tellagen shows it as "Claude Code") |
+| `X-Tellagen-Client-Version` | The client version from the handshake |
+| `X-Tellagen-Server-Version` | The version of this MCP server |
+| `X-Tellagen-Computer` | The computer name |
+| `X-Tellagen-Client-Session` | A random ID of this server process |
+
+The pickup sends the same facts in its body, plus the model name when the model states it (`model`) and the data sources the client can reach (`available_sources`). An older Tellagen workspace that accepts only `codex` or `claude` as the client name fails on another name; the server then sends the pickup once more with the old short name. A workspace that names an unknown field gets the old pickup body. In both cases the answer says so in `mcp_notice`, and a real error is never replaced.
+
+## The remembered run
+
+At pickup the server writes the active run to `~/.tellagen/state/<workspace>.json`, with owner-only permissions (file `0600`, folder `0700`). The file holds the run ID, the incident ID, the pickup time, the server capabilities, the session ID and process ID, and the client name. It holds no key, no token and no evidence. `TELLAGEN_STATE_DIR` moves the folder.
+
+- The run ID is optional on the run tools. Left out, a tool uses the active run.
+- The file is removed when the run completes, fails, is cancelled or is taken over.
+- After a restart, the server instructions say that a run is open, and `tellagen_resume` continues it. If the run ended in the meantime, `tellagen_resume` says so and removes the file.
+- If another session on the same computer holds the run, the tool asks before this session joins.
+
+## Timeouts, retries and repeats
+
+- One attempt of a call to Tellagen may take 30 seconds (120 seconds for a finding with screenshots). A call with all its repeats ends after 60 seconds (150 seconds for a finding with screenshots).
+- On a network error, a timeout, and HTTP 429, 502, 503 and 504 the server repeats a call up to 3 times, with a growing delay, and waits as long as `Retry-After` says (30 seconds at most).
+- Only a call that is safe to repeat is repeated: a read, a cause (stored by its key), a trace step (stored by its `step_id`), a pickup, and a finding, which carries an `Idempotency-Key` header made from its content. A completion and other writes are sent once.
+- Base64 screenshots are measured before anything is sent: 20 for one finding, 10 MB each, 15 MB together.
+
+## Heartbeat, notes and the end of a run
+
+- While a run is active and Tellagen lists `client_heartbeat_v1`, the server sends a heartbeat every 30 seconds. A failed heartbeat never fails a tool call; after three in a row the next tool answer says so in one line.
+- If another client holds the run, the pickup answers with a question for the person. Only after a yes is the pickup repeated with `takeover: true`. A client that supports MCP elicitation shows the question itself.
+- When an answer from Tellagen carries notes from a responder (`responder_notes_v1`), they come first in the tool result, quoted, with the author and the time. A note is a request from a person in the workspace; it is shown to the model and is never run by this server.
+- When Tellagen says that the run was cancelled, has ended or was taken over, the tool result says so first, and the remembered run is removed.
+
+## Instructions and resources
+
+The server instructions are short (under 600 words): how to start, the order of a run, what the server does by itself and the rules that always hold. The detail is in resources that the model reads when it needs them. The pickup answer names the ones that apply to the run in `mcp_resources`.
+
+| Resource | Content |
+|----------|---------|
+| `resource://tellagen/guide/findings` | Finding fields, types, roles, evidence refs and screenshots |
+| `resource://tellagen/guide/completion` | The steps before completion, the result summary, the cause chain, change refs and warnings |
+| `resource://tellagen/guide/runbook-checks` | The guidance basis of a trace step and structured runbook checks |
+| `resource://tellagen/figure-guide` | Which figure fits which question, and the limits |
+| `resource://tellagen/guide/sources` | Working with Grafana, GitHub and other MCP servers |
+| `resource://tellagen/guide/postmortem` | Postmortem proposals, legacy imports and runbook candidates |
+| `resource://tellagen/guide/tool-check` | Answering a tool check session |
+| `resource://tellagen/skill-guide` | The whole guide |
 
 ## Scopes
 
-The API key needs both scopes:
+A key that you make by hand needs both scopes (the **Local Diagnosis** preset in the key dialog sets them; a key from the browser sign-in has them already):
 
 | Scope | Required for |
 |-------|-------------|
@@ -470,6 +632,19 @@ npx vitest run test/client.test.ts    # single file
 npx vitest                            # watch mode
 ```
 
+### Continuous integration and releases
+
+Every pull request and every push to `master` runs `.github/workflows/ci.yml`: install, typecheck, the tests, the build, and a smoke test that starts the built server with no key (`npm run smoke`).
+
+To release a version:
+
+0. Raise the pinned contract bundle if Tellagen published a new one: `npm run contracts:update -- <contracts folder of a Tellagen checkout>`, then `npm test` (the `contracts` job must be green).
+1. Set the version in `package.json`, `package-lock.json`, `server.json` and `src/version.ts` (a test keeps them equal).
+2. Add a `## <version> - <date>` section to `CHANGELOG.md` (a test requires a section for the current version).
+3. Merge, then push the tag `v<version>` on a commit of `master`. `.github/workflows/release.yml` refuses a tag that is not on `master`, that does not match the version, or whose changelog heading has no date. It runs the tests in a job with no publish rights. A second job publishes to npm with provenance and creates the GitHub release from the changelog section.
+
+The release needs npm trusted publishing for the repository, or an `NPM_TOKEN` repository secret.
+
 ### Type-checking
 
 ```bash
@@ -480,8 +655,15 @@ npm run lint    # tsc --noEmit
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `TELLAGEN_API_KEY` | Yes | API key (format: `tllg_...`) |
-| `TELLAGEN_API_URL` | Yes | API base URL (e.g., `https://yourcompany.api.tellagen.com`) |
-| `TELLAGEN_MCP_CLIENT` | No | Local host identity: `codex` or `claude` (defaults to `codex`) |
+| `TELLAGEN_API_KEY` | No | API key (format: `tllg_...`). Wins over a stored sign-in. With neither, the server starts and each tool explains the setup |
+| `TELLAGEN_API_URL` | No | API base URL (e.g., `https://yourcompany.api.tellagen.com`) |
+| `TELLAGEN_TOOLSETS` | No | Comma-separated toolsets to list: `diagnosis`, `incidents`, `timeline`, `postmortem`, `settings`, or `all`. Defaults to `diagnosis,incidents`. The `--toolsets` argument wins |
+| `TELLAGEN_HOME` | No | Folder for the sign-in index, the key file where there is no keychain, and the listener settings and logs. Defaults to `~/.tellagen` |
+| `TELLAGEN_SIGN_IN_URL` | No | The Tellagen API address that starts a sign-in. Defaults to the address in `TELLAGEN_API_URL`, else `https://api.tellagen.com` |
+| `TELLAGEN_CREDENTIAL_STORE` | No | `file` stores a sign-in key in the owner-only key file and never in the system keychain (for a test or a CI job) |
+| `TELLAGEN_STRICT_FIELDS` | No | `0` stops the server from asking Tellagen to refuse unknown request fields |
+| `TELLAGEN_RECORD_STEPS` | No | `0` turns `trace-hook` off |
+| `TELLAGEN_STATE_DIR` | No | Folder of the remembered-run file. Defaults to `~/.tellagen/state` |
+| `TELLAGEN_MCP_CLIENT` | No | Deprecated. `codex` or `claude`; used only when the client sends no name in the handshake, and for an older Tellagen workspace |
 | `TELLAGEN_MCP_PROFILE_ID` | No | Stable opaque profile ID used to scope local MCP access observations |
 | `GRAFANA_URL` | No | Grafana address; used by `tellagen_probe_datasource` and by `tellagen_build_source_link` (wins over the Tellagen datasource `base_url`) |

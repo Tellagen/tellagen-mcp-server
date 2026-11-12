@@ -49,6 +49,7 @@ function createToolHarness() {
   registerAllTools(server, client);
 
   return {
+    client,
     getTool(name: string) {
       const tool = tools.get(name);
       if (!tool) throw new Error(`tool not registered: ${name}`);
@@ -687,11 +688,14 @@ describe("Tool integration via client", () => {
       });
 
       const request = fetchSpy.mock.calls[0][1] as RequestInit;
+      // No handshake in this harness: the deprecated setting names the client.
       expect(JSON.parse(String(request.body))).toEqual({
         client: {
           name: "claude",
           mcp_server_version: MCP_SERVER_VERSION,
+          ...(harness.client.session.computer ? { computer: harness.client.session.computer } : {}),
           profile_id: "work-cluster",
+          session_id: harness.client.session.sessionId,
         },
         protocol_capabilities: [
           "runbook_plan_v2",
@@ -702,6 +706,10 @@ describe("Tool integration via client", () => {
           "diagnosis_structure_v1",
           "diagnosis_changes_v1",
           "run_images_v1",
+          "guidance_default_v1",
+          "strict_fields_v1",
+          "cause_lead_v1",
+          "responder_notes_v1",
         ],
       });
     });
@@ -1285,12 +1293,13 @@ describe("Tool integration via client", () => {
         guidance: validGuidance[0],
       };
       expect(() => traceInputSchema.parse(minimumTraceInput)).not.toThrow();
+      // The basis is optional: Tellagen records the model's own judgment by default.
       expect(() =>
         traceInputSchema.parse({
           ...minimumTraceInput,
           guidance: undefined,
         }),
-      ).toThrow();
+      ).not.toThrow();
       expect(() =>
         traceInputSchema.parse({
           ...minimumTraceInput,
@@ -1305,7 +1314,6 @@ describe("Tool integration via client", () => {
       ).toThrow();
 
       const invalidGuidance = [
-        undefined,
         { origin: "runbook", refs: [] },
         {
           origin: "runbook",
@@ -2861,15 +2869,12 @@ describe("Tool registration", () => {
       const traceTool = tools.tools.find(
         (tool) => tool.name === "tellagen_post_trace_step",
       );
+      // The run id is optional: the session remembers the run it picked up.
+      expect(traceTool?.inputSchema.required).not.toContain("investigation_run_id");
       expect(traceTool?.inputSchema.required).toEqual(
-        expect.arrayContaining([
-          "investigation_run_id",
-          "step_id",
-          "status",
-          "title",
-          "guidance",
-        ]),
+        expect.arrayContaining(["step_id", "status", "title"]),
       );
+      expect(traceTool?.inputSchema.required).not.toContain("guidance");
       expect(traceTool?.inputSchema.properties).toHaveProperty("guidance");
 
       const postmortemUpdateTool = tools.tools.find(
@@ -2904,6 +2909,8 @@ describe("Tool registration", () => {
           step_id: "health-1",
           status: "running",
           title: "Check service health",
+          // The basis may be left out, but a wrong one is refused before any request.
+          guidance: { origin: "legacy_unattributed", refs: [] },
         },
       });
       expect(invalid.isError).toBe(true);

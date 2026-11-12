@@ -6,7 +6,7 @@
     "url": "https://github.com/Tellagen/tellagen-mcp-server",
     "source": "github"
   },
-  "version": "0.4.3",
+  "version": "0.5.0",
   "packages": [
     {
       "registryType": "npm",
@@ -30,11 +30,11 @@
           "name": "TELLAGEN_API_URL"
         },
         {
-          "description": "MCP host identity used to scope local source observations. Supported values: codex or claude. Defaults to codex.",
+          "description": "Toolsets to list, comma-separated: diagnosis, incidents, timeline, postmortem, settings, or all. Defaults to diagnosis,incidents.",
           "isRequired": false,
           "format": "string",
           "isSecret": false,
-          "name": "TELLAGEN_MCP_CLIENT"
+          "name": "TELLAGEN_TOOLSETS"
         },
         {
           "description": "Optional opaque local profile identifier used to scope diagnostic observations across MCP client profiles.",

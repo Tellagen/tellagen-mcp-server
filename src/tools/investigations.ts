@@ -1,9 +1,19 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { TellagenClient } from "../client.js";
-import { formatError } from "../errors.js";
+import { formatError, TellagenAPIError } from "../errors.js";
 import {
-  INVESTIGATION_PROTOCOL_CAPABILITIES,
+  joinFact,
+  optionalRunIdSchema,
+  otherLiveSession,
+  resolveRunId,
+} from "../active-run.js";
+import { withCauseLead } from "../cause-lead.js";
+import { legacyClientName, reportedClientName } from "../identity.js";
+import { GUIDE_RESOURCES } from "../guide-resources.js";
+import {
+  protocolCapabilities,
+  CAPABILITIES_HEADER,
   MCP_SERVER_VERSION,
 } from "../version.js";
 import {
@@ -22,6 +32,10 @@ import {
   summarizeWarnings,
   supportsDiagnosisChanges,
   supportsDiagnosisStructure,
+  RECORDED_STEPS_CAPABILITY,
+  knownCapability,
+  supportsCompletionRepairs,
+  COMPLETION_REPAIRS_CAPABILITY,
   supportsDiffLines,
   supportsFigureExtras,
   FIGURE_EXTRAS_CAPABILITY,
@@ -322,22 +336,12 @@ function withCompletionChecklist(data: unknown): unknown {
   if (typeof data !== "object" || data === null || Array.isArray(data)) return data;
   const capabilities = (data as { server_capabilities?: unknown }).server_capabilities;
   if (!Array.isArray(capabilities) || !capabilities.includes("diagnosis_structure_v1")) return data;
+  // A Tellagen that answers a dry run lists the faults itself, when the model completes.
+  if (capabilities.includes(COMPLETION_REPAIRS_CAPABILITY)) return data;
   return {
     ...(data as Record<string, unknown>),
     mcp_before_complete: BEFORE_COMPLETE_CHECKLIST,
   };
-}
-
-function pickupClientName() {
-  const value = (process.env.TELLAGEN_MCP_CLIENT || "codex")
-    .trim()
-    .toLowerCase();
-  if (value !== "codex" && value !== "claude") {
-    throw new Error(
-      "TELLAGEN_MCP_CLIENT must be either codex or claude",
-    );
-  }
-  return value;
 }
 
 function pickupProfileID() {
@@ -349,6 +353,265 @@ function pickupProfileID() {
     );
   }
   return value;
+}
+
+/** The data source kinds a client can say it has, by Tellagen catalog key. */
+export const AVAILABLE_SOURCE_KEYS = ["grafana", "kubernetes", "github", "docs", "local_host"] as const;
+
+const availableSourceSchema = z
+  .object({
+    key: z.enum(AVAILABLE_SOURCE_KEYS).describe("Tellagen catalog key of the source"),
+    state: z.enum(["found", "not_found"]).describe("Whether this client can reach the source"),
+    detail: z
+      .string()
+      .trim()
+      .max(200)
+      .optional()
+      .describe("A short fact such as the Grafana host. Never a token, a password or a path with a user name."),
+  })
+  .strict();
+
+export type AvailableSource = z.infer<typeof availableSourceSchema>;
+
+export interface PickupOptions {
+  /** The model's own name, as the model reported it. */
+  model?: string;
+  /** The person agreed to take the run over from another client. */
+  takeover?: boolean;
+  availableSources?: AvailableSource[];
+}
+
+function incidentIdOf(data: unknown): number | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  const record = data as { incident?: { id?: unknown }; run?: { incident_id?: unknown } };
+  const id = record.incident?.id ?? record.run?.incident_id;
+  return typeof id === "number" && Number.isInteger(id) && id > 0 ? id : undefined;
+}
+
+function capabilitiesOf(data: unknown): string[] {
+  const list = (data as { server_capabilities?: unknown } | null)?.server_capabilities;
+  return Array.isArray(list) ? list.filter((item): item is string => typeof item === "string") : [];
+}
+
+/**
+ * Attaches this process to a run and remembers it as the active run.
+ *
+ * The client name and version come from the MCP handshake. A Tellagen that
+ * does not know the newer pickup fields answers 400; the pickup is then sent
+ * once more in the old shape, with the name mapped to codex or claude.
+ * Pickup is safe to repeat, so both forms may be retried.
+ */
+export async function pickUpRun(
+  client: TellagenClient,
+  runId: string,
+  options: PickupOptions = {},
+): Promise<unknown> {
+  const session = client.session;
+  const profileID = pickupProfileID();
+  const identity = session.identity;
+  const path = `/api/v1/investigations/${encodeURIComponent(runId)}/pickup`;
+  const capabilities = protocolCapabilities();
+  const body: Record<string, unknown> = {
+    client: {
+      name: reportedClientName(identity),
+      ...(identity?.version ? { version: identity.version } : {}),
+      mcp_server_version: MCP_SERVER_VERSION,
+      ...(session.computer ? { computer: session.computer } : {}),
+      ...(profileID ? { profile_id: profileID } : {}),
+      session_id: session.sessionId,
+    },
+    protocol_capabilities: capabilities,
+  };
+  if (options.model) body.model = options.model;
+  if (options.availableSources && options.availableSources.length > 0) {
+    body.available_sources = options.availableSources;
+  }
+  if (options.takeover) body.takeover = true;
+
+  let data: unknown;
+  let notice: string | undefined;
+  try {
+    data = await client.post(path, body, { safeToRepeat: true });
+  } catch (err) {
+    if (!(err instanceof TellagenAPIError)) throw err;
+    const sentName = reportedClientName(identity);
+    const legacyName = legacyClientName(identity);
+    const withLegacyName = { ...body, client: { ...(body.client as Record<string, unknown>), name: legacyName } };
+    // Each fallback is sent one time. If it fails too, the first error is
+    // the one the model sees, so a real error is never hidden.
+    const fallback = async (send: () => Promise<unknown>, text: string) => {
+      try {
+        data = await send();
+        notice = text;
+      } catch {
+        throw err;
+      }
+    };
+    if (err.code === "pickup_client_context_mismatch" && legacyName !== sentName) {
+      // An earlier pickup froze the run for the old short name. Keep that
+      // name so the run can go on.
+      await fallback(
+        () => client.post(path, withLegacyName, { safeToRepeat: true }),
+        `An earlier pickup stored this run for the client name ${legacyName}, so that name was sent instead of ${sentName}.`,
+      );
+    } else if (err.status >= 500 && ![502, 503, 504].includes(err.status) && legacyName !== sentName) {
+      // A Tellagen that knows only codex and claude fails on another client
+      // name with a server error. Send the same pickup with the old name.
+      await fallback(
+        () => client.post(path, withLegacyName, { safeToRepeat: true }),
+        `The first pickup, with the client name ${sentName}, failed with a server error. It was sent again with the name ${legacyName}, which an older Tellagen accepts, so the run may show ${legacyName} as its client. Update Tellagen to record the real client.`,
+      );
+    } else if (err.status === 400 && err.code === "unknown_field") {
+      // A Tellagen that refuses the newer pickup fields: send the old shape.
+      const dropped = [
+        "client.version",
+        "client.computer",
+        "client.session_id",
+        ...(options.model ? ["model"] : []),
+        ...(body.available_sources ? ["available_sources"] : []),
+        ...(options.takeover ? ["takeover"] : []),
+      ];
+      await fallback(
+        () =>
+          client.post(
+            path,
+            {
+              client: {
+                name: legacyName,
+                mcp_server_version: MCP_SERVER_VERSION,
+                ...(profileID ? { profile_id: profileID } : {}),
+              },
+              protocol_capabilities: capabilities,
+            },
+            { safeToRepeat: true },
+          ),
+        `This Tellagen does not accept the newer pickup fields, so these were not sent: ${dropped.join(", ")}. The client name was sent as ${legacyName}. Update Tellagen to record them.`,
+      );
+    } else {
+      throw err;
+    }
+  }
+  rememberServerCapabilities(client, runId, data);
+  noteUpdateAvailable(client, data);
+  session.setActiveRun({
+    runId,
+    incidentId: incidentIdOf(data),
+    pickedUpAt: new Date().toISOString(),
+    serverCapabilities: capabilitiesOf(data),
+  });
+  return withNotice(data, notice);
+}
+
+/** Remembers that Tellagen wants a newer server, so `status` and the session start can say so. */
+function noteUpdateAvailable(client: TellagenClient, data: unknown): void {
+  if (typeof data !== "object" || data === null) return;
+  const update = (data as { client_update_available?: unknown }).client_update_available;
+  if (typeof update !== "object" || update === null) return;
+  const { your_version, current_version } = update as Record<string, unknown>;
+  if (typeof your_version === "string" && typeof current_version === "string") {
+    client.session.updateSeen?.({ your_version: your_version.slice(0, 40), current_version: current_version.slice(0, 40) });
+  }
+}
+
+/** Names the guide resources that apply to the run in a pickup answer. */
+export function withRunGuides(input: unknown): unknown {
+  // A lead from a past incident is cleaned and marked as untrusted data first.
+  const data = withCauseLead(input);
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return data;
+  const skills = (data as { request?: { skills?: unknown } }).request?.skills;
+  const hasRunbooks = Array.isArray(skills) && skills.length > 0;
+  const resources = GUIDE_RESOURCES.filter((guide) => guide.when !== "runbooks" || hasRunbooks).map(
+    (guide) => ({ uri: guide.uri, read_when: guide.readWhen }),
+  );
+  return {
+    ...(data as Record<string, unknown>),
+    mcp_active_run:
+      "This run is now the active run of this session. Later calls may leave investigation_run_id out.",
+    mcp_resources: resources,
+  };
+}
+
+/** Who holds the run, from the details of a run_has_active_client answer. */
+function holderLine(payload: Record<string, unknown> | undefined): string {
+  const details =
+    payload && typeof payload.details === "object" && payload.details !== null
+      ? (payload.details as Record<string, unknown>)
+      : {};
+  const part = (value: unknown, max: number) =>
+    typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max) : "";
+  const holder = part(details.holder_name, 120) || "Another person";
+  const client = part(details.client_name, 80);
+  const computer = part(details.computer_name, 120);
+  const last = part(details.last_contact_at, 40);
+  return `${holder} runs this diagnosis${client ? ` in ${client}` : " in another client"}${computer ? ` on ${computer}` : ""}${last ? `, last contact at ${last}` : ""}.`;
+}
+
+const takeoverSchema = z
+  .boolean()
+  .optional()
+  .describe(
+    "Set true only after the person agreed that this session takes the run over from another client. Never set it on your own.",
+  );
+
+function questionResult(code: string, message: string, extra: Record<string, unknown> = {}) {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({ ...extra, error: true, code, message, next_input: { takeover: true } }),
+      },
+    ],
+    isError: true as const,
+  };
+}
+
+/**
+ * Pickup with the two questions a person must answer: a second session on
+ * this computer, and a run another client holds in Tellagen. The person is
+ * asked through the client when it can show a question; otherwise the model
+ * gets the question as the tool answer.
+ */
+export async function pickUpWithConsent(
+  client: TellagenClient,
+  runId: string,
+  options: PickupOptions,
+): Promise<{ data: unknown } | { question: ReturnType<typeof questionResult> }> {
+  const session = client.session;
+  let takeover = options.takeover === true;
+  const other = otherLiveSession(client, session.state.read());
+  if (other && other.run_id === runId && !takeover) {
+    const fact = joinFact(other);
+    const answer = await session.ask?.(`${fact} Should this session join the run?`);
+    if (answer !== true) {
+      return {
+        question: questionResult(
+          "run_open_in_other_session",
+          answer === false
+            ? "The person said no. Do not pick this run up in this session."
+            : `${fact} Ask the person whether this session should join the run. If they say yes, call the tool again with takeover set to true.`,
+        ),
+      };
+    }
+    takeover = true;
+  }
+  try {
+    return { data: await pickUpRun(client, runId, { ...options, takeover }) };
+  } catch (err) {
+    if (!(err instanceof TellagenAPIError) || err.code !== "run_has_active_client" || takeover) throw err;
+    const fact = `${holderLine(err.payload)} Two clients on one run write over each other.`;
+    const question = `${fact} Ask the person whether this session should take the run over. If they say yes, call the tool again with takeover set to true.`;
+    const answer = await session.ask?.(`${fact} Should this session take the run over?`);
+    if (answer === true) {
+      return { data: await pickUpRun(client, runId, { ...options, takeover: true }) };
+    }
+    return {
+      question: questionResult(
+        "run_has_active_client",
+        answer === false ? "The person said no. Do not pick this run up in this session." : question,
+        err.payload ?? {},
+      ),
+    };
+  }
 }
 
 const investigationScopeSchema = z
@@ -457,7 +720,7 @@ const investigationGuidanceSchema = z
       .strict(),
   ])
   .describe(
-    "Required, immutable basis for this trace step. Cite only frozen request.skills references; otherwise declare the honest non-runbook origin. Never submit legacy_unattributed.",
+    "Optional, immutable basis for this trace step. Leave it out for an ordinary check: Tellagen records your own judgment, with the step title as the reason. Give it when a frozen runbook or a responder guided the check: cite only frozen request.skills references or declare responder_request. Never submit legacy_unattributed.",
   );
 
 function isDiagnosticSessionID(id: string): boolean {
@@ -566,9 +829,12 @@ export function registerInvestigationTools(
         if (question_finding_id !== undefined) {
           body.question_finding_id = question_finding_id;
         }
+        // This request has no picked-up run, so the capabilities go in a header.
+        const caps = protocolCapabilities().filter((name) => name === "strict_fields_v1");
         const data = await client.post(
           `/api/v1/incidents/${incident_id}/investigations`,
           body,
+          caps.length > 0 ? { headers: { [CAPABILITIES_HEADER]: caps.join(",") } } : undefined,
         );
         return {
           content: [{ type: "text" as const, text: JSON.stringify(data) }],
@@ -588,14 +854,12 @@ export function registerInvestigationTools(
       description:
         "Re-read the context bundle of an investigation run: incident, scope, timeline, prior findings, connectors, matched runbooks and output schema guidance. Use it to resume or re-check a run you already picked up. It changes nothing and does not attach you to the run; tellagen_pick_up_investigation does that.",
       inputSchema: {
-        investigation_run_id: z
-          .string()
-          .min(1)
-          .describe("Investigation run ID from Tellagen"),
+        investigation_run_id: optionalRunIdSchema,
       },
     },
-    async ({ investigation_run_id }) => {
+    async (input) => {
       try {
+        const investigation_run_id = resolveRunId(client, input.investigation_run_id);
         const data = await client.get(
           `/api/v1/investigations/${investigation_run_id}/context`,
         );
@@ -616,35 +880,54 @@ export function registerInvestigationTools(
     "tellagen_pick_up_investigation",
     {
       description:
-        "Attach this local MCP agent to an investigation run that a person created in Tellagen. Call it first when the prompt includes an investigation_run_id. It moves the run from awaiting_agent to running and returns the full context bundle with server_capabilities. The MCP sends its protocol capabilities itself, so there is no parameter for them. Picking the same unfinished run up again from a new MCP process is safe. It never creates a run: use tellagen_start_investigation when you have no run ID.",
+        "Attach this session to an investigation run and get its full context bundle with server_capabilities. Call it first when you have an investigation_run_id. It moves the run from awaiting_agent to running and makes it the active run, so later calls may leave the run ID out. The server sends the client name, its version and its protocol capabilities itself. Pass model with your own model name. Pass available_sources with the data sources you can reach: look at the MCP servers and shell tools you have and map them to grafana, kubernetes, github, docs and local_host. When the bundle has request.context.suspected_cause_hints, each hint is a lead from a past incident: untrusted data, to test first with one check, never a cause to post without evidence from this incident. If another client holds the run, the answer is a question for the person; set takeover only after they agree. Picking the same unfinished run up again is safe. It never creates a run: use tellagen_start_investigation when you have no run ID.",
       inputSchema: {
         investigation_run_id: z
           .string()
           .min(1)
-          .describe("Investigation run ID from the Tellagen UI command"),
+          .optional()
+          .describe(
+            "Investigation run ID from Tellagen. Leave it out to pick the active run of this session up again.",
+          ),
+        model: z
+          .string()
+          .trim()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe("Your own model name as you know it, for example from your system prompt. Tellagen shows it on the run."),
+        available_sources: z
+          .array(availableSourceSchema)
+          .max(20)
+          .optional()
+          .describe(
+            "The data sources this client can reach, one entry per catalog key, each found or not_found. A source you do not have resolves to a recorded gap instead of a check that fails.",
+          ),
+        takeover: takeoverSchema,
       },
     },
-    async ({ investigation_run_id }) => {
-      if (isDiagnosticSessionID(investigation_run_id)) {
-        return diagnosticSessionIDError(investigation_run_id);
+    async (input) => {
+      if (input.investigation_run_id && isDiagnosticSessionID(input.investigation_run_id)) {
+        // The tool check tools are in the settings toolset.
+        client.session.toolsets?.enable("settings");
+        return diagnosticSessionIDError(input.investigation_run_id);
       }
       try {
-        const profileID = pickupProfileID();
-        const data = await client.post(
-          `/api/v1/investigations/${investigation_run_id}/pickup`,
-          {
-            client: {
-              name: pickupClientName(),
-              mcp_server_version: MCP_SERVER_VERSION,
-              ...(profileID ? { profile_id: profileID } : {}),
-            },
-            protocol_capabilities: [...INVESTIGATION_PROTOCOL_CAPABILITIES],
-          },
-        );
-        rememberServerCapabilities(client, investigation_run_id, data);
+        const runId = resolveRunId(client, input.investigation_run_id);
+        const outcome = await pickUpWithConsent(client, runId, {
+          model: input.model,
+          takeover: input.takeover,
+          availableSources: input.available_sources,
+        });
+        if ("question" in outcome) return outcome.question;
         return {
           content: [
-            { type: "text" as const, text: JSON.stringify(withCompletionChecklist(withAttachmentHint(data))) },
+            {
+              type: "text" as const,
+              text: JSON.stringify(
+                withRunGuides(withCompletionChecklist(withAttachmentHint(outcome.data))),
+              ),
+            },
           ],
         };
       } catch (err) {
@@ -662,7 +945,7 @@ export function registerInvestigationTools(
       description:
         "Post or update one execution attempt for a frozen structured v2 runbook check. Copy runbook_id, runbook_version, check_id, and the source resolution selected by the frozen fallback policy. Reuse step_id and attempt_number while moving a usable source from running to done/error. For a frozen blocked record_gap source, post one direct terminal skipped attempt with a linked gap finding instead. Tellagen owns the final logical outcome.",
       inputSchema: {
-        investigation_run_id: z.string().min(1),
+        investigation_run_id: optionalRunIdSchema,
         runbook_id: z.number().int().positive(),
         runbook_version: z.number().int().positive(),
         check_id: z.string().min(1),
@@ -707,8 +990,9 @@ export function registerInvestigationTools(
       },
     },
     async (input) => {
-      const { investigation_run_id, ...fields } = input;
+      const { investigation_run_id: givenRunId, ...fields } = input;
       try {
+        const investigation_run_id = resolveRunId(client, givenRunId);
         validateTraceReuseHintInput(input);
         const data = await client.post<{ trace?: { reuse_hint?: unknown } }>(
           `/api/v1/investigation-runs/${investigation_run_id}/check-attempts`,
@@ -737,17 +1021,14 @@ export function registerInvestigationTools(
       description:
         "Post or update a readable investigation trace step for the active run. Every step requires an immutable guidance basis: exact frozen runbook ID/version/section references, or an honest non-runbook origin. Reuse the same guidance when updating a step from running to done/error.",
       inputSchema: {
-        investigation_run_id: z
-          .string()
-          .min(1)
-          .describe("Active investigation run ID"),
+        investigation_run_id: optionalRunIdSchema,
         step_id: z
           .string()
           .refine((value) => value.trim().length > 0, {
             message: "step_id must not be blank",
           })
           .describe(
-            "Stable ID chosen before the check and reused for running → done/error updates",
+            'Stable ID chosen before the check and reused for running → done/error updates. To add your outcome to a step that a hook of the client recorded, use the step ID the server names in a tool answer, or "recorded:latest" for the newest recorded step',
           ),
         step_index: z
           .number()
@@ -780,7 +1061,7 @@ export function registerInvestigationTools(
         reuse_hint: traceReuseHintSchema.optional(),
         result_bytes: z.number().int().min(0).optional(),
         truncated: z.boolean().optional(),
-        guidance: investigationGuidanceSchema,
+        guidance: investigationGuidanceSchema.optional(),
         ...traceStructureShape,
         error: z.string().optional(),
         started_at: z
@@ -797,8 +1078,8 @@ export function registerInvestigationTools(
       },
     },
     async ({
-      investigation_run_id,
-      step_id,
+      investigation_run_id: givenRunId,
+      step_id: givenStepId,
       step_index,
       status,
       tool_name,
@@ -821,6 +1102,17 @@ export function registerInvestigationTools(
       duration_ms,
     }) => {
       try {
+        const investigation_run_id = resolveRunId(client, givenRunId);
+        let step_id = givenStepId;
+        if (step_id.trim() === "recorded:latest") {
+          const recorded = client.session.state.recordedSteps(investigation_run_id).at(-1);
+          if (!recorded) {
+            throw new Error(
+              "No step was recorded by a hook for this run. Post the step yourself with a step_id of your own.",
+            );
+          }
+          step_id = recorded.step_id;
+        }
         validateTraceReuseHintInput({
           status,
           result_summary,
@@ -834,8 +1126,13 @@ export function registerInvestigationTools(
           step_index: step_index ?? 0,
           status,
           title,
-          guidance,
         };
+        if (guidance !== undefined) {
+          body.guidance = guidance;
+        } else if (!knownCapability(client, investigation_run_id, RECORDED_STEPS_CAPABILITY)) {
+          // An older Tellagen has no default basis: send the one it would store.
+          body.guidance = { origin: "agent_judgment", refs: [], reason: title.trim().slice(0, 500) };
+        }
         if (tool_name !== undefined) body.tool_name = tool_name;
         if (tool_use_id !== undefined) body.tool_use_id = tool_use_id;
         if (result_summary !== undefined) body.result_summary = result_summary;
@@ -869,8 +1166,11 @@ export function registerInvestigationTools(
         }>(
           `/api/v1/investigation-runs/${investigation_run_id}/trace`,
           sendBody,
+          // A trace step is stored by its step_id, so a repeat updates it.
+          { safeToRepeat: true },
         );
         requireReuseHintEcho(reuse_hint, data.steps?.[0]?.reuse_hint);
+        client.session.state.removeRecordedStep(investigation_run_id, step_id);
         return {
           content: [
             { type: "text" as const, text: JSON.stringify(withNotice(data, notice)) },
@@ -891,14 +1191,12 @@ export function registerInvestigationTools(
       description:
         "List trace steps already posted for an investigation run. Use this when resuming a run to avoid duplicate work.",
       inputSchema: {
-        investigation_run_id: z
-          .string()
-          .min(1)
-          .describe("Investigation run ID whose trace should be listed"),
+        investigation_run_id: optionalRunIdSchema,
       },
     },
-    async ({ investigation_run_id }) => {
+    async (input) => {
       try {
+        const investigation_run_id = resolveRunId(client, input.investigation_run_id);
         const data = await client.get(
           `/api/v1/investigation-runs/${investigation_run_id}/trace`,
         );
@@ -974,14 +1272,12 @@ export function registerInvestigationTools(
       description:
         "List the runbooks/skills matched for an investigation run. Runbooks are guidance for the local agent, not executable code.",
       inputSchema: {
-        investigation_run_id: z
-          .string()
-          .min(1)
-          .describe("Investigation run ID whose matched runbooks should be listed"),
+        investigation_run_id: optionalRunIdSchema,
       },
     },
-    async ({ investigation_run_id }) => {
+    async (input) => {
       try {
+        const investigation_run_id = resolveRunId(client, input.investigation_run_id);
         const data = await client.get(
           `/api/v1/investigations/${investigation_run_id}/context`,
         );
@@ -1035,7 +1331,7 @@ export function registerInvestigationTools(
       description:
         "Preflight frozen runbook completion coverage for an active investigation. Use this before completion and after repairing missing checks or evidence; the response identifies exact missing check/evidence IDs and blocked sources.",
       inputSchema: {
-        investigation_run_id: z.string().min(1),
+        investigation_run_id: optionalRunIdSchema,
         mitigation_state: z
           .enum(["none", "proposed", "applied", "recovered"])
           .optional()
@@ -1044,8 +1340,9 @@ export function registerInvestigationTools(
           ),
       },
     },
-    async ({ investigation_run_id, mitigation_state }) => {
+    async ({ investigation_run_id: givenRunId, mitigation_state }) => {
       try {
+        const investigation_run_id = resolveRunId(client, givenRunId);
         const query = mitigation_state
           ? `?mitigation_state=${encodeURIComponent(mitigation_state)}`
           : "";
@@ -1070,11 +1367,12 @@ export function registerInvestigationTools(
       description:
         "List responder-created waivers for frozen runbook checks on an investigation. Waivers are read-only here and make covered completion explicitly inconclusive.",
       inputSchema: {
-        investigation_run_id: z.string().min(1),
+        investigation_run_id: optionalRunIdSchema,
       },
     },
-    async ({ investigation_run_id }) => {
+    async (input) => {
       try {
+        const investigation_run_id = resolveRunId(client, input.investigation_run_id);
         const data = await client.get(
           `/api/v1/investigations/${investigation_run_id}/runbook-waivers`,
         );
@@ -1094,9 +1392,9 @@ export function registerInvestigationTools(
     "tellagen_complete_investigation",
     {
       description:
-        'Complete or fail an investigation run. Before you complete a run, post each cause with tellagen_update_cause, build figures with tellagen_build_figure, and post the key moment with tellagen_post_timeline_event. Set status to "completed" when done, or "failed" with a failure_reason if the investigation could not finish. Write the headline claim (result_summary.conclusion.sentence) in 15 words or fewer, with one cause, for example "The checkout pool size of 5 ran out of database connections at 14:02." and not a long sentence that lists the checks you made; the detail goes in the findings. Include result_summary for the shared RCA record whenever possible: causal_paths (2 to 4 steps, each citing finding_ids and a figure), ruled_out, coverage and unknowns, and for a regression or CI failure change_refs (the regression_source, the fix and the verified_by runs after it). The response carries the backend warnings[] verbatim and, only when there are warnings, a one-line warnings_summary; read it and name anything you could not fix in your report. result_summary must have conclusion, likely_cause_label, customer_impact, confidence_percent, signals_checked and takeaways, and should have assessment.diagnosis_state. The result can only propose a cause. A person accepts or rejects the root cause in Tellagen, and an API key cannot do it.',
+        'Complete or fail an investigation run. Tellagen checks the result first, when it can: if something is missing, the answer is completed false with every repair at once (the field, what is missing, one example of a valid value), and nothing is changed; fix them and call again. Before you complete a run, post each cause with tellagen_update_cause, build figures with tellagen_build_figure, and post the key moment with tellagen_post_timeline_event. Set status to "completed" when done, or "failed" with a failure_reason if the investigation could not finish. Write the headline claim (result_summary.conclusion.sentence) in 15 words or fewer, with one cause, for example "The checkout pool size of 5 ran out of database connections at 14:02." and not a long sentence that lists the checks you made; the detail goes in the findings. Include result_summary for the shared RCA record whenever possible: causal_paths (2 to 4 steps, each citing finding_ids and a figure), ruled_out, coverage and unknowns, and for a regression or CI failure change_refs (the regression_source, the fix and the verified_by runs after it). The response carries the backend warnings[] verbatim and, only when there are warnings, a one-line warnings_summary; read it and name anything you could not fix in your report. result_summary must have conclusion, likely_cause_label, customer_impact, confidence_percent, signals_checked and takeaways, and should have assessment.diagnosis_state. The result can only propose a cause. A person accepts or rejects the root cause in Tellagen, and an API key cannot do it.',
       inputSchema: {
-        run_id: z.string().min(1).describe("Investigation run ID"),
+        run_id: optionalRunIdSchema,
         status: z
           .enum(["completed", "failed"])
           .describe("Final status for the run"),
@@ -1114,13 +1412,14 @@ export function registerInvestigationTools(
       },
     },
     async ({
-      run_id,
+      run_id: givenRunId,
       status,
       failure_reason,
       mitigation_state,
       result_summary,
     }) => {
       try {
+        const run_id = resolveRunId(client, givenRunId);
         const body: Record<string, unknown> = { status };
         if (failure_reason) {
           body.failure_reason = failure_reason;
@@ -1178,10 +1477,51 @@ export function registerInvestigationTools(
         const headline = headlineNotice(result_summary);
         if (headline) notices.push(headline);
         const notice = notices.length > 0 ? notices.join(" ") : undefined;
-        const data = await client.patch<Record<string, unknown>>(
+        // Ask first, when Tellagen can answer a dry run: one answer then holds
+        // every fault, and the model repairs them in one go.
+        let data: Record<string, unknown> | undefined;
+        if (supportsCompletionRepairs(client, run_id)) {
+          const dry = await client.patch<Record<string, unknown>>(
+            `/api/v1/investigations/${run_id}`,
+            { ...body, dry_run: true },
+            // A dry run writes nothing, so it is safe to repeat.
+            { safeToRepeat: true },
+          );
+          if (dry.dry_run === true) {
+            if (dry.ready !== true) {
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: JSON.stringify(
+                      withNotice(
+                        {
+                          completed: false,
+                          ready: false,
+                          repairs: Array.isArray(dry.repairs) ? dry.repairs : [],
+                          ...(Array.isArray(dry.warnings) && dry.warnings.length > 0 ? { warnings: dry.warnings } : {}),
+                          ...(dry.coverage !== undefined ? { coverage: dry.coverage } : {}),
+                          message:
+                            "The run was not completed. Fix every repair (each has the field, what is missing and one example of a valid value), then call this tool again.",
+                        },
+                        notice,
+                      ),
+                    ),
+                  },
+                ],
+              };
+            }
+          } else {
+            // This Tellagen did not know the dry run and completed the run.
+            data = dry;
+          }
+        }
+        data ??= await client.patch<Record<string, unknown>>(
           `/api/v1/investigations/${run_id}`,
           body,
         );
+        // The run is over: forget it, so the next run starts clean.
+        client.session.clearActiveRun(run_id);
         const out: Record<string, unknown> = { ...data };
         const summary = summarizeWarnings(data.warnings);
         if (summary) out.warnings_summary = summary;

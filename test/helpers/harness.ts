@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { TellagenClient } from "../../src/client.js";
+import { TellagenClient, type ClientConfig } from "../../src/client.js";
 import { registerAllTools } from "../../src/tools/index.js";
 
 type ToolResult = {
@@ -13,8 +13,11 @@ type RegisteredTool = {
 };
 
 /** Registers every tool on a stub server and calls handlers directly. */
-export function createToolHarness(apiUrl = "https://test.api.tellagen.com") {
-  const client = new TellagenClient({ apiUrl, apiKey: "tllg_test" });
+export function createToolHarness(
+  apiUrl = "https://test.api.tellagen.com",
+  config: Partial<ClientConfig> = {},
+) {
+  const client = new TellagenClient({ apiUrl, apiKey: "tllg_test", ...config });
   const tools = new Map<string, RegisteredTool>();
   const server = {
     registerTool: (
@@ -38,6 +41,10 @@ export function createToolHarness(apiUrl = "https://test.api.tellagen.com") {
     },
     json(result: ToolResult): Record<string, any> {
       return JSON.parse(result.content[0].text);
+    },
+    /** The JSON answer when lines (a note, a stop) come before it. */
+    lastJson(result: ToolResult): Record<string, any> {
+      return JSON.parse(result.content[result.content.length - 1]!.text);
     },
   };
 }

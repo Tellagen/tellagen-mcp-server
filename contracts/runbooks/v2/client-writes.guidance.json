@@ -1,0 +1,42 @@
+{
+  "title": "What a local client writes to a run: recorded steps, repairs, repeats and field errors",
+  "description": "Rules for the write routes a local client drives: the trace post, the completion, the finding create and the errors of all of them. Each rule is behind a capability. A client sends recorded steps only when pickup lists recorded_steps_v1 in server_capabilities. A client that sends guidance_default_v1 or strict_fields_v1 in protocol_capabilities at pickup gets the default guidance basis and the strict field check. A client sends a completion dry run only when pickup lists completion_repairs_v1 in server_capabilities, because a server without it would ignore dry_run and complete the run. The repairs of a blocked completion, idempotency keys and field paths in type errors need no capability: an older client never sends them and never sees them.",
+  "x-limits": {
+    "recorded_steps_per_run": 200,
+    "recorded_step_id_max_chars": 200,
+    "recorded_step_title_max_chars": 300,
+    "recorded_step_text_max_chars": 2000,
+    "recorded_step_json_max_bytes": 16384,
+    "idempotency_key_max_chars": 128,
+    "completion_body_max_bytes": 4194304,
+    "completion_repairs_max": 50,
+    "unknown_fields_listed_max": 20
+  },
+  "x-guidance": [
+    "A recorded step is a trace step a hook of the client wrote down as a tool ran, with recorded_by set to client. Send the tool name, the input, the status and the times. Do not send guidance, outcome, cause_key or reuse_hint with it: the server refuses them on a recorded step and stores the basis system_recorded.",
+    "When the model has read the result of a recorded step, post a trace step with the same step_id and no recorded_by. That post adds the outcome, the cause_key and the guidance. The recorded title, tool, input, result and times stay as the hook wrote them.",
+    "A run keeps 200 recorded steps. After that a new recorded step is answered with 200, an empty steps list and a note with the code recorded_step_limit, and is not stored. This is not an error: a hook must not fail a tool call because of it. Steps the model posts are still stored.",
+    "With guidance_default_v1 a trace step with no guidance gets the basis agent_judgment with the step title as the reason. Send guidance only when a runbook or a responder guided the check.",
+    "Before you complete a run, and only when pickup lists completion_repairs_v1, send the completion with dry_run true. The server runs every completion rule, writes nothing and answers with ready and one list of repairs. Each repair has a code, the field path, what is missing and one example of a valid value. Fix every repair, then send the same body without dry_run.",
+    "A completion the runbook coverage blocks answers 422 investigation_completion_blocked with the coverage and the same repairs list. Read repairs first; coverage is the detail behind it.",
+    "Send an Idempotency-Key header (or the idempotency_key field) with every finding. Use one new key for one finding, for example a UUID, and send the same key when you repeat the request after a timeout. The repeat answers 200 with the first finding and the header Idempotent-Replayed: true, and creates nothing.",
+    "A cause upsert is safe to repeat: the cause key in the path is its identity. A trace step is safe to repeat by its step_id. A create of a run with an id you chose is safe to repeat: when the run exists and you made it in the same incident, the answer is 200 with that run.",
+    "A value of the wrong type answers 400 invalid_field_type with field set to the path of the value, for example result_summary.causal_paths[0].steps[1].finding_ids, and a message that says which type the field wants. Correct that field and send the request again.",
+    "With strict_fields_v1 a body with a field the route does not know answers 400 unknown_field. field is the first path and details.fields lists up to 20 of them. Remove or rename those fields. Without the capability unknown fields are dropped with no message, as before."
+  ],
+  "x-examples": {
+    "recorded_step": {
+      "good": {"step_id": "toolu_01AbC", "status": "done", "recorded_by": "client", "tool_name": "grafana.query_prometheus", "title": "Checkout 5xx rate, 13:30 to 14:30", "input_json": {"expr": "sum(rate(http_requests_total{service=\"checkout\",code=~\"5..\"}[5m]))"}, "started_at": "2026-11-11T13:31:02Z", "completed_at": "2026-11-11T13:31:04Z"},
+      "bad": {"step_id": "toolu_01AbC", "status": "done", "recorded_by": "client", "title": "Checkout 5xx rate", "outcome": "supports", "guidance": {"origin": "agent_judgment", "reason": "looked useful"}}
+    },
+    "model_post_on_a_recorded_step": {
+      "good": {"step_id": "toolu_01AbC", "status": "done", "title": "Checkout 5xx rate, 13:30 to 14:30", "outcome": "supports", "cause_key": "pool-exhausted", "result_summary": "5xx rose from 0.1% to 14% at 14:02."}
+    },
+    "dry_run_answer": {
+      "good": {"dry_run": true, "ready": false, "repairs": [{"code": "diagnosis_structure_required", "field": "result_summary.causal_paths", "missing": "A confirmed or likely diagnosis needs the causal chain: one path with one or more steps, each citing the findings that prove it.", "example": [{"id": "main", "kind": "primary", "steps": [{"id": "step-1", "claim": "The connection pool ran out at 08:55.", "finding_ids": [1]}]}]}], "warnings": []}
+    },
+    "field_error": {
+      "good": {"code": "invalid_field_type", "field": "result_summary.causal_paths[0].steps[1].finding_ids", "message": "result_summary.causal_paths[0].steps[1].finding_ids: expected an array, got a string"}
+    }
+  }
+}
