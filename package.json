@@ -1,6 +1,6 @@
 {
   "name": "@tellagen/mcp-server",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Tellagen MCP server: let your own AI client investigate incidents, post findings with evidence and write timeline events back to Tellagen.",
   "mcpName": "io.github.tellagen/mcp-server",
   "keywords": [

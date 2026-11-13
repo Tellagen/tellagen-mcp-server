@@ -9,6 +9,7 @@ import {
   resolveRunId,
 } from "../active-run.js";
 import { withCauseLead } from "../cause-lead.js";
+import { rememberSourceBases, sourceBasesOf } from "../source-bases.js";
 import { legacyClientName, reportedClientName } from "../identity.js";
 import { GUIDE_RESOURCES } from "../guide-resources.js";
 import {
@@ -498,6 +499,7 @@ export async function pickUpRun(
     incidentId: incidentIdOf(data),
     pickedUpAt: new Date().toISOString(),
     serverCapabilities: capabilitiesOf(data),
+    sourceBases: sourceBasesOf(data),
   });
   return withNotice(data, notice);
 }
@@ -864,6 +866,7 @@ export function registerInvestigationTools(
           `/api/v1/investigations/${investigation_run_id}/context`,
         );
         rememberServerCapabilities(client, investigation_run_id, data);
+        rememberSourceBases(client, investigation_run_id, data);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(data) }],
         };

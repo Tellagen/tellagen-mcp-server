@@ -233,16 +233,16 @@ describe("SKILL.md guidance that the tool schemas back", () => {
 });
 
 describe("the guide answers three gaps agents had to guess", () => {
-  it("puts the GRAFANA_URL condition before the source link rule", () => {
+  it("puts the Grafana address condition before the source link rule", () => {
     const links = section("#### Links, command and datasource (diagnosis_structure_v1)");
-    const rule = links.indexOf("- If `GRAFANA_URL` is set");
+    const rule = links.indexOf("- If the pickup answer lists a Grafana address in `source_bases`, or `GRAFANA_URL` is set");
     const call = links.indexOf("tellagen_build_source_link(kind:");
     expect(rule).toBeGreaterThan(-1);
     expect(rule).toBeLessThan(call);
-    expect(links).toContain("- If `GRAFANA_URL` is not set");
+    expect(links).toContain("- If neither is true");
     expect(links).toContain("do not call it again for Grafana");
     expect(links).not.toContain("**Always call `tellagen_build_source_link`**");
-    expect(skill).toContain("for Grafana evidence when `GRAFANA_URL` is set");
+    expect(skill).toContain("for Grafana evidence when the pickup lists a Grafana address or `GRAFANA_URL` is set");
   });
 
   it("names every mitigation_state value and the revert-outside-the-run case", () => {

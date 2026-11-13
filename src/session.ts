@@ -10,6 +10,7 @@ import {
   reportedClientName,
 } from "./identity.js";
 import { RunStateStore, type RunState, workspaceKey } from "./run-state.js";
+import { cleanSourceBases, type SourceBase } from "./source-bases.js";
 import { MCP_SERVER_VERSION } from "./version.js";
 
 /** The run this MCP server process picked up. */
@@ -18,6 +19,8 @@ export interface ActiveRun {
   incidentId?: number;
   pickedUpAt: string;
   serverCapabilities: string[];
+  /** The Grafana and GitHub addresses of the pickup answer, when Tellagen sent them. */
+  sourceBases?: SourceBase[];
 }
 
 /** Turns a toolset on in the running session. Set by the tool registry. */
@@ -55,6 +58,8 @@ export class Session {
   /** Called when a pickup says that Tellagen wants a newer server. Set by the entry point. */
   updateSeen: ((info: { your_version: string; current_version: string }) => void) | undefined;
   private active: ActiveRun | undefined;
+  /** The source addresses of the runs this process picked up or read, by run id. */
+  private sourceBases = new Map<string, SourceBase[]>();
   /** Lines for the next tool answer (a missed heartbeat, a note from a recorder). */
   private pendingLines: string[] = [];
   private notice: { line: string; everyMs: number; shownAt: number } | undefined;
@@ -68,6 +73,7 @@ export class Session {
   /** Points the remembered-run file at another workspace, after a sign-in. */
   setWorkspace(apiUrl: string): void {
     this.active = undefined;
+    this.sourceBases.clear();
     this.state = new RunStateStore(this.stateDir, workspaceKey(apiUrl));
   }
 
@@ -108,6 +114,8 @@ export class Session {
       pid: process.pid,
     };
     if (run.incidentId !== undefined) state.incident_id = run.incidentId;
+    if (run.sourceBases?.length) state.source_bases = run.sourceBases;
+    this.keepSourceBases(run.runId, run.sourceBases ?? []);
     // The same run picked up again (after a restart): what a heartbeat or a step hook left for the model stays.
     const prior = this.state.read();
     if (prior?.run_id === run.runId) {
@@ -121,9 +129,35 @@ export class Session {
     for (const listener of this.runStartListeners) listener(run);
   }
 
+  private keepSourceBases(runId: string, bases: SourceBase[]): void {
+    this.sourceBases.delete(runId);
+    this.sourceBases.set(runId, bases);
+    // A run is read once or twice; a long session must not collect them all.
+    if (this.sourceBases.size > 20) this.sourceBases.delete(this.sourceBases.keys().next().value as string);
+  }
+
+  /**
+   * The source addresses Tellagen sent for a run: from this process, else from
+   * the state file when it names the run. Undefined when none is known.
+   */
+  sourceBasesFor(runId: string): SourceBase[] | undefined {
+    const known = this.sourceBases.get(runId);
+    if (known) return known;
+    const stored = this.state.read();
+    // The file is not trusted more than an answer: clean it again.
+    return stored?.run_id === runId && stored.source_bases ? cleanSourceBases(stored.source_bases) : undefined;
+  }
+
+  /** Remembers the source addresses of a context read, in memory and in the state file. */
+  rememberSourceBases(runId: string, bases: SourceBase[]): void {
+    this.keepSourceBases(runId, bases);
+    this.state.setSourceBases(runId, bases);
+  }
+
   /** Forgets a run that completed, failed, was cancelled or was taken over. */
   clearActiveRun(runId: string): void {
     if (this.active?.runId === runId) this.active = undefined;
+    this.sourceBases.delete(runId);
     this.state.clear(runId);
     for (const listener of this.runEndListeners) listener(runId);
   }

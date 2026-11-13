@@ -2,6 +2,21 @@
 
 All notable changes to `@tellagen/mcp-server` are in this file. The newest version is first. Each heading is `## <version> - <date>`; the release workflow copies the section of the tagged version into the GitHub release.
 
+## 0.5.1 - 2026-11-13
+
+### Added
+
+- Tellagen now sends the Grafana and GitHub addresses of the workspace as `source_bases` in the pickup answer and in the context read of a run. The server remembers them with the run (also after a restart and with `tellagen_resume`), so a finding gets a Grafana Explore link with no `GRAFANA_URL` in the environment.
+- `tellagen_probe_datasource` lists the addresses it knows for a Grafana datasource as `addresses[]`, each with its `source` (`pickup`, `GRAFANA_URL` or `datasource`), and marks the one it called with `used` and shows with `token_sent` whether the token went to it. The service account token is sent only to `GRAFANA_URL`; with only an address from Tellagen the probe calls `/api/health` with no token and says so. A `GRAFANA_URL` that is not an http or https address is reported as an error. An address from the pickup makes `GRAFANA_URL` optional in the check of required variables.
+
+### Changed
+
+- `tellagen_build_source_link` chooses the Grafana address in this order: the pickup `source_bases`, then `GRAFANA_URL`, then the `base_url` of the Tellagen datasource. `GRAFANA_URL` is now optional: it is used when Tellagen sends no Grafana address, or several and none is picked. With several Grafana addresses in the pickup, pass `connector` with the name of one; without it the next source decides. A GitHub link uses the GitHub address of the pickup when the repository belongs to it; `github_url` still wins.
+- Only http and https addresses are used. Credentials, query and fragment are removed from an address, and a copyable command or a file path is never turned into a link.
+- With a Tellagen that sends no `source_bases`, nothing changes: the order is `GRAFANA_URL`, then the datasource.
+- The guide and the README describe the order and no longer ask for `GRAFANA_URL` as a setup step.
+- In the registry file `server.json`, `TELLAGEN_API_KEY` and `TELLAGEN_API_URL` are no longer marked as required. Signing in with the browser is the normal way, and the key and the address are optional (they win over a sign-in when set).
+
 ## 0.5.0 - 2026-11-12
 
 ### Added

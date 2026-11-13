@@ -180,7 +180,7 @@ Every investigation follows this sequence. Do not skip steps.
 - **Attribute every trace step.** Copy exact frozen runbook identifiers from `request.skills`, or declare the honest non-runbook origin. Never invent a citation.
 - **Keep a step's basis immutable.** Reuse the same `guidance` object when changing a step from `running` to `done` or `error`.
 - **Keep every finding's numeric `id`.** `tellagen_post_finding` returns `{finding:{id,...}}`. The cause chain, `ruled_out`, `coverage` and `unknowns` cite findings by `finding_ids`, so note the id of each finding as you post it (see Diagnosis structure).
-- **Give every proof a source.** Call `tellagen_build_source_link` for GitHub evidence, and for Grafana evidence when `GRAFANA_URL` is set (see Links, command and datasource); send the result as `links`. Send a `command` for kubectl and other local sources.
+- **Give every proof a source.** Call `tellagen_build_source_link` for GitHub evidence, and for Grafana evidence when the pickup lists a Grafana address or `GRAFANA_URL` is set (see Links, command and datasource); send the result as `links`. Send a `command` for kubectl and other local sources.
 
 When a terminal read-only check reveals a repeatable diagnostic pattern, attach reuse_hint to the done trace/check attempt. Generalize the diagnostic intent and trigger, choose confirmed or falsified, and list parameter names without values. Never hint remediation, mutation, failed/skipped work, incident-specific one-offs, secrets, customer identifiers, URLs, commands, or a check already fully covered by the frozen runbook unless the evidence supports a specific extension. Copy the returned stable evidence identifiers into a qualifying finding when the result materially changes confidence.
 
@@ -395,10 +395,10 @@ Responders open the source of every proof from the Diagnosis tab. Three fields m
 | `command` | Kubernetes and any local source with no browser address (kubectl, a SQL client, a local script) | A read-only command that reproduces the evidence, up to 1000 characters, no credentials (Tellagen redacts what it finds and drops a longer command) |
 | `datasource` | A Grafana or similar source | The data source name or uid the query ran against |
 
-**Call `tellagen_build_source_link`** for GitHub and Grafana instead of writing the address yourself, and copy the `links[]` it returns into the ref unchanged. A GitHub link needs only `repo`. A Grafana link needs a Grafana address, so decide first:
+**Call `tellagen_build_source_link`** for GitHub and Grafana instead of writing the address yourself, and copy the `links[]` it returns into the ref unchanged. A GitHub link needs only `repo`. A Grafana link needs a Grafana address. The tool takes it from the `source_bases` of the pickup answer (the enabled Grafana and GitHub addresses of the workspace), else from `GRAFANA_URL` in the MCP client environment, else from the `base_url` of the Tellagen Grafana datasource. Decide first:
 
-- If `GRAFANA_URL` is set in the MCP client environment, call the tool for every Grafana source.
-- If `GRAFANA_URL` is not set, the tool reads the `base_url` of the Tellagen Grafana datasource. You cannot see that setting, so call the tool once, for your first Grafana source. If it fails with "No enabled Grafana datasource" or "no usable base_url", do not call it again for Grafana. Send a read-only `command` and the `datasource` on each Grafana evidence ref, and add a `coverage` entry that says the Grafana address was not configured.
+- If the pickup answer lists a Grafana address in `source_bases`, or `GRAFANA_URL` is set in the MCP client environment, call the tool for every Grafana source. With several Grafana addresses, pass `connector` with the name of one.
+- If neither is true, the tool reads the `base_url` of the Tellagen Grafana datasource. You cannot see that setting, so call the tool once, for your first Grafana source. If it fails with "No enabled Grafana datasource" or "no usable base_url", do not call it again for Grafana. Send a read-only `command` and the `datasource` on each Grafana evidence ref, and add a `coverage` entry that says the Grafana address was not configured.
 
 ```
 tellagen_build_source_link(kind: "logs", datasource: "<loki uid>", query: '{app="checkout"} |= "error"', investigation_run_id: <run_id>)

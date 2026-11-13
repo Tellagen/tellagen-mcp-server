@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { tellagenHome } from "./home.js";
+import { MAX_SOURCE_BASES, sourceBaseSchema, type SourceBase } from "./source-bases.js";
 
 /**
  * The run this computer is working on, remembered across a client restart.
@@ -38,6 +39,8 @@ const runStateSchema = z.object({
   client_version: z.string().max(64).optional(),
   /** The short client name Tellagen knows, such as "claude-code"; a hook sends it as its client. */
   client_id: z.string().max(64).optional(),
+  /** The Grafana and GitHub addresses Tellagen sent for this run, so a source link needs no address of its own. */
+  source_bases: z.array(sourceBaseSchema).max(MAX_SOURCE_BASES).optional(),
   /** Notes a recorder outside this process left for the model. */
   pending_notes: z.array(pendingNoteSchema).max(50).optional(),
   /** Steps a hook recorded that the model has not updated yet, oldest first. */
@@ -192,6 +195,16 @@ export class RunStateStore {
     const current = this.read();
     if (!current || current.run_id !== runId || !current.recorded_steps?.some((item) => item.step_id === stepId)) return;
     this.write({ ...current, recorded_steps: current.recorded_steps.filter((item) => item.step_id !== stepId) });
+  }
+
+  /** Keeps the source addresses of a run. An empty list removes them. */
+  setSourceBases(runId: string, bases: SourceBase[]): void {
+    const current = this.read();
+    if (!current || current.run_id !== runId) return;
+    // A read that changes nothing writes nothing: a recorder may have touched the file.
+    if (JSON.stringify(current.source_bases ?? []) === JSON.stringify(bases)) return;
+    const { source_bases: _old, ...rest } = current;
+    this.write(bases.length > 0 ? { ...rest, source_bases: bases } : rest);
   }
 
   /** Records that Tellagen ended the run or gave it to another client. */

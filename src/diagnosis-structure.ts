@@ -30,6 +30,7 @@ import {
   withoutFigureExtrasInBlock,
 } from "./figures.js";
 
+import { rememberSourceBases } from "./source-bases.js";
 import { RECORDED_STEPS_CAPABILITY } from "./trace-record.js";
 
 export { RECORDED_STEPS_CAPABILITY };
@@ -101,6 +102,7 @@ export async function supportsCapability(
       `/api/v1/investigations/${encodeURIComponent(runId)}/context`,
     );
     rememberServerCapabilities(client, runId, context);
+    rememberSourceBases(client, runId, context);
     return map.get(runId)?.has(capability) ?? false;
   } catch {
     return false;
