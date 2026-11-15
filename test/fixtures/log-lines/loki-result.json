@@ -1,0 +1,24 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "streams",
+    "result": [
+      {
+        "stream": { "app": "billing-worker", "pod": "billing-worker-5d9", "namespace": "prod", "filename": "/var/log/pods/x.log" },
+        "values": [
+          ["1794616920000000000", "{\"level\":\"error\",\"ts\":\"2026-11-14T00:42:00Z\",\"msg\":\"sync failed\",\"task\":\"invoice_sync\",\"company_id\":412,\"error\":\"context deadline exceeded\"}"],
+          ["1794616980000000000", "{\"level\":\"error\",\"msg\":\"sync failed\",\"task\":\"invoice_sync\",\"company_id\":412,\"error\":\"context deadline exceeded\"}"],
+          ["1794617040000000000", "{\"level\":\"warn\",\"msg\":\"retrying\",\"task\":\"invoice_sync\",\"company_id\":412,\"attempt\":2}"]
+        ]
+      },
+      {
+        "stream": { "app": "billing-worker", "pod": "billing-worker-7c1", "namespace": "prod" },
+        "values": [
+          ["1794577320000000000", "level=error msg=\"sync failed\" task=invoice_sync company_id=578 error=\"connection reset\""],
+          ["1794616800000000000", "2026-11-14T00:40:00Z INFO scheduler tick queued=14"],
+          ["1794616830000000000", "\u001b[31mERROR\u001b[0m export failed\nstack: at exporter.go:88\n\tat run.go:12 token=abc123def456ghi789"]
+        ]
+      }
+    ]
+  }
+}

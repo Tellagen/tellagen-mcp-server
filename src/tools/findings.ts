@@ -12,9 +12,53 @@ import {
   stripFindingEvidenceStructure,
   supportsDiagnosisChanges,
   supportsDiagnosisStructure,
+  supportsCapability,
   unsupportedNotice,
   gapQuestionNotice,
 } from "../diagnosis-structure.js";
+import { QUESTION_CHECKS_CAPABILITY } from "../run-window.js";
+
+export const MAX_FINDING_CHECKS = 3;
+export const MAX_CHECK_QUESTION = 200;
+export const MAX_CHECK_SOURCE = 120;
+
+const findingCheckSchema = z
+  .object({
+    source: z
+      .string()
+      .trim()
+      .min(1)
+      .max(MAX_CHECK_SOURCE)
+      .describe("The place the person looks, in a few words: a system, a page or a tool, for example Slack or the Tellagen workspace"),
+    question: z
+      .string()
+      .trim()
+      .min(1)
+      .max(MAX_CHECK_QUESTION)
+      .describe("One yes or no question that ends with a question mark, at most 200 characters. Never two questions joined by and."),
+  })
+  .strict();
+
+/** What is wrong with the checks of a finding, in words the model can act on. */
+export function findingChecksProblem(
+  findingType: string,
+  role: string | undefined,
+  checks: Array<{ source: string; question: string }> | undefined,
+): string | undefined {
+  if (checks === undefined) return undefined;
+  if (findingType !== "gap" && role !== "gap") {
+    return "checks belong on a gap finding only (finding_type gap). Leave them out of any other finding.";
+  }
+  for (const [index, check] of checks.entries()) {
+    if (!check.question.trim().endsWith("?")) {
+      return `checks[${index}].question must be one yes or no question that ends with a question mark.`;
+    }
+    if ((check.question.match(/\?/g) ?? []).length > 1) {
+      return `checks[${index}].question holds more than one question. Split it into separate checks, each naming its source.`;
+    }
+  }
+  return undefined;
+}
 
 const screenshotSchema = z.object({
   url: z
@@ -245,6 +289,14 @@ export function registerFindingTools(
           .describe(
             "Detailed explanation with supporting data — this is the body of the finding",
           ),
+        checks: z
+          .array(findingCheckSchema)
+          .min(1)
+          .max(MAX_FINDING_CHECKS)
+          .optional()
+          .describe(
+            "Gap findings only, when the gap blocks the diagnosis: one to three yes or no checks, each {source, question}, so a person can answer in a few seconds. Keep claim as the one question, and put in checks only what you could not check yourself. Sent only when this Tellagen lists question_checks_v1.",
+          ),
         confidence: z
           .number()
           .min(0)
@@ -277,6 +329,7 @@ export function registerFindingTools(
       role,
       claim,
       evidence_summary,
+      checks,
       confidence,
       confidence_reason,
       evidence_refs,
@@ -284,6 +337,13 @@ export function registerFindingTools(
     }) => {
       try {
         const investigation_run_id = resolveRunId(client, givenRunId);
+        const checksProblem = findingChecksProblem(finding_type, role, checks);
+        if (checksProblem) {
+          return {
+            content: [{ type: "text" as const, text: checksProblem }],
+            isError: true,
+          };
+        }
         checkScreenshotSizes(screenshots, evidence_refs);
         const reqBody: Record<string, unknown> = {
           investigation_run_id,
@@ -296,6 +356,14 @@ export function registerFindingTools(
         };
         if (role !== undefined) reqBody.role = role;
         if (screenshots !== undefined) reqBody.screenshots = screenshots;
+        let checksNotice: string | undefined;
+        if (checks !== undefined) {
+          if (await supportsCapability(client, investigation_run_id, QUESTION_CHECKS_CAPABILITY)) {
+            reqBody.checks = checks;
+          } else {
+            checksNotice = `This Tellagen backend does not advertise ${QUESTION_CHECKS_CAPABILITY}, so the checks were not sent. The claim of the gap finding went through as the one question; put the facts a person must look up in evidence_summary.`;
+          }
+        }
         // links, command and datasource go only to a backend that advertises
         // diagnosis_structure_v1; an older one would drop them silently.
         let notice: string | undefined;
@@ -304,6 +372,7 @@ export function registerFindingTools(
         }
         const question = gapQuestionNotice(finding_type, role, claim);
         if (question) notice = notice ? `${notice} ${question}` : question;
+        if (checksNotice) notice = notice ? `${notice} ${checksNotice}` : checksNotice;
         const stripped = stripFindingEvidenceStructure(reqBody.evidence_refs);
         if (
           stripped.removed.length > 0 &&

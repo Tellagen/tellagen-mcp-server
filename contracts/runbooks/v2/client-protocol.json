@@ -9,6 +9,8 @@
     "diagnosis_structure_v1",
     "diff_lines_v1",
     "figure_extras_v1",
+    "log_lines_v1",
+    "question_checks_v1",
     "recorded_steps_v1",
     "responder_notes_v1",
     "run_images_v1"
@@ -21,10 +23,13 @@
     "finding_roles_v2",
     "gap_findings_v2",
     "guidance_default_v1",
+    "investigation_window_v1",
+    "question_checks_v1",
     "responder_notes_v1",
     "run_images_v1",
     "runbook_plan_v2",
     "strict_fields_v1",
+    "tool_check_v1",
     "trace_check_id_v2"
   ],
   "client_headers": [
@@ -39,9 +44,11 @@
     "client_upgrade_required",
     "denied",
     "expired",
+    "finding_checks_invalid",
     "invalid_device_code",
     "invalid_field_type",
     "invalid_idempotency_key",
+    "invalid_window",
     "investigation_completion_blocked",
     "investigation_executor_conflict",
     "investigation_run_ended",
@@ -147,6 +154,9 @@
       "method": "POST",
       "path": "/api/v1/incidents/{id}/findings",
       "request_fields": [
+        "checks",
+        "checks.question",
+        "checks.source",
         "claim",
         "confidence",
         "confidence_reason",
@@ -186,6 +196,8 @@
       ],
       "response_fields": [
         "finding",
+        "finding.answers",
+        "finding.checks",
         "finding.claim",
         "finding.confidence",
         "finding.confidence_reason",
@@ -234,6 +246,12 @@
         "proxy_id",
         "question",
         "question_finding_id",
+        "window",
+        "window.baseline_days",
+        "window.from",
+        "window.from_expr",
+        "window.to",
+        "window.to_expr",
         "without_grafana"
       ],
       "response_fields": [
@@ -291,7 +309,8 @@
         "run.question_finding_id",
         "run.result_summary",
         "run.started_at",
-        "run.status"
+        "run.status",
+        "run.window"
       ]
     },
     {
@@ -578,7 +597,11 @@
         "runs.requested_by",
         "runs.requested_by_me",
         "runs.run_id",
-        "runs.screenshot_count"
+        "runs.screenshot_count",
+        "tool_check",
+        "tool_check.client",
+        "tool_check.expires_at",
+        "tool_check.id"
       ]
     },
     {
@@ -607,6 +630,7 @@
         "result_summary.signals_checked",
         "result_summary.takeaways",
         "result_summary.unknowns",
+        "result_summary.window_suggestion",
         "status"
       ],
       "response_fields": [
@@ -678,6 +702,7 @@
         "run.result_summary",
         "run.started_at",
         "run.status",
+        "run.window",
         "run_state",
         "warnings",
         "warnings.code",
@@ -721,6 +746,7 @@
         "incident.last_event_at",
         "incident.last_event_summary",
         "incident.meet_url",
+        "incident.origin",
         "incident.postmortem_summary",
         "incident.recovered_at",
         "incident.regions",
@@ -787,9 +813,11 @@
         "run.result_summary",
         "run.started_at",
         "run.status",
+        "run.window",
         "server_capabilities",
         "source_bases",
         "source_bases.base_url",
+        "source_bases.datasources",
         "source_bases.kind",
         "source_bases.name",
         "source_bases.network",
@@ -847,6 +875,7 @@
         "incident.last_event_at",
         "incident.last_event_summary",
         "incident.meet_url",
+        "incident.origin",
         "incident.postmortem_summary",
         "incident.recovered_at",
         "incident.regions",
@@ -913,13 +942,41 @@
         "run.result_summary",
         "run.started_at",
         "run.status",
+        "run.window",
         "server_capabilities",
         "source_bases",
         "source_bases.base_url",
+        "source_bases.datasources",
         "source_bases.kind",
         "source_bases.name",
         "source_bases.network",
         "source_bases.repositories"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/settings/agent/tool-report",
+      "request_fields": [
+        "available_sources",
+        "available_sources.access_status",
+        "available_sources.detail",
+        "available_sources.key",
+        "available_sources.state",
+        "kubernetes_checks",
+        "kubernetes_checks.id",
+        "kubernetes_checks.status",
+        "kubernetes_checks.summary",
+        "profile_id"
+      ],
+      "response_fields": [
+        "accepted_sources",
+        "accepted_sources.detail",
+        "accepted_sources.key",
+        "accepted_sources.state",
+        "client",
+        "ignored_sources",
+        "profile_id",
+        "recorded_at"
       ]
     }
   ]

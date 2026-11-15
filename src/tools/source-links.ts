@@ -14,6 +14,8 @@ import {
   looksLikeKubectl,
   sanitizeSourceUrl,
 } from "../source-links.js";
+import { rememberServerCapabilities } from "../diagnosis-structure.js";
+import { knownRunWindow, runWindowKnown } from "../run-window.js";
 import {
   type AddressSource,
   chooseGithubBase,
@@ -43,6 +45,8 @@ type SourceLinkResult = {
   links: BuiltLink[];
   command?: string;
   guidance?: string;
+  /** Set when the range of a link came from the run window or the incident, not from the caller. */
+  range?: { from?: string; to: string; from_default?: string; to_default?: string };
 };
 
 type Datasource = {
@@ -133,14 +137,27 @@ export async function grafanaBaseUrl(
   return { url: safe.url, source: "datasource" };
 }
 
-/** The incident window from the run's context, when it is a real range. */
+/**
+ * The default range of a link. The run window comes first (Tellagen sends it
+ * at pickup when the client lists investigation_window_v1); a run with no
+ * window falls back to the time range of the incident from its context. An
+ * open window has no end, so a link ends at now.
+ */
 async function incidentWindow(
   client: TellagenClient,
   runId: string,
-): Promise<{ from?: string; to?: string }> {
+): Promise<{ from?: string; to?: string; origin: "run_window" | "incident" }> {
+  const known = knownRunWindow(client, runId);
+  if (known) return { from: known.from, to: known.to, origin: "run_window" };
   const data = await client.get<{
     request?: { context?: { time_range?: { from?: unknown; to?: unknown } } };
   }>(`/api/v1/investigations/${encodeURIComponent(runId)}/context`);
+  // A run this process did not pick up: the context says what the run window is.
+  if (!runWindowKnown(client, runId)) {
+    rememberServerCapabilities(client, runId, data);
+    const fresh = knownRunWindow(client, runId);
+    if (fresh) return { from: fresh.from, to: fresh.to, origin: "run_window" };
+  }
   const range = data.request?.context?.time_range;
   const usable = (value: unknown): string | undefined => {
     if (typeof value !== "string") return undefined;
@@ -148,7 +165,7 @@ async function incidentWindow(
     // The Go zero time means "no window".
     return Number.isFinite(at) && at > Date.UTC(2000, 0, 1) ? value : undefined;
   };
-  return { from: usable(range?.from), to: usable(range?.to) };
+  return { from: usable(range?.from), to: usable(range?.to), origin: "incident" };
 }
 
 const K8S_GUIDANCE =
@@ -184,7 +201,7 @@ export const sourceLinkInputSchema = {
     .string()
     .optional()
     .describe(
-      "Range start: an ISO instant, epoch milliseconds or a relative time like now-6h. Defaults to the incident window when investigation_run_id is given, otherwise now-1h",
+      "Range start: an ISO instant, epoch milliseconds or a relative time like now-6h. Defaults to the start of the run window (the incident window for a run with no window) when a run is active or investigation_run_id is given, otherwise now-1h. Stay inside the window when you look for the cause",
     ),
   to: z.string().optional().describe("Range end, same formats as from"),
   investigation_run_id: z
@@ -192,7 +209,7 @@ export const sourceLinkInputSchema = {
     .min(1)
     .optional()
     .describe(
-      "Run whose incident window is the default time range (read from its context). Defaults to the run this session picked up",
+      "Run whose window is the default time range (read from its pickup or context). Defaults to the run this session picked up",
     ),
   dashboard_uid: z.string().optional().describe("Grafana dashboard uid (panel)"),
   panel_id: z.number().int().min(0).optional().describe("Grafana panel id (panel)"),
@@ -344,8 +361,17 @@ export async function buildSourceLinks(
   const base = (await grafanaBaseUrl(client, input.connector, windowRunId)).url;
   let from = input.from;
   let to = input.to;
+  let range: SourceLinkResult["range"];
   if ((!from || !to) && windowRunId) {
     const window = await incidentWindow(client, windowRunId);
+    if (window.origin === "run_window") {
+      range = {
+        to: input.to || window.to || "now",
+        ...(input.from || window.from ? { from: input.from || window.from } : {}),
+        ...(!input.from && window.from ? { from_default: "run_window" } : {}),
+        ...(!input.to ? { to_default: window.to ? "run_window" : "now: the window is open" } : {}),
+      };
+    }
     from = from || window.from;
     to = to || window.to;
   }
@@ -375,6 +401,7 @@ export async function buildSourceLinks(
           url,
         },
       ],
+      ...(range ? { range } : {}),
     };
   }
 
@@ -396,7 +423,7 @@ export async function buildSourceLinks(
       : kind === "logs"
         ? "Logs in Grafana Explore"
         : "Query in Grafana Explore";
-  return { links: [{ kind, label: linkLabel(label), url }] };
+  return { links: [{ kind, label: linkLabel(label), url }], ...(range ? { range } : {}) };
 }
 
 export function registerSourceLinkTools(

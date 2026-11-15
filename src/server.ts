@@ -29,7 +29,7 @@ How to start
 - The person asks to diagnose and gives no ID: call tellagen_next_investigation.
 - The prompt has an investigation_run_id: call tellagen_pick_up_investigation with it.
 - After a restart: call tellagen_resume.
-- The prompt has a diag_ ID: it is a tool check, not a run. Call tellagen_enable_toolset with settings, then tellagen_report_diagnostic_tools.
+- The prompt has a diag_ ID: it is a tool check. Call tellagen_enable_toolset with settings, then tellagen_report_diagnostic_tools. Recheck: tellagen_report_available_sources.
 - The prompt has a revision_request_id or an analysis_request_id: call tellagen_enable_toolset with postmortem and read resource://tellagen/guide/postmortem.
 
 The order of a run

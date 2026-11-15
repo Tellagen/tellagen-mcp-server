@@ -22,6 +22,9 @@ import {
   diffBlockSchema,
   figureRuleIssues,
   histogramBlockSchema,
+  isLogLinesBlock,
+  logLinesBlockSchema,
+  maxStepFigureBytes,
   MAX_STEP_FIGURE_BYTES,
   FIGURE_EXTRAS_CAPABILITY,
   rangeOverlapBlockSchema,
@@ -30,6 +33,7 @@ import {
   withoutFigureExtrasInBlock,
 } from "./figures.js";
 
+import { knownRunWindow, rememberRunWindow, type RunWindow } from "./run-window.js";
 import { rememberSourceBases } from "./source-bases.js";
 import { RECORDED_STEPS_CAPABILITY } from "./trace-record.js";
 
@@ -41,6 +45,8 @@ export const DIAGNOSIS_CHANGES_CAPABILITY = "diagnosis_changes_v1";
 export const RUN_IMAGES_CAPABILITY = "run_images_v1";
 /** The server takes unchanged lines and line numbers in a diff figure. */
 export const DIFF_LINES_CAPABILITY = "diff_lines_v1";
+/** The server takes a log_lines figure. */
+export const LOG_LINES_CAPABILITY = "log_lines_v1";
 export { FIGURE_EXTRAS_CAPABILITY };
 
 /* ------------------------------------------------------------------ */
@@ -81,6 +87,7 @@ export function rememberServerCapabilities(
   );
   capabilityMap(client).set(runId, advertised);
   latestCapabilities.set(client, advertised);
+  rememberRunWindow(client, runId, response);
 }
 
 /**
@@ -133,6 +140,28 @@ export async function supportsFigureExtras(
 ): Promise<boolean> {
   if (runId !== undefined) return supportsCapability(client, runId, FIGURE_EXTRAS_CAPABILITY);
   return latestCapabilities.get(client)?.has(FIGURE_EXTRAS_CAPABILITY) ?? false;
+}
+
+/**
+ * Whether the backend takes a log_lines figure. Decided like supportsDiffLines:
+ * with a run id it asks for that run, otherwise the latest pickup of this
+ * process decides, and with no pickup yet the answer is no.
+ */
+export async function supportsLogLines(client: TellagenClient, runId?: string): Promise<boolean> {
+  if (runId !== undefined) return supportsCapability(client, runId, LOG_LINES_CAPABILITY);
+  return latestCapabilities.get(client)?.has(LOG_LINES_CAPABILITY) ?? false;
+}
+
+/**
+ * The time window of the run, from its pickup or its context. A run this
+ * process did not pick up is read once through the context. Undefined for a
+ * run with no window (an older Tellagen, a run made before windows) and when
+ * the lookup fails.
+ */
+export async function runWindowOf(client: TellagenClient, runId: string | undefined): Promise<RunWindow | undefined> {
+  if (runId === undefined) return undefined;
+  await supportsCapability(client, runId, "investigation_window_v1");
+  return knownRunWindow(client, runId);
 }
 
 /** The capability a Tellagen can list to say that it answers a completion dry run. */
@@ -378,7 +407,7 @@ const trendFigure = z
 export const MAX_FIGURE_BYTES = MAX_STEP_FIGURE_BYTES;
 
 /** Figure types the tool listing shows by type only; they are checked in full below. */
-const LISTED_BY_TYPE = ["checks", "range_overlap", "histogram", "run_history", "diff"] as const;
+const LISTED_BY_TYPE = ["checks", "range_overlap", "histogram", "run_history", "diff", "log_lines"] as const;
 
 const fullListedByType = z.discriminatedUnion("type", [
   checksBlockSchema.extend(blockCommon),
@@ -386,6 +415,7 @@ const fullListedByType = z.discriminatedUnion("type", [
   histogramBlockSchema.extend(blockCommon),
   runHistoryBlockSchema.extend(blockCommon),
   diffBlockSchema.extend(blockCommon),
+  logLinesBlockSchema.extend(blockCommon),
 ]);
 
 export const stepFigureSchema = z
@@ -398,7 +428,7 @@ export const stepFigureSchema = z
     z
       .object({ type: z.enum(LISTED_BY_TYPE) })
       .passthrough()
-      .describe("checks, range_overlap, histogram, run_history or diff: build it with tellagen_build_figure"),
+      .describe("checks, range_overlap, histogram, run_history, diff or log_lines: build it with tellagen_build_figure"),
   ])
   .superRefine((figure, ctx) => {
     if ((LISTED_BY_TYPE as readonly string[]).includes(figure.type)) {
@@ -439,15 +469,16 @@ export const stepFigureSchema = z
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: issue.path, message: issue.message });
     }
     const bytes = new TextEncoder().encode(JSON.stringify(figure)).length;
-    if (bytes > MAX_FIGURE_BYTES) {
+    const limit = maxStepFigureBytes(figure.type);
+    if (bytes > limit) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `figure is ${bytes} bytes; the limit is ${MAX_FIGURE_BYTES}. Reduce a trend to at most 500 points, or send fewer runs or rows`,
+        message: `figure is ${bytes} bytes; the limit is ${limit}. Reduce a trend to at most 500 points, or send fewer runs or rows`,
       });
     }
   })
   .describe(
-    "ONE timeline block object that shows the step's key numbers, validated like a timeline event block. compare = a before and after with an optional threshold; trend = a series over time (give source with the query that produced it); stats = 2 to 4 key numbers; checks = pass or fail per check; range_overlap = two to four ranges that meet; histogram = bucket counts before and after; run_history = CI or deploy runs oldest first with the regression and fix marks; diff = up to 12 changed lines of the change. Build it with tellagen_build_figure (placement step_figure). Never invent a number: every value must come from a tool result.",
+    "ONE timeline block object that shows the step's key numbers, validated like a timeline event block. compare = a before and after with an optional threshold; trend = a series over time (give source with the query that produced it); stats = 2 to 4 key numbers; checks = pass or fail per check; range_overlap = two to four ranges that meet; histogram = bucket counts before and after; run_history = CI or deploy runs oldest first with the regression and fix marks; diff = up to 12 changed lines of the change; log_lines = the log lines that prove a claim, or the proof that there are none (needs log_lines_v1). Build it with tellagen_build_figure (placement step_figure). Never invent a number: every value must come from a tool result.",
   );
 
 /* ------------------------------------------------------------------ */
@@ -870,6 +901,31 @@ export function stripResultFigureExtras(summary: unknown): {
   return removed.length > 0 ? { summary: { ...summary, causal_paths: causalPaths }, removed } : { summary, removed };
 }
 
+/**
+ * A result summary whose steps carry no log_lines figure: a backend without
+ * log_lines_v1 rejects the figure and drops it. `removed` names each figure
+ * that was taken out of its step.
+ */
+export function stripResultLogLines(summary: unknown): {
+  summary: unknown;
+  removed: string[];
+} {
+  const removed: string[] = [];
+  if (!isRecord(summary) || !Array.isArray(summary.causal_paths)) return { summary, removed };
+  const causalPaths = summary.causal_paths.map((path, pathIndex) => {
+    if (!isRecord(path) || !Array.isArray(path.steps)) return path;
+    const steps = path.steps.map((step, stepIndex) => {
+      if (!isRecord(step) || !isLogLinesBlock(step.figure)) return step;
+      removed.push(`causal_paths[${pathIndex}].steps[${stepIndex}].figure`);
+      const rest = { ...step };
+      delete rest.figure;
+      return rest;
+    });
+    return { ...path, steps };
+  });
+  return removed.length > 0 ? { summary: { ...summary, causal_paths: causalPaths }, removed } : { summary, removed };
+}
+
 /** The sentence the tool adds when it dropped fields for an older backend. */
 export function unsupportedNotice(
   removed: string[],
@@ -879,6 +935,9 @@ export function unsupportedNotice(
   const more = removed.length > 6 ? `, and ${removed.length - 6} more` : "";
   if (capability === DIFF_LINES_CAPABILITY) {
     return `This Tellagen backend does not advertise ${capability}, so the unchanged lines and line numbers of ${shown}${more} were not sent and the changed lines went through. Update Tellagen to show them.`;
+  }
+  if (capability === LOG_LINES_CAPABILITY) {
+    return `This Tellagen backend does not advertise ${capability}, so the log_lines figure of ${shown}${more} was not sent and the rest went through. Show the log evidence as a checks figure, and put the lines in the finding. Update Tellagen to show log lines.`;
   }
   if (capability === FIGURE_EXTRAS_CAPABILITY) {
     return `This Tellagen backend does not advertise ${capability}, so the stats title, the stats after the fourth and runs_not_shown of ${shown}${more} were not sent and the rest of the figure went through. Update Tellagen to show them.`;
@@ -906,7 +965,7 @@ const WARNING_ADVICE: Record<string, string> = {
   links_dropped: "links must be http(s) addresses, at most 4 per ref, labels up to 60 characters",
   commands_dropped: "keep command under 1000 characters",
   figure_invalid:
-    "fix the figure to match a stats, compare, trend, checks, range_overlap, histogram, run_history or diff block (tellagen_build_figure checks it)",
+    "fix the figure to match a stats, compare, trend, checks, range_overlap, histogram, run_history, diff or log_lines block (tellagen_build_figure checks it)",
   structure_truncated: "keep ruled_out to 5, coverage to 8 and unknowns to 5",
   negative_not_ruled_out: "add a ruled_out entry for each negative finding that matters",
   gap_without_coverage: "add a coverage entry with state gap for each gap finding",

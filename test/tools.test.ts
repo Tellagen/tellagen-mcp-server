@@ -710,6 +710,8 @@ describe("Tool integration via client", () => {
           "strict_fields_v1",
           "cause_lead_v1",
           "responder_notes_v1",
+          "investigation_window_v1",
+          "question_checks_v1",
         ],
       });
     });

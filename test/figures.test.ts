@@ -650,11 +650,11 @@ describe("the guide's examples", () => {
 
   it("has one for every new type", () => {
     const types = examples.map((example) => example.type);
-    for (const type of ["range_overlap", "histogram", "run_history", "diff"]) expect(types).toContain(type);
+    for (const type of ["range_overlap", "histogram", "run_history", "diff", "log_lines"]) expect(types).toContain(type);
   });
 
   it.each(examples.map((example) => [example.type, example] as const))("builds the %s example", (_type, example) => {
-    const result = buildFigure({ placement: "timeline_block", figure: example });
+    const result = buildFigure({ placement: "timeline_block", figure: example }, { logLines: true });
     expect(result.ok, result.ok ? "" : result.issues.join("; ")).toBe(true);
   });
 });

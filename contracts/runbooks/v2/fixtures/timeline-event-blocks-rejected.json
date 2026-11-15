@@ -5,7 +5,7 @@
       "name": "unknown block type",
       "blocks": [{"type": "heatmap", "cells": [[1, 2], [3, 4]]}],
       "field": "blocks[0].type",
-      "message": "unknown block type \"heatmap\" (use stats, compare, trend, table, checks, changes, range_overlap, histogram, run_history or diff)"
+      "message": "unknown block type \"heatmap\" (use stats, compare, trend, table, checks, changes, range_overlap, histogram, run_history, diff or log_lines)"
     },
     {
       "name": "a number sent as text",
@@ -110,6 +110,20 @@
       "blocks": [{"type": "range_overlap", "min": 0, "max": 100, "rows": [{"label": "a", "from": 10, "to": 20}, {"label": "b", "from": 50, "to": 150}]}],
       "field": "blocks[0].rows[1].to",
       "message": "must be within min and max (0 to 100)"
+    },
+    {
+      "name": "log lines with no result and no scope",
+      "blocks": [{"type": "log_lines", "matched": 0}],
+      "field": "blocks[0].scanned",
+      "message": "is required when matched is 0, so the empty result says how much was searched"
+    },
+    {
+      "name": "log lines with more lines than matches",
+      "blocks": [{"type": "log_lines", "matched": 1, "lines": [
+        {"time": "2026-11-14T00:26:02Z", "level": "error", "text": "a"}, {"time": "2026-11-14T00:26:03Z", "level": "error", "text": "b"}
+      ]}],
+      "field": "blocks[0].lines",
+      "message": "has 2 lines but matched is 1"
     }
   ]
 }

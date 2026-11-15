@@ -13,6 +13,12 @@ import { rememberSourceBases, sourceBasesOf } from "../source-bases.js";
 import { legacyClientName, reportedClientName } from "../identity.js";
 import { GUIDE_RESOURCES } from "../guide-resources.js";
 import {
+  suggestionProblem,
+  WINDOW_MAX_DAYS,
+  WINDOW_SUGGESTION_REASON_MAX,
+  withWindowNote,
+} from "../run-window.js";
+import {
   protocolCapabilities,
   CAPABILITIES_HEADER,
   MCP_SERVER_VERSION,
@@ -28,6 +34,7 @@ import {
   stripResultChanges,
   stripResultDiffLines,
   stripResultFigureExtras,
+  stripResultLogLines,
   stripResultStructure,
   stripTraceStructure,
   summarizeWarnings,
@@ -39,7 +46,10 @@ import {
   COMPLETION_REPAIRS_CAPABILITY,
   supportsDiffLines,
   supportsFigureExtras,
+  supportsLogLines,
+  runWindowOf,
   FIGURE_EXTRAS_CAPABILITY,
+  LOG_LINES_CAPABILITY,
   traceStructureShape,
   unsupportedNotice,
   headlineNotice,
@@ -145,6 +155,30 @@ const resultQuestionVerificationSchema = z.object({
   evidence_refs: z.array(resultEvidenceRefSchema).optional(),
 });
 
+const windowSuggestionSchema = z
+  .object({
+    from: z.string().datetime({ offset: true }).describe("Start of the window you suggest, an RFC 3339 time"),
+    to: z
+      .string()
+      .datetime({ offset: true })
+      .optional()
+      .describe("End of the window you suggest. Leave it out for an incident that is still open."),
+    reason: z
+      .string()
+      .trim()
+      .min(1)
+      .max(WINDOW_SUGGESTION_REASON_MAX)
+      .describe("Why, in at most 200 characters, with the time of the first signal you found, for example: The first 502s are at 22:14, 2 hours before the window starts."),
+  })
+  .strict()
+  .superRefine((suggestion, ctx) => {
+    const problem = suggestionProblem(suggestion);
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `window_suggestion: ${problem}. A window is at most ${WINDOW_MAX_DAYS} days, starts before it ends and does not start in the future.` });
+  })
+  .describe(
+    "Only when the signal you found starts before the run window or after it: the window you would use. A person applies it; it never changes your run. Never use it to search more widely without a signal outside the window.",
+  );
+
 const resultSummarySchema = z
   .object({
     conclusion: z
@@ -196,6 +230,7 @@ const resultSummarySchema = z
     recommended_actions: z.array(resultRecommendedActionSchema).optional(),
     ...resultStructureShape,
     ...resultChangeShape,
+    window_suggestion: windowSuggestionSchema.optional(),
   })
   .describe("Structured RCA summary shown in Tellagen when the run completes");
 
@@ -359,7 +394,7 @@ function pickupProfileID() {
 /** The data source kinds a client can say it has, by Tellagen catalog key. */
 export const AVAILABLE_SOURCE_KEYS = ["grafana", "kubernetes", "github", "docs", "local_host"] as const;
 
-const availableSourceSchema = z
+export const availableSourceSchema = z
   .object({
     key: z.enum(AVAILABLE_SOURCE_KEYS).describe("Tellagen catalog key of the source"),
     state: z.enum(["found", "not_found"]).describe("Whether this client can reach the source"),
@@ -525,12 +560,13 @@ export function withRunGuides(input: unknown): unknown {
   const resources = GUIDE_RESOURCES.filter((guide) => guide.when !== "runbooks" || hasRunbooks).map(
     (guide) => ({ uri: guide.uri, read_when: guide.readWhen }),
   );
-  return {
+  // The window goes first, so a client that shows only the start of the answer shows it.
+  return withWindowNote({
     ...(data as Record<string, unknown>),
     mcp_active_run:
       "This run is now the active run of this session. Later calls may leave investigation_run_id out.",
     mcp_resources: resources,
-  };
+  });
 }
 
 /** Who holds the run, from the details of a run_has_active_client answer. */
@@ -1465,6 +1501,13 @@ export function registerInvestigationTools(
             body.result_summary = diffs.summary;
             notices.push(unsupportedNotice(diffs.removed, DIFF_LINES_CAPABILITY));
           }
+          // A log_lines figure goes only to a backend that advertises
+          // log_lines_v1; an older one rejects it and drops the figure.
+          const logs = stripResultLogLines(body.result_summary);
+          if (logs.removed.length > 0 && !(await supportsLogLines(client, run_id))) {
+            body.result_summary = logs.summary;
+            notices.push(unsupportedNotice(logs.removed, LOG_LINES_CAPABILITY));
+          }
           // A stats title, stats after the fourth and runs_not_shown go only
           // to a backend that advertises figure_extras_v1; an older one
           // rejects them and drops the whole figure (figure_invalid).
@@ -1476,6 +1519,13 @@ export function registerInvestigationTools(
             body.result_summary = extras.summary;
             notices.push(unsupportedNotice(extras.removed, FIGURE_EXTRAS_CAPABILITY));
           }
+        }
+        // window_suggestion goes only to a run that has a window; a strict older Tellagen refuses the field.
+        const sum = body.result_summary as Record<string, unknown> | undefined;
+        if (sum && sum.window_suggestion !== undefined && !(await runWindowOf(client, run_id))) {
+          const { window_suggestion: _w, ...rest } = sum;
+          body.result_summary = rest;
+          notices.push("This run has no window (this Tellagen does not list investigation_window_v1 for it), so window_suggestion was not sent. Say in a finding where the signal starts.");
         }
         const headline = headlineNotice(result_summary);
         if (headline) notices.push(headline);

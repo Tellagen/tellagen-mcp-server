@@ -16,6 +16,15 @@ Do these five things before you call `tellagen_complete_investigation`:
 
 When Tellagen answers `completed: false` with `repairs`, nothing was changed. Each repair has a `code`, the `field` path (or a runbook check id), what is `missing` and one `example` of a valid value that is never a value you sent. Fix every repair, then call `tellagen_complete_investigation` again with the same arguments.
 
+## The time window of the run
+
+When Tellagen lists `investigation_window_v1` (this server always advertises it at pickup), the pickup bundle has `request.context.window`, and the server puts a `mcp_window` note at the top of the answer. It has a `from`, a `to` (left out for an open incident, which means until the run ends), a `basis` and a `baseline_from`. The window is stored when the run is created, so it does not change while you work.
+
+- **Search for the cause inside the window.** Every query that looks for what went wrong uses a range between `from` and `to`. `tellagen_build_source_link` and `tellagen_build_figure` (a `log_lines` figure) use the window as their range when you send none, and tell you so in `range` and `notes`. If your query ran over another range, send `from` and `to`.
+- **Use the baseline only for counts.** The baseline is the stretch before `from`. Read it to learn whether a number is normal, for example the error count of the same hour on earlier days. Never look for the cause in it.
+- **When the signal starts outside the window, do not search outside it.** Send `window_suggestion` `{from, to, reason}` with `tellagen_complete_investigation` (it is a field of `result_summary`), and say so in a finding. The reason has at most 200 characters and names the first signal you found, for example: The first 502s are at 22:14, 2 hours before the window starts. `to` is left out for an incident that is still open. A window is at most 30 days. A person applies the suggestion; it never changes your run, and it never sets or proposes a root cause.
+- Tellagen warns with `evidence_outside_window` when a cited source has a range that reaches outside the window and its baseline together. A count over the baseline does not warn.
+
 ## A lead from a past incident
 
 When Tellagen finds a past incident that looks like this one and whose cause a person accepted, the pickup bundle has `request.context.suspected_cause_hints` (and the server adds `mcp_cause_lead`). Each hint has the past incident (`source_incident_id`, `source_title`), the accepted `cause_claim`, optionally the `fix`, the runbook step that supported it and `reasons` (`same_alert`, `same_service`, `same_cause`, `similar_words`, `linked`).
@@ -37,7 +46,7 @@ A client hook (`npx @tellagen/mcp-server trace-hook`) can record each Grafana or
 
 Tellagen is an incident investigation platform. Your role is to act as an on-call AI investigator: read incidents, gather evidence from observability and source control systems, post structured findings, and promote key findings to the incident timeline so human responders see them in the war room.
 
-## Tools available (50 total)
+## Tools available (51 total)
 
 The tools are in five toolsets. `diagnosis` and `incidents` are listed at the start. Call `tellagen_enable_toolset` with `timeline`, `postmortem`, `settings` or `all` to list the others: the timeline readers and editors and `tellagen_promote_finding` are in `timeline`, the postmortem tools in `postmortem`, and the datasource probe, the tool check tools, `tellagen_list_trace_steps`, `tellagen_list_runbooks`, `tellagen_list_investigation_runbook_waivers` and `tellagen_update_investigation_scope` in `settings`.
 
@@ -112,13 +121,14 @@ The run ID is optional on every run tool. After `tellagen_pick_up_investigation`
 | `tellagen_get_service` | GET | Read one service and its metadata |
 | `tellagen_probe_datasource` | GET | Probe a registered metadata-only datasource using local credentials without returning secrets |
 | `tellagen_build_source_link` | GET | Turn a Grafana, GitHub (commit, compare, pull request, Actions run or job, release) or Kubernetes reference into `links[]` (or a copyable `command`) for an evidence ref; calls only the Tellagen API |
-| `tellagen_build_figure` | — | Turn numbers you read from a tool result into a figure Tellagen draws (stats, compare, trend, table, checks, changes, range_overlap, histogram, run_history, diff) and check it against Tellagen's limits; no network call. Read `resource://tellagen/figure-guide` |
+| `tellagen_build_figure` | — | Turn numbers you read from a tool result into a figure Tellagen draws (stats, compare, trend, table, checks, changes, range_overlap, histogram, run_history, diff, log_lines) and check it against Tellagen's limits; no network call. Read `resource://tellagen/figure-guide` |
 
 ### MCP diagnostics
 | Tool | Method | What it does |
 |------|--------|-------------|
 | `tellagen_get_diagnostic_session` | GET | Read a `diag_*` MCP diagnostic session created from Settings → Local diagnosis (For admins, Check MCP tools) |
 | `tellagen_report_diagnostic_tools` | POST | Post sanitized MCP tool availability and access reports for a diagnostic session |
+| `tellagen_report_available_sources` | POST | Tell Tellagen which data sources this client can reach, with no `diag_` ID and no run (the tools table in Settings updates for this client) |
 
 ## MCP diagnostic lifecycle
 
@@ -143,6 +153,20 @@ Report statuses:
 - `access_status="partial"` when some capabilities work and others do not.
 
 Never include secrets, tokens, cookies, kubeconfig contents, local filesystem paths, or raw provider response bodies in diagnostic reports. Keep `checks[].summary` short and sanitized.
+
+### Kubernetes safety check
+
+When the tool is kubernetes, add this step. With the same kubeconfig and context the Kubernetes MCP server uses, run four `kubectl auth can-i` tests: `create pods`, `delete pods`, `create pods/exec` and `get secrets`. Print no output and no names. Report each as a check with a stable id: `k8s_can_create_pods`, `k8s_can_delete_pods`, `k8s_can_exec`, `k8s_can_read_secrets`. The status is `ok` when the answer is no, `failed` when it is yes, and `warning` or `not_checked` when the command could not run. The commands read access rules and change nothing. Keep the summary to one sentence.
+
+The result says what the identity could do, not what a model will do. A session that is not listened has no guard on its commands, so never call it read-only. A pickup sends only found or not_found, so it cannot carry this check.
+
+### Recheck from the client
+
+For a recheck with no `diag_` ID, call `tellagen_enable_toolset` with `settings`, look at the MCP servers and shell tools you have, map them to `grafana`, `kubernetes`, `github`, `docs` and `local_host`, and call `tellagen_report_available_sources` with each as `found` or `not_found` (and `kubernetes_checks` when you ran the safety check). For each tool that is not found, say in one sentence why this client cannot see it. Never print tokens, paths or raw output.
+
+### Find out why a tool is not found (a person runs it)
+
+`npx @tellagen/mcp-server doctor [--client claude-code|claude-desktop|codex|cursor] [--tool grafana|kubernetes|github|docs] [--fix] [--report]` reads the MCP config files of the clients on this computer (only because the person ran it), checks that each Grafana, Kubernetes, GitHub or documentation server can be started from the PATH that client uses, has its settings (names only) and, for Grafana, answers `/api/health` with no token. It prints one sentence for each problem. `--fix` prints a corrected entry and stops. `--report` posts names and statuses to Tellagen. It cannot see a running session: the model check above is still the truth for a session.
 
 ## Investigation lifecycle
 
@@ -339,6 +363,9 @@ Optional:
 | `evidence_refs` | array | Sources consulted (see below) |
 | `role` | enum | `confirms`, `supports`, `contradicts`, or `gap`. Send `contradicts` on a `negative` finding and `gap` on a `gap` finding. Without a role Tellagen stores `supports` |
 | `screenshots` | array | Standalone screenshots for this finding |
+| `checks` | array | A `gap` finding only: one to three yes or no checks, each `{source, question}` (see below). Sent only when Tellagen lists `question_checks_v1` |
+
+**A blocking gap is a few yes or no checks.** When a gap blocks the diagnosis, keep `claim` as the one question and add one to three `checks`. Each check is one yes or no question that ends with a question mark (at most 200 characters, never two questions joined by "and"), and `source` names the place where the person looks (at most 120 characters), for example Slack or the Tellagen workspace. Ask only what you could not check yourself; what you already checked goes in `evidence_summary`. Do not ask a person to judge a theory: a check is a fact they can read off a page in a minute. A person answers yes, no or not sure to each check, and while your run is working the answers reach you as a responder note. Treat not sure as no information, never as a yes or a no. Good: claim "Can the Tellagen bot post in Slack channel C0A8FBWB199?" with the checks {"source": "Slack", "question": "Is the Tellagen bot a member of channel C0A8FBWB199?"} and {"source": "Tellagen workspace", "question": "Is that channel linked to an incident of company 5?"}. Bad: one claim that asks whether the channel is linked and the bot is a member, and a check with no source. A check can never set or propose a root cause. Against a Tellagen without `question_checks_v1` the MCP leaves `checks` out and says so in `mcp_notice`.
 
 ### Evidence refs
 
@@ -518,9 +545,10 @@ Tellagen accepts any text. A headline over 15 words gets the warning `headline_t
 | Two to four ranges that meet | `range_overlap` | `rows` of `{label, from, to}` in one `unit`; optional `min` and `max`. Tellagen computes the overlap; never send it |
 | A distribution before and after | `histogram` | `edges` (3 to 61, increasing) and one count per bucket in `before` and `after`. The builder takes Prometheus cumulative `le` buckets as `buckets`. Tellagen computes the percentiles; never send them |
 | CI builds, jobs or deploys in order | `run_history` | `runs` oldest first (2 to 30) with `ref` and `result`, `marks` for the regression and the fix between two neighbouring runs. The builder takes the GitHub Actions run list as `github_runs` |
+| The log lines that prove it, or the proof that there are none | `log_lines` | Needs `log_lines_v1`. Built from a Loki result: at most 8 `lines` (time, level, text, up to 6 fields, a `relation`), `matched` of `scanned`, and the `source` range. See "Log lines" below |
 | The lines that broke or fixed it | `diff` | `path`, `ref`, `additions` and `deletions` of the whole change, every changed line of a change up to 12 lines (at most 6 hunks) in `hunks`, each removed line next to the line that replaced it. The builder takes a file's `patch` |
 
-`table` and `changes` are timeline blocks only, never a step figure. Every number comes from a tool result you can cite. If you do not have the number, leave the `figure` out. A figure is at most 16 KB. Put the unit in `unit`, not in the number. Never set `example`: that flag is for demo data. A Tellagen that does not know a figure type yet drops the figure and says so in `warnings` (`figure_invalid`).
+`table` and `changes` are timeline blocks only, never a step figure. Every number comes from a tool result you can cite. If you do not have the number, leave the `figure` out. A figure is at most 16 KB (48 KB for a `log_lines` figure). Put the unit in `unit`, not in the number. Never set `example`: that flag is for demo data. A Tellagen that does not know a figure type yet drops the figure and says so in `warnings` (`figure_invalid`).
 
 **Ruled out: `ruled_out`** (up to 5). `{label, explanation, finding_ids, links, confidence_percent}` for each cause you checked and excluded, taken from your `negative` findings.
 
@@ -611,6 +639,12 @@ Each change ref needs `ref`, `sha`, `title` or `links`, and should cite `finding
 Build each one with `tellagen_build_figure` (placement `step_figure`, or `timeline_block` for a timeline event). The builder checks the limits and never invents a value, so send only numbers you read from a tool result. These recipes are the same as in `resource://tellagen/figure-guide`, which some clients cannot read.
 
 **`stats`: the few numbers that matter.** Aim for four or fewer: the first four are tiles in one row, so put the total first and give a tone only to the exception. A source name belongs in a source chip, not in a caption. When `server_capabilities` in the pickup lists `figure_extras_v1` you may add a `title` of up to 80 characters that names the tiles (for example "Tests of the run") and send up to eight items; items five to eight are drawn as plain rows. From a test summary, put the total first, then passed, failed and skipped. Without `figure_extras_v1` the MCP drops the title and every item after the fourth and says so in `mcp_notice`, because an older Tellagen drops a figure that carries them. Pass the `run_id` to `tellagen_build_figure`.
+
+**`log_lines`: the log lines that prove it, or the proof that there are none.** Use it for log evidence instead of a `stats` tile: the reader reads the lines themselves. It needs `log_lines_v1` in `server_capabilities` (pass the `run_id`; without it the builder refuses and says to use a `checks` figure and the finding instead). Run the Loki query inside the run window and send the whole result to `tellagen_build_figure` as `streams` (the Loki result as returned, or its whole response body) or as `entries` (`[{timestamp, line, labels}]`), with `query`, `datasource`, `from` and `to`.
+- The builder keeps at most 8 lines, the ones that show the event first, then the lines you marked `unrelated`, then the rest with errors first. It reads each level from a stream label, from the JSON or logfmt of the line, or from a word at its start. The text stays as logged; only colour codes and secrets are removed, line breaks become a mark and a text over 500 characters is cut. It never writes a line you did not read in the result.
+- `matched` is how many lines the query matched in the range. It defaults to the lines you sent, so send `matched` when the query had a limit; the builder works out `lines_not_shown`. `scanned` is how many lines the query looked at (`query_loki_stats` returns it). Set `event_at` to the moment of the event.
+- **Mark what is not proof.** List terms that show the event in `match` (those lines become `matches_event`). Mark a line of another tenant, company or request as `unrelated`, with a note that says why, in `marks`: `{"field": {"key": "company_id", "value": "578"}, "relation": "unrelated", "note": "Company 578, 11 hours after the event"}`, or `{"contains": "...", ...}`. A line that looks like proof and is not is the one to mark, never to leave out. **Never use the text of an unrelated line as the quote of a finding.**
+- **A query that found nothing is proof only with its range.** Send `streams` as an empty list, `scanned` and the range (`from` and `to`): 0 of 2,313 lines from 00:26 to 01:26 says something; an empty list with no range does not.
 
 **`run_history`: which build broke and which fixed it.** Send the output of `gh run list` (or the GitHub Actions run list) as `github_runs`. The builder maps each run: `#<run number>` as the ref, the head sha, the start time, the event, the run page, and the conclusion as the result (`cancelled` stays `cancelled`; `timed_out` and `startup_failure` count as `failure`). A run that is skipped, neutral, stale or action_required has no result: leave it out. Runs are put oldest first; send 2 to 30. Add `job` (the failing job's name, from `gh run view <run id> --json jobs`) to the failing runs. If the history has more than 30 runs, send the 30 that matter (the runs around the break and the fix, oldest first) and set `runs_not_shown` to how many you left out; the strip then says "N more runs not shown." (`figure_extras_v1` only, otherwise the MCP drops it). Add up to 4 `marks`: `change_ref` is `regression` or `fix`, with the `sha` of the change (the mark goes before the first run built from it) or `between` with the refs of the two neighbouring runs. Set `repo` to `owner/name` so each run links to its page, and an optional `span` such as `{"from": "#4151", "to": "#4163", "label": "E2E Tests failed"}`.
 
@@ -849,6 +883,9 @@ Then immediately start investigating it.
 - **Stopping at a failed link.** If `tellagen_build_source_link` fails, send a read-only `command` and the `datasource` on the evidence ref.
 - **Proofs with no source.** An evidence ref for Grafana or GitHub with no `links`, or a Kubernetes check with no `command`, shows "No source link" to responders. Call `tellagen_build_source_link`; do not paste a hand-built address.
 - **Citing keys instead of ids.** `finding_ids` are the numeric ids `tellagen_post_finding` returned. Keys, claims or titles are dropped.
+- **Searching outside the window.** Look for the cause between the window's `from` and `to`. Use the baseline only for counts. When the signal starts outside, send `window_suggestion`.
+- **A compound blocking question.** Write a blocking gap as one to three yes or no `checks`, each naming its source, never one question joined with "and".
+- **A stats tile for log evidence.** Prefer a `log_lines` figure: it shows the lines. Quote only a line that is not marked `unrelated`.
 - **Inventing a figure.** A figure with a number you did not read from a tool result is worse than no figure.
 - **A chain with one step per finding.** Keep the chain to 2 to 4 steps that tell the story; put the rest in the evidence ledger as context findings.
 - **Hiding gaps.** A source you could not read belongs in `coverage` with state `gap` and in a `gap` finding, not in silence.
