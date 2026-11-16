@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "uvx",
+      "args": ["mcp-grafana"],
+      "env": { "PATH": "/opt/homebrew/bin", "GRAFANA_URL": "https://grafana.example.test", "GRAFANA_API_KEY": "fixture" }
+    },
+    "github": { "url": "https://github.example.test/mcp" }
+  }
+}

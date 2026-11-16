@@ -2,6 +2,22 @@
 
 All notable changes to `@tellagen/mcp-server` are in this file. The newest version is first. Each heading is `## <version> - <date>`; the release workflow copies the section of the tagged version into the GitHub release.
 
+## 0.6.0 - 2026-11-15
+
+### Added
+
+- `tellagen_report_available_sources` (toolset `settings`): a client tells Tellagen which data sources it can reach (`grafana`, `kubernetes`, `github`, `docs`, `local_host`, each found or not found) with no `diag_` ID and no run, so the tools table in Settings updates for that client. It posts to `POST /api/v1/settings/agent/tool-report` and says so clearly when the Tellagen it talks to has no such route yet.
+- The Kubernetes safety check. The client runs four `kubectl auth can-i` tests (create pods, delete pods, create `pods/exec`, get secrets) and reports them as checks with the ids `k8s_can_create_pods`, `k8s_can_delete_pods`, `k8s_can_exec` and `k8s_can_read_secrets` (`ok` when the answer is no, `failed` when it is yes). The protocol is in the guide and in the descriptions of `tellagen_report_available_sources` and `tellagen_report_diagnostic_tools`. It says what the identity could do, and a session that is not listened is never called read-only.
+- The `doctor` command: `npx @tellagen/mcp-server doctor [--client claude-code|claude-desktop|codex|cursor] [--tool grafana|kubernetes|github|docs] [--fix] [--report]`. It reads the MCP config files of the clients on this computer, only when a person runs it, and never writes them. For each Grafana, Kubernetes, GitHub or documentation server it checks that the command can be started from the PATH that client uses (Claude Desktop and Cursor use a shorter PATH than a terminal), that the settings the tool needs are in the entry (names only) and, for Grafana, that `GRAFANA_URL` answers `/api/health` with no token. It prints one sentence for each problem. `--fix` prints a corrected entry and stops: only plain args (flags, package names) are printed, every other arg and every env value is hidden. `--report` posts names and statuses only (no path, value, argument or file text): each source goes with its `access_status` (`missing_tool`, `auth_missing` or `unreachable`) and one plain sentence. It cannot see a running session, so the model check is still the truth for a session.
+
+- `tellagen_build_figure` builds a `log_lines` figure from the result of a Loki query. Send the streams (or a flat list of entries) with the query, datasource and range; the builder keeps at most 8 lines, the ones that show the event first, reads each level from a label, JSON, logfmt or a leading word, takes up to 6 fields from the line and its labels, counts `matched`, `scanned` and `lines_not_shown`, and removes colour codes and secrets from the text. `match` terms mark the lines that show the event, and `marks` mark a line of another tenant, company or request as `unrelated` with a note. A query with no result needs `scanned` and the range. It is built and sent only when Tellagen lists `log_lines_v1`; the timeline tools and the completion leave a `log_lines` figure out for an older Tellagen and say so. The figure guide and the skill teach it, and say that the text of an unrelated line is never the quote of a finding.
+- The time window of a run. The server advertises `investigation_window_v1`, puts `request.context.window` at the top of the pickup answer as `mcp_window`, and uses the window as the default range of `tellagen_build_source_link` and of a `log_lines` figure (the answer says so). The guide teaches: search for the cause inside the window, use the baseline only for counts, and send `window_suggestion` `{from, to, reason}` with the result when the signal starts outside it.
+- The server advertises `question_checks_v1`. `tellagen_post_finding` takes `checks` on a gap finding (one to three `{source, question}` yes or no checks); they are sent only when Tellagen lists `question_checks_v1`.
+
+### Changed
+
+- The vendored contract bundle moved to `2026-11-15.2`.
+
 ## 0.5.1 - 2026-11-13
 
 ### Added

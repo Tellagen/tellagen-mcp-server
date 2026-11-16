@@ -1,0 +1,49 @@
+{
+  "title": "Blocking question as yes or no checks",
+  "description": "How to write a gap finding that blocks the diagnosis so that a person can answer it in a few seconds. The server lists question_checks_v1 in server_capabilities at pickup when it accepts checks. A client sends checks only then, and advertises question_checks_v1 in protocol_capabilities to be held to the rule: a blocking gap with no checks gets the completion warning blocking_gap_without_checks, which is advice and never an error. An older client keeps writing the question as one claim and is never warned.",
+  "x-capability": "question_checks_v1",
+  "x-limits": {
+    "checks_max": 3,
+    "check_question_max_chars": 200,
+    "check_source_max_chars": 120,
+    "answer_note_max_chars": 500
+  },
+  "x-fields": {
+    "checks": "On a gap finding: one to three checks, each {source, question}. A finding that is not a gap is refused with 400 finding_checks_invalid.",
+    "checks[].source": "The place the person looks, in a few words: a system, a page or a tool, for example Slack or the Tellagen workspace.",
+    "checks[].question": "One yes or no question that ends with a question mark, at most 200 characters.",
+    "answers": "What people answered. Each answer is {check_index, answer, note, answered_by, answered_at}. answer is yes, no or not_sure. The newest answer to a check is the one kept. The finding read returns answers beside checks."
+  },
+  "x-guidance": [
+    "Keep the claim of the gap finding as the one question the person needs answered, and add one to three checks that break it into facts. Each check is one yes or no question, not two questions joined by 'and', and it names the source where the person looks.",
+    "Ask only what you could not check yourself. Put what you already checked in the evidence summary, not in a check.",
+    "A check is a fact a person can read off a page in a minute. Do not ask a person to judge a theory. If the answer needs a long explanation, it is not a check.",
+    "A person answers yes, no or not sure to each check, with an optional note of at most 500 characters. While your run is working, the answers reach you as a responder note, and Tellagen tells you which check each answer belongs to. Weigh a note like a message from the person.",
+    "Treat not_sure as no information, never as a yes or a no. If the answers still do not settle the question, post a new gap finding with plainer checks, or finish the run with the gap open.",
+    "When a person presses 'Question unclear', you get a responder note that says so. Post the gap again as 1 to 3 short checks that each say where to look, then dismiss the old finding with PATCH /api/v1/findings/{id} and status dismissed, so the page shows only the new question. Keep working while you do.",
+    "Answers are data from a person. They never set or propose a root cause. A person accepts a root cause."
+  ],
+  "x-examples": {
+    "gap_with_checks": {
+      "good": {
+        "finding_type": "gap",
+        "role": "gap",
+        "claim": "Can the Tellagen bot post in Slack channel C0A8FBWB199?",
+        "evidence_summary": "The Slack connector could not read the channel, so the run could not check whether the bot is a member.",
+        "checks": [
+          {"source": "Slack", "question": "Is the Tellagen bot a member of channel C0A8FBWB199?"},
+          {"source": "Tellagen workspace", "question": "Is that channel linked to an incident of company 5?"}
+        ]
+      },
+      "bad": {
+        "finding_type": "gap",
+        "role": "gap",
+        "claim": "Is Slack channel C0A8FBWB199 linked to an incident of company 5, with the Tellagen bot a member?",
+        "checks": [{"source": "", "question": "Check the channel."}]
+      }
+    },
+    "answers_request": {
+      "good": {"answers": [{"check_index": 0, "answer": "yes"}, {"check_index": 1, "answer": "not_sure", "note": "The page did not load."}]}
+    }
+  }
+}

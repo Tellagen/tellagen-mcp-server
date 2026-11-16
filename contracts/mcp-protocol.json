@@ -9,6 +9,8 @@
     "finding_roles_v2",
     "gap_findings_v2",
     "guidance_default_v1",
+    "investigation_window_v1",
+    "question_checks_v1",
     "responder_notes_v1",
     "run_images_v1",
     "runbook_plan_v2",
@@ -22,6 +24,8 @@
     "diagnosis_structure_v1",
     "diff_lines_v1",
     "figure_extras_v1",
+    "log_lines_v1",
+    "question_checks_v1",
     "recorded_steps_v1",
     "run_images_v1"
   ],
@@ -147,9 +151,17 @@
     {
       "method": "POST",
       "path": "/api/v1/incidents/{id}/findings",
-      "request_fields": ["investigation_run_id", "finding_type", "claim", "evidence_summary", "confidence", "confidence_reason", "evidence_refs"],
+      "request_fields": ["investigation_run_id", "finding_type", "claim", "evidence_summary", "confidence", "confidence_reason", "evidence_refs", "checks", "checks.source", "checks.question"],
       "response_fields": [],
       "error_codes": ["run_taken_over", "investigation_run_ended"]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/settings/agent/tool-report",
+      "since_bundle": "2026-11-15.1",
+      "request_fields": ["available_sources", "profile_id"],
+      "response_fields": ["accepted_sources", "ignored_sources"],
+      "error_codes": []
     }
   ]
 }

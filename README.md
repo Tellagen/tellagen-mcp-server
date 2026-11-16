@@ -97,6 +97,24 @@ After a restart of the client, ask it to continue. `tellagen_resume` picks the r
 
 In **Settings > Local diagnosis**, under **For admins**, **Check MCP tools** gives a prompt with a `diagnostic_session_id` such as `diag_abc123`. That is a tool check, not a run: the client turns on the `settings` toolset, runs safe read-only checks and calls `tellagen_report_diagnostic_tools`.
 
+To recheck from the client with no prompt to copy, ask it to run `tellagen_report_available_sources`: it posts the tools the client can reach (`grafana`, `kubernetes`, `github`, `docs`, `local_host`, each found or not found) to Tellagen, and the tools table in Settings shows them for that client. For Kubernetes the client also runs four `kubectl auth can-i` tests (create pods, delete pods, create `pods/exec`, get secrets) and reports them as checks. The tests read access rules and change nothing. They say what the Kubernetes identity could do, not what a model will do: a session that is not listened has no guard on its commands, so Tellagen never calls such a session read-only.
+
+### Find out why a tool is not found
+
+```
+npx @tellagen/mcp-server doctor [--client claude-code|claude-desktop|codex|cursor] [--tool grafana|kubernetes|github|docs] [--fix] [--report]
+```
+
+`doctor` is for a person to run. It reads the MCP config files of the AI clients on this computer, only because you ran it: Claude Code (`~/.claude.json`, and `.mcp.json` of the current folder), Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`, or the Windows and Linux place), Codex (`~/.codex/config.toml`) and Cursor (`~/.cursor/mcp.json`). It never writes them. For each server that is Grafana, Kubernetes, GitHub or documentation, it checks and says in one sentence what to do:
+
+- `command_resolves`: the command can be started. Claude Desktop and Cursor start servers from a shorter PATH than a terminal (`/usr/bin:/bin:/usr/sbin:/sbin` plus the `PATH` of the entry's `env`), so `uvx` that works in your terminal can fail there. The doctor then names the full path to use. Claude Code and Codex use the PATH of your terminal.
+- `env_present`: the settings the tool needs are in the entry (names only; a value is never printed or sent).
+- `health`: for Grafana, `GRAFANA_URL` answers `/api/health`. No token is sent.
+
+`--fix` prints a corrected entry and stops; it changes nothing. `--report` posts the result to Tellagen, only names and statuses in fixed words (no path, value, argument or file text), under the client's name, so the Settings table can show why a tool is not found. It reports only problems, never a tool as found.
+
+The doctor cannot see a running session. It reads config files, so the model check (Recheck in Settings, or `/tellagen:check-tools`) is still the truth for a session. It does not test what a Kubernetes identity can change. The exit code is 1 when it found a problem.
+
 ### If something is not set up
 
 The server always starts, so the client shows it as connected. What a tool call answers when it cannot work:
@@ -111,7 +129,7 @@ The server asks Tellagen once, right after the MCP handshake, whether the key wo
 
 ## Tools
 
-The server offers 50 tools, all with the prefix `tellagen_`, in five toolsets. A tool that reads never changes anything. A person, not an API key, accepts or rejects a root cause in Tellagen: no tool can do it.
+The server offers 51 tools, all with the prefix `tellagen_`, in five toolsets. A tool that reads never changes anything. A person, not an API key, accepts or rejects a root cause in Tellagen: no tool can do it.
 
 ### Toolsets
 
@@ -211,6 +229,7 @@ Setup checks and run inspection.
 | `tellagen_probe_datasource` | reads | Check the local setup of a datasource before you query it |
 | `tellagen_get_diagnostic_session` | reads | Read an MCP diagnostic session (a `diag_*` ID) |
 | `tellagen_report_diagnostic_tools` | adds | Report which MCP tools are visible and usable |
+| `tellagen_report_available_sources` | adds | Report which data sources this client can reach, with no check ID, so the tools table in Settings updates (also `/tellagen:check-tools` in the plugin) |
 | `tellagen_list_trace_steps` | reads | List the steps already posted, to avoid repeating work when you resume |
 | `tellagen_list_runbooks` | reads | List the runbooks that matched a run |
 | `tellagen_list_investigation_runbook_waivers` | reads | List the checks a responder waived |
@@ -231,6 +250,7 @@ Setup checks and run inspection.
 | `logout` | Remove the key from this computer (`--all` for every workspace). It does not sign the client out on the server |
 | `status` | Show the sign-in. `--line` prints one sentence for a client hook, or nothing when all is well; `--json` for a script |
 | `listen` | Take the diagnosis runs that wait for you and run each with Claude Code, with no window |
+| `doctor` | Find why a client cannot see a tool, from the config files of the clients on this computer. Reads only; `--fix` prints a corrected entry, `--report` sends names and statuses |
 | `trace-hook` | Record one tool call of a client hook as a step of the open run |
 
 (`listen-guard` and `listen-wrap` are internal: the listener starts Claude Code through them.)
@@ -410,13 +430,17 @@ The headline claim (`conclusion.sentence` of `result_summary`) states one cause 
 
 ### Capability negotiation
 
-At pickup the MCP server advertises, in `protocol_capabilities`, the runbook v2 bundle plus three optional capabilities. Tellagen lists the ones it accepts in the top-level `server_capabilities` of the pickup (and of `tellagen_get_incident_context`), for example `["diagnosis_structure_v1", "diagnosis_changes_v1", "run_images_v1"]`.
+At pickup the MCP server advertises, in `protocol_capabilities`, the runbook v2 bundle plus the optional capabilities. Tellagen lists the ones it accepts in the top-level `server_capabilities` of the pickup (and of `tellagen_get_incident_context`), for example `["diagnosis_structure_v1", "diagnosis_changes_v1", "run_images_v1"]`.
 
 | Capability | The MCP sends | Effect on Tellagen |
 | --- | --- | --- |
 | `diagnosis_structure_v1` | evidence ref `links`, `command`, `datasource`; `causal_paths` with `finding_ids`, `figure`, `links`; `ruled_out`, `coverage`, `unknowns`; trace `outcome` and `cause_key`; live causes | a confirmed or likely diagnosis without `causal_paths` is a hard error; every other check is a warning |
 | `diagnosis_changes_v1` | `change_refs`, and the `ci_run`, `deployment` and `release` link kinds | enables the warning `regression_source_missing` |
+| `investigation_window_v1` | (nothing extra) it reads `request.context.window` and puts it at the top of the pickup answer as `mcp_window`; it sends `window_suggestion` with a result when the signal lies outside the window | the pickup carries the window of the run; completion checks the suggestion and warns with `evidence_outside_window` |
+| `question_checks_v1` | `checks` (one to three `{source, question}` yes or no checks) on a gap finding | a person answers each check with yes, no or not sure; a blocking gap with no checks gets the warning `blocking_gap_without_checks` |
 | `run_images_v1` | (nothing extra) it reads screenshots with `tellagen_get_context_attachment` | the web says the client reads images; without it the responder is told the agent gets each caption and a link |
+
+A server-only capability, `log_lines_v1`, means Tellagen takes a `log_lines` figure. `tellagen_build_figure` builds one from the result of a Loki query (see Figures) only when the run lists it, and refuses with a clear message otherwise. The timeline tools and `tellagen_complete_investigation` leave a `log_lines` block or step figure out for a run that does not list it, and the tool result carries an `mcp_notice`. Likewise `question_checks_v1` is listed by Tellagen at pickup: without it `checks` are left off a gap finding and the result says so.
 
 One more capability is the server's alone: Tellagen lists `diff_lines_v1` in `server_capabilities` when a diff figure may carry unchanged lines (`op: "context"`) and line numbers (`old_no`, `new_no`). The MCP does not advertise it. Without it, a diff goes out with only its `+` and `-` lines and no numbers (an older Tellagen would drop the whole figure), and the tool result carries an `mcp_notice`. `tellagen_build_figure` takes the `run_id` for this check; the timeline tools go by the latest pickup of the process.
 
@@ -466,7 +490,9 @@ Each ref needs one of `ref`, `sha`, `title` or `links`; the MCP refuses an unkno
 | `run_history` | yes | yes | 2 to 30 runs oldest first, `runs_not_shown` (how many runs of a longer history were left out; with `figure_extras_v1` only), 4 marks, a span; the builder also takes the GitHub Actions run list (`github_runs`) and places marks by sha |
 | `diff` | yes | yes | `path`, `ref`, `additions`, `deletions`, 1 to 6 hunks and 12 changed lines in all (a short change is sent whole, each removed line next to its replacement); with `diff_lines_v1` also unchanged lines and line numbers; the builder also takes a unified `patch` and `select_hunks` |
 
-A step figure is at most 16 KB. The builder never sets `example` (demo data). The tool listing shows the four newer types by type only to keep it small; their fields are in `resource://tellagen/figure-guide`, and the tool checks them in full when it runs. A Tellagen that does not know a figure type yet answers a timeline block with `400 invalid_block`, and drops a step figure with the completion warning `figure_invalid`.
+| `log_lines` | yes | yes | needs `log_lines_v1`. 0 to 8 lines `{time, level, text, fields, relation, note}` (text 500, up to 6 fields, note 160), `matched` of `scanned` and a `source` range (`query`, `datasource`, `from`, `to`); matched 0 needs `scanned` and the range. The builder reads a Loki result (`streams`, or `entries`), keeps the 8 lines that show the event first, reads each level from a label, JSON, logfmt or a leading word, and marks lines you name as `matches_event`, `context` or `unrelated`. The range defaults to the run window |
+
+A step figure is at most 16 KB (48 KB for `log_lines`). The builder never sets `example` (demo data). The tool listing shows the five newer types by type only to keep it small; their fields are in `resource://tellagen/figure-guide`, and the tool checks them in full when it runs. A Tellagen that does not know a figure type yet answers a timeline block with `400 invalid_block`, and drops a step figure with the completion warning `figure_invalid`.
 
 ## Run context: screenshots, links and the parent run
 

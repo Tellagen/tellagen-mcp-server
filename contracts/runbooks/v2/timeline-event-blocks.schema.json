@@ -12,6 +12,7 @@
     "Use a histogram block when an average hides a slow tail: bucket edges (3 to 61, increasing) and one count per bucket for before and for after, plus the threshold (an SLO). Tellagen computes p50, p95, p99 and the share over the threshold from the buckets, so send counts, never percentiles.",
     "Use a run_history block for CI builds, scheduled jobs, canaries or deploys: runs oldest first, each with a ref, a result (success, failure, cancelled, pending) and the failing job, repo as owner/name so each run links to its page, marks for the change that introduced and the one that fixed it (between two neighbouring run refs, change_ref regression or fix), and an optional span with a label such as E2E Tests failed. If the history has more than 30 runs, send the 30 that matter (the runs around the break and the fix) and set runs_not_shown to how many you left out, so the strip can say so. A client that picked up a run sends runs_not_shown only when server_capabilities lists figure_extras_v1.",
     "Use a diff block for the change that broke something or fixed it: the file path, the commit ref, the added and removed counts of the whole change (additions and deletions are the size of the whole change, not of the lines you send), and the changed lines in hunks, each with op + or - and the text with its indentation. If the change has 12 or fewer changed lines (in at most 6 hunks), send all of them. If it has more, send the whole hunks the claim cites, in file order, at most 3, and at most 12 changed lines in all; if one hunk alone is longer, cut it after a complete pair of removed and added lines. Never send a changed line without its counterpart: a removed line comes with the line that replaced it, next to it. Add up to 2 unchanged lines (op context) before and after each hunk, and old_no and new_no (1-based) on every line when you know them. Unchanged lines and line numbers are optional, and a client that picked up a run sends them only when server_capabilities lists diff_lines_v1. Never invent a line number: if you do not have the real ones, leave every number out.",
+    "Use a log_lines block for log evidence: the lines that prove a claim, or the proof that there are none. Put in matched how many lines the query matched and in scanned how many it looked at, and fill source (kind, datasource, query, from and to) so the page can open the query in Grafana Explore. Send at most 8 lines, the ones that show the event first, each with its time, level and text as the log has them and up to 6 fields. Give every line a relation: matches_event, context, or unrelated, and say in note why an unrelated line is not proof (for example Company 578, 11 hours after the event). A line that looks like proof and is not is the one to mark, never to leave out. When the query found nothing, send matched 0 with scanned, source.from and source.to: 0 of 2,313 lines from 00:26 to 01:26 is proof, an empty list with no range is not. Set event_at to the moment of the event so the page can say how far a line is from it. Never write a line you did not read in a tool result. A client that picked up a run sends log_lines only when server_capabilities lists log_lines_v1.",
     "Set example: true only on a block that stands in for data you did not read from a tool result (a demo or an illustration); a block built from a tool result never sets it.",
     "Tone is a meaning, not decoration: good for a figure that is healthy or recovered, warn for one that needs attention, bad for one that is failing, neutral or no tone for a plain fact. Never use tone to emphasise.",
     "A block owns its numbers. Do not repeat in the note a number that a block already shows; the note says what happened and why, the block says how much.",
@@ -35,7 +36,8 @@
         {"$ref": "#/$defs/range_overlap"},
         {"$ref": "#/$defs/histogram"},
         {"$ref": "#/$defs/run_history"},
-        {"$ref": "#/$defs/diff"}
+        {"$ref": "#/$defs/diff"},
+        {"$ref": "#/$defs/log_lines"}
       ]
     },
     "slot": {"const": "summary", "description": "Draws the block above the note. Not together with anchor."},
@@ -481,6 +483,65 @@
             }
           }
         }
+      }
+    },
+    "log_lines": {
+      "type": "object",
+      "description": "The log lines that prove a claim, or the proof that there are none: how many lines matched out of how many were scanned, in what range, and up to 8 of the matches, each marked by how it relates to the event. Needs log_lines_v1.",
+      "additionalProperties": false,
+      "required": ["type", "matched"],
+      "x-rules": [
+        "lines is empty only when matched is 0, and has at most matched lines",
+        "lines and lines_not_shown together are at most matched",
+        "scanned is not below matched",
+        "matched 0 needs scanned, source.from and source.to"
+      ],
+      "properties": {
+        "type": {"const": "log_lines"},
+        "slot": {"$ref": "#/$defs/slot"},
+        "anchor": {"$ref": "#/$defs/anchor"},
+        "postmortem": {"$ref": "#/$defs/postmortem"},
+        "example": {"$ref": "#/$defs/example"},
+        "title": {"type": "string", "maxLength": 80},
+        "source": {
+          "type": "object",
+          "description": "Where the lines came from and the range that was searched. Provenance only: the page builds the Grafana Explore address from it.",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {"type": "string", "maxLength": 80},
+            "datasource": {"type": "string", "maxLength": 80},
+            "query": {"type": "string", "maxLength": 2000},
+            "from": {"type": "string", "format": "date-time"},
+            "to": {"type": "string", "format": "date-time", "description": "Not before from."}
+          }
+        },
+        "matched": {"type": "integer", "minimum": 0, "maximum": 1000000000, "description": "How many lines matched the query in the range."},
+        "scanned": {"type": "integer", "minimum": 0, "maximum": 1000000000, "description": "How many lines the query looked at. Not below matched."},
+        "event_at": {"type": "string", "format": "date-time", "description": "The moment of the event the lines are about."},
+        "lines": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["time", "level", "text"],
+            "properties": {
+              "time": {"type": "string", "format": "date-time"},
+              "level": {"enum": ["error", "warn", "info", "debug", "other"]},
+              "text": {"type": "string", "minLength": 1, "maxLength": 500, "description": "The line as logged. Tabs are allowed, other control characters are not."},
+              "fields": {
+                "type": "object",
+                "maxProperties": 6,
+                "propertyNames": {"maxLength": 40},
+                "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 200},
+                "description": "Labels or parsed fields of the line, such as task or error."
+              },
+              "relation": {"enum": ["matches_event", "context", "unrelated"], "description": "unrelated marks a line that looks like proof and is not."},
+              "note": {"type": "string", "maxLength": 160, "description": "Why the line is what its relation says."}
+            }
+          }
+        },
+        "lines_not_shown": {"type": "integer", "minimum": 0, "maximum": 1000000000, "description": "How many matches are not in lines."}
       }
     }
   }

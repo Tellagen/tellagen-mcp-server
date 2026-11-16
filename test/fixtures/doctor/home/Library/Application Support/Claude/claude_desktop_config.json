@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "uvx",
+      "args": ["mcp-grafana"],
+      "env": {
+        "GRAFANA_URL": "https://grafana.example.test",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "glsa_fixture_value_not_real"
+      }
+    },
+    "kubernetes": {
+      "command": "npx",
+      "args": ["-y", "kubernetes-mcp-server"]
+    },
+    "notes": { "command": "node", "args": ["notes.js"] }
+  }
+}

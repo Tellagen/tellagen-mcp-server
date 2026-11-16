@@ -39,6 +39,8 @@ interface RouteUse {
   request_fields: string[];
   response_fields: string[];
   error_codes: string[];
+  /** The first bundle version that holds this route. Older pins skip it: the route is new in Tellagen. */
+  since_bundle?: string;
 }
 interface McpProtocol {
   protocol_capabilities_sent: string[];
@@ -55,7 +57,7 @@ interface BackendProtocol {
 }
 
 /** What differs between what the server relies on and what Tellagen publishes, one sentence each. */
-export function compareProtocols(mcp: McpProtocol, backend: BackendProtocol): string[] {
+export function compareProtocols(mcp: McpProtocol, backend: BackendProtocol, pinned = "9999"): string[] {
   const problems: string[] = [];
   for (const name of mcp.protocol_capabilities_sent) {
     if (!backend.protocol_capabilities.includes(name)) problems.push(`The server advertises the capability "${name}" at pickup, but Tellagen does not know it.`);
@@ -67,6 +69,7 @@ export function compareProtocols(mcp: McpProtocol, backend: BackendProtocol): st
     if (!backend.client_headers.some((h) => h.toLowerCase() === name.toLowerCase())) problems.push(`The server sends the header ${name}, but Tellagen does not read it.`);
   }
   for (const route of mcp.routes) {
+    if (route.since_bundle && pinned < route.since_bundle) continue;
     const label = `${route.method} ${route.path}`;
     const theirs = backend.routes.find((r) => r.method === route.method && r.path === route.path);
     if (!theirs) {
@@ -112,7 +115,7 @@ describe("contracts/mcp-protocol.json says what the source does", () => {
 
   it("lists every route of the diagnosis path that the source calls, and no other", () => {
     const literals = new Set<string>();
-    for (const match of source.matchAll(/[`"}](\/api\/v1\/(?:auth\/device|auth\/me|investigations|investigation-runs|incidents\/\$\{[^}]+\}\/(?:findings|investigations\b))[^`"]*)[`"]/g)) {
+    for (const match of source.matchAll(/[`"}](\/api\/v1\/(?:auth\/device|auth\/me|settings\/agent\/tool-report|investigations|investigation-runs|incidents\/\$\{[^}]+\}\/(?:findings|investigations\b))[^`"]*)[`"]/g)) {
       literals.add(
         match[1]!
           .replace(/\$\{query\}/g, "")
@@ -153,7 +156,7 @@ describe("the server against the protocol file in the pinned bundle", () => {
 
   it.skipIf(!existsSync(backendProtocolPath))("finds no difference between the server and Tellagen", () => {
     const backend = JSON.parse(readFileSync(backendProtocolPath, "utf8")) as BackendProtocol;
-    expect(compareProtocols(ours, backend)).toEqual([]);
+    expect(compareProtocols(ours, backend, manifest.contract_version)).toEqual([]);
   });
 });
 
@@ -168,6 +171,14 @@ describe("a deliberate break turns the check red with the name of the field", ()
 
   it("agrees with a backend that has everything", () => {
     expect(compareProtocols(ours, backend())).toEqual([]);
+  });
+
+  it("skips a route that is newer than the pinned bundle, and checks it once the pin reaches it", () => {
+    const broken = backend();
+    broken.routes = broken.routes.filter((route) => route.path !== "/api/v1/settings/agent/tool-report");
+    expect(compareProtocols(ours, broken, "2026-11-12.4")).toEqual([]);
+    const text = compareProtocols(ours, broken, "2026-12-01.1").join("\n");
+    expect(text).toContain("POST /api/v1/settings/agent/tool-report: the server calls this route");
   });
 
   it("names the field when Tellagen renames a pickup field", () => {

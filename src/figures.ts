@@ -10,6 +10,21 @@ import {
   withoutDiffLineDetail,
   type DiffLine,
 } from "./diff-figure.js";
+import {
+  MAX_LOG_COUNT,
+  MAX_LOG_FIELD_KEY,
+  MAX_LOG_FIELD_VALUE,
+  MAX_LOG_FIELDS,
+  MAX_LOG_LINES,
+  MAX_LOG_NOTE,
+  MAX_LOG_TEXT,
+  readLogEntries,
+  relationCounts,
+  selectLogLines,
+  type LogLine,
+} from "./log-lines.js";
+import { redactLogText } from "./redact.js";
+import { windowEnd, type RunWindow } from "./run-window.js";
 
 /**
  * Figures are the typed widgets Tellagen draws in the Diagnosis tab, on the
@@ -35,6 +50,7 @@ export const STEP_FIGURE_TYPES = [
   "histogram",
   "run_history",
   "diff",
+  "log_lines",
 ] as const;
 
 /** Types the API accepts in a timeline event's `blocks`. */
@@ -49,10 +65,22 @@ export const TIMELINE_BLOCK_TYPES = [
   "histogram",
   "run_history",
   "diff",
+  "log_lines",
 ] as const;
 
 /** The most JSON one step figure may take, as the backend measures it. */
 export const MAX_STEP_FIGURE_BYTES = 16 * 1024;
+/**
+ * A log_lines figure may take more: 8 lines of 500 characters with fields are
+ * about 20 KB. A Tellagen that lists log_lines_v1 accepts a step figure of
+ * this size.
+ */
+export const MAX_LOG_LINES_STEP_FIGURE_BYTES = 48 * 1024;
+
+/** The most JSON a step figure of this type may take. */
+export function maxStepFigureBytes(type: unknown): number {
+  return type === "log_lines" ? MAX_LOG_LINES_STEP_FIGURE_BYTES : MAX_STEP_FIGURE_BYTES;
+}
 
 export type FigurePlacement = "step_figure" | "timeline_block";
 
@@ -64,6 +92,8 @@ export const MAX_STATS_TILES = 4;
 const MAX_RUNS_NOT_SHOWN = 1_000_000;
 /** The server takes a stats title, more than 4 stats and runs_not_shown. */
 export const FIGURE_EXTRAS_CAPABILITY = "figure_extras_v1";
+/** The server takes a log_lines figure. */
+export const LOG_LINES_CAPABILITY = "log_lines_v1";
 
 const number = z.number().finite().min(-MAX_ABS).max(MAX_ABS);
 const positive = z.number().finite().gt(0).max(MAX_ABS);
@@ -413,12 +443,76 @@ const diffBase = z
   })
   .strict();
 
+
+const logSourceSchema = z
+  .object({
+    kind: blockText(80).optional().describe("logql for Loki"),
+    datasource: blockText(80).optional().describe("The Grafana data source uid or name, so the page can open Explore"),
+    // Only source.query may hold line breaks and tabs.
+    query: z
+      .string()
+      .max(2000)
+      .refine((value) => !CODE_UNSAFE.test(value.replace(/\n/g, "")), { message: "must not contain control characters other than line breaks and tabs" })
+      .optional(),
+    from: rfc3339.optional(),
+    to: rfc3339.optional(),
+  })
+  .strict();
+
+// A log line keeps its indentation and may hold tabs; other control characters are refused.
+const logTextLine = codeLine(MAX_LOG_TEXT).refine((value) => value.trim() !== "", { message: "is required" });
+
+const logLineSchema = z
+  .object({
+    time: rfc3339,
+    level: z.enum(["error", "warn", "info", "debug", "other"]),
+    text: logTextLine,
+    fields: z
+      .record(blockText(MAX_LOG_FIELD_VALUE, true))
+      .superRefine((fields, ctx) => {
+        const keys = Object.keys(fields);
+        if (keys.length > MAX_LOG_FIELDS) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `at most ${MAX_LOG_FIELDS} fields (got ${keys.length})` });
+        }
+        for (const key of keys) {
+          const trimmed = key.trim();
+          if (trimmed === "" || charCount(trimmed) > MAX_LOG_FIELD_KEY || BLOCK_UNSAFE.test(trimmed)) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: `the field name "${key.slice(0, 20).replace(/[\u0000-\u001f]/g, " ")}" must be 1 to ${MAX_LOG_FIELD_KEY} characters, on one line` });
+          }
+        }
+        const trimmedKeys = keys.map((key) => key.trim());
+        if (new Set(trimmedKeys).size !== trimmedKeys.length) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "has two field names that are the same once trimmed" });
+        }
+      })
+      .optional(),
+    relation: z.enum(["matches_event", "context", "unrelated"]).optional(),
+    note: blockText(MAX_LOG_NOTE).optional(),
+  })
+  .strict();
+
+const logCount = z.number().int().min(0).max(MAX_LOG_COUNT);
+
+const logLinesBase = z
+  .object({
+    type: z.literal("log_lines"),
+    title: blockText(80).optional(),
+    source: logSourceSchema.optional(),
+    matched: logCount.describe("How many lines matched the query in the range"),
+    scanned: logCount.optional().describe("How many lines the query looked at. Not below matched."),
+    event_at: rfc3339.optional().describe("The moment of the event the lines are about"),
+    lines: z.array(logLineSchema).max(MAX_LOG_LINES).optional(),
+    lines_not_shown: logCount.optional().describe("How many matches are not in lines"),
+  })
+  .strict();
+
 /** Exported for the step figure schema of tellagen_complete_investigation. */
 export const checksBlockSchema = checksBase;
 export const rangeOverlapBlockSchema = rangeOverlapBase;
 export const histogramBlockSchema = histogramBase;
 export const runHistoryBlockSchema = runHistoryBase;
 export const diffBlockSchema = diffBase;
+export const logLinesBlockSchema = logLinesBase;
 
 export type FigureRuleIssue = { path: Array<string | number>; message: string };
 
@@ -580,6 +674,27 @@ export function figureRuleIssues(block: { type: string } & Record<string, unknow
     const b = block as unknown as z.infer<typeof diffBase>;
     issues.push(...diffRuleIssues(b.hunks));
   }
+
+  if (block.type === "log_lines") {
+    const b = block as unknown as z.infer<typeof logLinesBase>;
+    const shown = b.lines?.length ?? 0;
+    if (b.scanned !== undefined && b.scanned < b.matched) add(["scanned"], "must not be below matched");
+    if (shown > b.matched) add(["lines"], `has ${shown} lines but matched is ${b.matched}`);
+    else if (b.matched > 0 && shown === 0) {
+      add(["lines"], "needs at least 1 line when matched is above 0; send matched 0 for a query with no result");
+    } else if ((b.lines_not_shown ?? 0) > b.matched - shown) {
+      add(["lines_not_shown"], "must not be more than the matches that are not in lines");
+    }
+    if (b.matched === 0) {
+      if (b.scanned === undefined) add(["scanned"], "is required when matched is 0, so the empty result says how much was searched");
+      if (b.source?.from === undefined || b.source?.to === undefined) {
+        add(["source"], "needs from and to when matched is 0, so the empty result says where and when it searched");
+      }
+    }
+    const from = b.source?.from === undefined ? undefined : Date.parse(b.source.from);
+    const to = b.source?.to === undefined ? undefined : Date.parse(b.source.to);
+    if (from !== undefined && to !== undefined && from > to) add(["source", "to"], "must not be before from");
+  }
   return issues;
 }
 
@@ -606,6 +721,7 @@ export const timelineBlockSchema = z.discriminatedUnion("type", [
   histogramBase.extend(placementFields),
   runHistoryBase.extend(placementFields),
   diffBase.extend(placementFields),
+  logLinesBase.extend(placementFields),
 ]);
 
 /**
@@ -814,6 +930,62 @@ const diffInput = z
   })
   .strict();
 
+
+const logMarkSchema = z
+  .object({
+    contains: z.string().min(1).max(200).optional().describe("Marks every line that holds this text (case does not count)"),
+    field: z
+      .object({ key: z.string().min(1).max(MAX_LOG_FIELD_KEY), value: z.string().min(1).max(MAX_LOG_FIELD_VALUE) })
+      .strict()
+      .optional()
+      .describe("Marks every line whose JSON or logfmt field, or whose stream label, has this value, for example company_id 578"),
+    relation: z.enum(["matches_event", "context", "unrelated"]),
+    note: blockText(MAX_LOG_NOTE).optional().describe("Why the line is what its relation says, for example Company 578, 11 hours after the event"),
+  })
+  .strict()
+  .refine((mark) => mark.contains !== undefined || mark.field !== undefined, { message: "send contains or field" });
+
+const logLinesInput = z
+  .object({
+    type: z.literal("log_lines"),
+    title: blockText(80).optional(),
+    query: z.string().max(2000).optional().describe("The LogQL that ran. It becomes source.query so the page can open it in Grafana Explore."),
+    datasource: blockText(80).optional().describe("The Grafana data source uid or name the query ran against"),
+    kind: blockText(80).optional().describe("Defaults to logql when query is sent"),
+    from: rfc3339.optional().describe("Start of the range the query searched. Defaults to the start of the run window."),
+    to: rfc3339.optional().describe("End of the range. Defaults to the end of the run window, or now for an open one."),
+    streams: z
+      .unknown()
+      .optional()
+      .describe("The streams of a Loki result, as returned: [{stream: {labels}, values: [[time, line], ...]}]. The whole Loki response body is accepted too."),
+    entries: z
+      .array(z.record(z.unknown()))
+      .max(5000)
+      .optional()
+      .describe("Or a flat list of entries: [{timestamp, line, labels}], as the Grafana log tools return them."),
+    matched: logCount
+      .optional()
+      .describe("How many lines the query matched in the range, when it is more than you send (the query had a limit). Defaults to the number of lines you send."),
+    scanned: logCount.optional().describe("How many lines the query looked at (query_loki_stats entries). Always send it with matched 0."),
+    event_at: rfc3339.optional().describe("The moment of the event, so the page can say how far a line is from it"),
+    match: z
+      .array(z.string().min(1).max(200))
+      .max(8)
+      .optional()
+      .describe("Terms that show the event. Lines that hold one are marked matches_event and come first."),
+    marks: z
+      .array(logMarkSchema)
+      .max(12)
+      .optional()
+      .describe("Mark lines by text or by a field: lines of another tenant, company or request are unrelated, with a note that says why. The first mark that fits a line wins."),
+    field_keys: z
+      .array(z.string().min(1).max(MAX_LOG_FIELD_KEY))
+      .max(MAX_LOG_FIELDS)
+      .optional()
+      .describe("The fields to show on each line, in order. Without it the builder takes up to six from the line and its labels."),
+  })
+  .strict();
+
 /** What tellagen_build_figure accepts. */
 export const figureInputSchema = z.discriminatedUnion("type", [
   statsBase,
@@ -826,12 +998,13 @@ export const figureInputSchema = z.discriminatedUnion("type", [
   histogramInput,
   runHistoryInput,
   diffInput,
+  logLinesInput,
 ]);
 
 export type FigureInput = z.infer<typeof figureInputSchema>;
 
 /** The four figure types whose fields the tool listing leaves to the guide. */
-export const GUIDE_ONLY_FIGURE_TYPES = ["range_overlap", "histogram", "run_history", "diff"] as const;
+export const GUIDE_ONLY_FIGURE_TYPES = ["range_overlap", "histogram", "run_history", "diff", "log_lines"] as const;
 
 /**
  * The figure as tellagen_build_figure lists it. The six original types carry
@@ -850,7 +1023,7 @@ export const figureToolInputSchema = z.discriminatedUnion("type", [
     .object({ type: z.enum(GUIDE_ONLY_FIGURE_TYPES) })
     .passthrough()
     .describe(
-      "range_overlap, histogram, run_history or diff, with the fields in resource://tellagen/figure-guide. Checked in full when the tool runs.",
+      "range_overlap, histogram, run_history, diff or log_lines, with the fields in resource://tellagen/figure-guide. Checked in full when the tool runs.",
     ),
 ]);
 
@@ -1294,6 +1467,12 @@ export type FigureOptions = {
   figureExtras?: boolean;
   /** The server lists diff_lines_v1: a diff may carry unchanged lines and line numbers. */
   diffLines?: boolean;
+  /** The server lists log_lines_v1: it takes a log_lines figure. */
+  logLines?: boolean;
+  /** The window of the run, the default range of a log_lines figure. */
+  window?: RunWindow;
+  /** The clock, for the end of an open window. */
+  now?: Date;
 };
 
 /**
@@ -1325,6 +1504,116 @@ function buildDiff(input: DiffInput, options: FigureOptions): Built {
   }
   notes.push(...diffShapeAdvice(out, input.additions, input.deletions));
   return { block: { ...rest, hunks: out }, notes };
+}
+
+
+type LogLinesInput = z.infer<typeof logLinesInput>;
+
+/**
+ * A log_lines block from the result of a Loki query. The builder reads the
+ * lines, parses the level, keeps at most 8 (the ones that show the event
+ * first), and counts what is left out. Counts and times come from the result
+ * or from what the agent sent; a range the agent did not send is the run
+ * window, and the notes say so.
+ */
+function buildLogLines(input: LogLinesInput, options: FigureOptions): Built {
+  const { streams, entries: rawEntries, query, datasource, kind, from, to, matched, scanned, event_at, match, marks, field_keys, ...rest } = input;
+  const notes: string[] = [];
+  const read = readLogEntries({ streams, entries: rawEntries });
+  if (read.issues.length > 0) return { issues: read.issues.slice(0, 8) };
+  if (streams === undefined && rawEntries === undefined) {
+    return {
+      issues: [
+        "streams: send the streams of the Loki result, or entries, even for a query with no result (an empty list, with matched 0, scanned, from and to).",
+      ],
+    };
+  }
+
+  const eventMs = event_at === undefined ? undefined : Date.parse(event_at);
+  const selection = selectLogLines(read.entries, {
+    match,
+    marks,
+    fieldKeys: field_keys,
+    eventAt: eventMs,
+  });
+  notes.push(...selection.notes);
+  const total = selection.total;
+  // Values beyond the input cap were counted, not kept: they are matches too.
+  const overflow = read.overflow;
+  if (overflow > 0) {
+    notes.push(`The result held ${total + overflow} lines; only the first ${total} were read. The rest are counted in matched and lines_not_shown.`);
+  }
+  const matchedCount = matched ?? total + overflow;
+  if (matched === undefined) {
+    notes.push(
+      `matched is the ${total + overflow} lines you sent. If the query had a limit and more lines matched, send matched with the real count.`,
+    );
+  } else if (matched < total + overflow) {
+    return { issues: [`matched: ${matched} is below the ${total + overflow} lines you sent. Send the number the query matched in the range.`] };
+  }
+
+  const source: Record<string, string> = {};
+  if (query !== undefined && query.trim() !== "") source.query = redactLogText(query.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/g, " "));
+  if (datasource !== undefined && datasource.trim() !== "") source.datasource = datasource;
+  if (kind !== undefined && kind.trim() !== "") source.kind = kind;
+  else if (source.query !== undefined) source.kind = "logql";
+
+  let rangeFrom = from;
+  let rangeTo = to;
+  const window = options.window;
+  if (window !== undefined && (rangeFrom === undefined || rangeTo === undefined)) {
+    const used: string[] = [];
+    if (rangeFrom === undefined) {
+      rangeFrom = window.from;
+      used.push("from");
+    }
+    if (rangeTo === undefined) {
+      rangeTo = windowEnd(window, options.now);
+      used.push("to");
+    }
+    notes.push(
+      `${used.join(" and ")} ${used.length === 1 ? "was" : "were"} set to the run window because you sent none. If the query ran over another range, send from and to.`,
+    );
+  }
+  if (rangeFrom !== undefined) source.from = rangeFrom;
+  if (rangeTo !== undefined) source.to = rangeTo;
+  if (window !== undefined && rangeFrom !== undefined && rangeTo !== undefined && (from !== undefined || to !== undefined)) {
+    const start = Date.parse(rangeFrom);
+    const end = Date.parse(rangeTo);
+    const lowest = Date.parse(window.baseline_from ?? window.from);
+    const highest = window.to === undefined ? Number.POSITIVE_INFINITY : Date.parse(window.to);
+    if (Number.isFinite(start) && Number.isFinite(end) && (start < lowest || end > highest)) {
+      notes.push(
+        "The range reaches outside the run window and its baseline. Search for the cause inside the window; if the signal really starts outside it, send window_suggestion with the result.",
+      );
+    }
+  }
+
+  const lines = selection.lines;
+  if (matchedCount > 0 && lines.length === 0) {
+    return { issues: ["streams: the result holds no usable line, but matched is above 0. Send the lines the query returned."] };
+  }
+  const block: Record<string, unknown> = { ...rest, matched: matchedCount };
+  if (Object.keys(source).length > 0) block.source = source;
+  if (scanned !== undefined) block.scanned = scanned;
+  if (event_at !== undefined) block.event_at = event_at;
+  block.lines = lines;
+  const notShown = matchedCount - lines.length;
+  if (notShown > 0) block.lines_not_shown = notShown;
+  if (matchedCount === 0 && scanned === undefined) {
+    return {
+      issues: [
+        "scanned: send how many lines the query looked at (for example from query_loki_stats) with matched 0. An empty result without the range and the count is not proof.",
+      ],
+    };
+  }
+  if (lines.some((line) => line.relation === "unrelated")) {
+    notes.push("A line marked unrelated is not proof: never use its text as the quote of a finding.");
+  }
+  if (lines.length > 0 && lines.every((line) => line.relation === undefined) && match === undefined && marks === undefined) {
+    notes.push("No line is marked. Send match terms for the lines that show the event, and marks for a line of another tenant, company or request, so a reader can tell proof from noise.");
+  }
+  return { block, notes };
 }
 
 /**
@@ -1363,6 +1652,11 @@ export function withoutFigureExtrasInBlock(block: unknown): { block: unknown; wh
     what.push("runs_not_shown");
   }
   return what.length > 0 ? { block: record, what } : { block, what };
+}
+
+/** Whether a block is a log_lines figure. */
+export function isLogLinesBlock(block: unknown): boolean {
+  return typeof block === "object" && block !== null && (block as { type?: unknown }).type === "log_lines";
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -1406,6 +1700,17 @@ const describe = (block: Record<string, unknown>): string => {
       const context = lines.length - changed;
       const numbered = lines.some((l) => l.old_no !== undefined || l.new_no !== undefined);
       return `diff of ${block.path} at ${block.ref}: +${block.additions} -${block.deletions} in the whole change, ${plural(changed, "changed line")} shown${context > 0 ? ` with ${plural(context, "unchanged line")}` : ""}${numbered ? " and line numbers" : ""}`;
+    }
+    case "log_lines": {
+      const lines = (block.lines as LogLine[] | undefined) ?? [];
+      const counts = relationCounts(lines);
+      const marked = [
+        counts.matches_event > 0 ? `${counts.matches_event} matching the event` : "",
+        counts.context > 0 ? `${counts.context} context` : "",
+        counts.unrelated > 0 ? `${counts.unrelated} unrelated` : "",
+      ].filter((part) => part !== "");
+      const scanned = typeof block.scanned === "number" ? ` of ${block.scanned} scanned` : "";
+      return `log_lines: ${block.matched} lines matched${scanned}, ${plural(lines.length, "line")} shown${marked.length > 0 ? ` (${marked.join(", ")})` : ""}`;
     }
     default:
       return `changes with ${(block.rows as unknown[]).length} rows`;
@@ -1454,6 +1759,17 @@ export function buildFigure(input: BuildFigureInput, options: FigureOptions = {}
   } else if (figure.type === "diff") {
     const failed = take(buildDiff(figure, options));
     if (failed) return failed;
+  } else if (figure.type === "log_lines") {
+    if (options.logLines !== true) {
+      return {
+        ok: false,
+        issues: [
+          `type: this Tellagen does not list ${LOG_LINES_CAPABILITY} in server_capabilities, so it would drop a log_lines figure. Show the log evidence as a checks or stats figure, and put the lines in the finding's evidence_summary.`,
+        ],
+      };
+    }
+    const failed = take(buildLogLines(figure, options));
+    if (failed) return failed;
   } else if (figure.type === "table") {
     block = {
       ...figure,
@@ -1482,10 +1798,11 @@ export function buildFigure(input: BuildFigureInput, options: FigureOptions = {}
 
   if (input.placement === "step_figure") {
     const bytes = new TextEncoder().encode(JSON.stringify(block)).length;
-    if (bytes > MAX_STEP_FIGURE_BYTES) {
+    const limit = maxStepFigureBytes(block.type);
+    if (bytes > limit) {
       return {
         ok: false,
-        issues: [`figure: ${bytes} bytes; a step figure holds at most ${MAX_STEP_FIGURE_BYTES}. Send fewer points, runs or rows, or put it on a timeline event.`],
+        issues: [`figure: ${bytes} bytes; a step figure holds at most ${limit}. Send fewer points, runs or rows, or put it on a timeline event.`],
       };
     }
   }
@@ -1499,7 +1816,7 @@ export function buildFigure(input: BuildFigureInput, options: FigureOptions = {}
     notes,
     use:
       input.placement === "step_figure"
-        ? "Put this object in result_summary.causal_paths[].steps[].figure. One figure per step. It needs the diagnosis structure the pickup advertises as diagnosis_structure_v1. A Tellagen older than these figure types drops a checks, range_overlap, histogram, run_history or diff figure and says so in the completion warnings (figure_invalid)."
+        ? "Put this object in result_summary.causal_paths[].steps[].figure. One figure per step. It needs the diagnosis structure the pickup advertises as diagnosis_structure_v1. A Tellagen older than these figure types drops a checks, range_overlap, histogram, run_history, diff or log_lines figure and says so in the completion warnings (figure_invalid)."
         : "Put this object in the blocks array of tellagen_post_timeline_event or tellagen_update_timeline_event. An update replaces the whole array, so send every block you want to keep.",
   };
 }

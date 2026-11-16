@@ -6,11 +6,18 @@ import { formatError } from "../errors.js";
 import {
   DIFF_LINES_CAPABILITY,
   FIGURE_EXTRAS_CAPABILITY,
+  LOG_LINES_CAPABILITY,
   supportsDiffLines,
   supportsFigureExtras,
+  supportsLogLines,
   unsupportedNotice,
 } from "../diagnosis-structure.js";
-import { timelineBlockRefSchema, withoutDiffLineDetailInBlock, withoutFigureExtrasInBlock } from "../figures.js";
+import {
+  isLogLinesBlock,
+  timelineBlockRefSchema,
+  withoutDiffLineDetailInBlock,
+  withoutFigureExtrasInBlock,
+} from "../figures.js";
 
 const timelineMutationSchema = {
   title: z.string().min(1).optional(),
@@ -122,6 +129,17 @@ async function blocksForBackend<T extends { blocks?: unknown[] }>(
   if (!params.blocks) return { params };
   let blocks = params.blocks;
   const notices: string[] = [];
+
+  // A log_lines block goes only to a backend that advertises log_lines_v1; an
+  // older one rejects the block. It is left out and the rest goes through.
+  const logRemoved: string[] = [];
+  blocks.forEach((block, index) => {
+    if (isLogLinesBlock(block)) logRemoved.push(`blocks[${index}]`);
+  });
+  if (logRemoved.length > 0 && !(await supportsLogLines(client))) {
+    blocks = blocks.filter((block) => !isLogLinesBlock(block));
+    notices.push(unsupportedNotice(logRemoved, LOG_LINES_CAPABILITY));
+  }
 
   const diffRemoved: string[] = [];
   const noDiffDetail = blocks.map((block, index) => {

@@ -1,6 +1,6 @@
 {
-  "contract_version": "2026-11-12.4",
-  "bundle_sha256": "be6b865611486f0643b93475e12f5aa110baeedb2b40e8e1c577f5af90951e70",
+  "contract_version": "2026-11-15.2",
+  "bundle_sha256": "2b938382ff9164ec69435795c60c7a56d5dd13e61dc5bdd7e7cf67461b47df61",
   "bundle_digest_algorithm": "sha256(sorted(path + NUL + file_sha256 + LF))",
   "files": [
     {
@@ -10,13 +10,13 @@
     },
     {
       "path": "v2/client-protocol.json",
-      "sha256": "7e56204abb9244224da34e16f7a03ab9a98ec011ee6818238a0070445b5e2124",
-      "bytes": 26452
+      "sha256": "65fd7731653370816489c6ffea7925a765e01440cd14d4a72042a649b06c5d7e",
+      "bytes": 27974
     },
     {
       "path": "v2/client-writes.guidance.json",
-      "sha256": "21308777a7e2df31becfaf0d30d15d34d15209c82a74d5ce722412de9641b6a0",
-      "bytes": 5623
+      "sha256": "cb6edb75eec86edc9bdd4705d2bff12636cd03c659689b71a8ecc58e72be418c",
+      "bytes": 7796
     },
     {
       "path": "v2/compiled-plan.schema.json",
@@ -40,13 +40,23 @@
     },
     {
       "path": "v2/fixtures/timeline-event-blocks-rejected.json",
-      "sha256": "180918b71679e3155584167c8869d216e82938570ac49a15633692215c4b3999",
-      "bytes": 5829
+      "sha256": "21886fb5e1d785c5782ca48a4c358e3285992827d3b5e0d98dc5015f6233f8a1",
+      "bytes": 6459
     },
     {
       "path": "v2/fixtures/timeline-event-with-blocks.json",
       "sha256": "944f8fcaaaacd81c2f2b0d42bd5e3baa32c26c33ce04d71a0187968158d2a7fe",
       "bytes": 3361
+    },
+    {
+      "path": "v2/investigation-window.guidance.json",
+      "sha256": "72a3709e76fe7881d151886b73367d7683fa929a3af129b2a5b790ec0829acd9",
+      "bytes": 2915
+    },
+    {
+      "path": "v2/question-checks.guidance.json",
+      "sha256": "af5bfbd8cccdcf33defa7b9071a326fe58b3ef819a79d13b6e0058adc9b4f929",
+      "bytes": 3919
     },
     {
       "path": "v2/result-summary.guidance.json",
@@ -60,8 +70,8 @@
     },
     {
       "path": "v2/timeline-event-blocks.schema.json",
-      "sha256": "8c47e3f39cbdbbcafe69215b07af763ce110a561f01491da8bdc0db968f2c76f",
-      "bytes": 26585
+      "sha256": "3026b10055809bd0dd7aa219e2b89a07190822e1d27861d6cc1eb839478261ec",
+      "bytes": 31084
     }
   ]
 }

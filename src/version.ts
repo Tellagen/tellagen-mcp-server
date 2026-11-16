@@ -1,4 +1,4 @@
-export const MCP_SERVER_VERSION = "0.5.1";
+export const MCP_SERVER_VERSION = "0.6.0";
 
 export const INVESTIGATION_PROTOCOL_CAPABILITIES = [
   "runbook_plan_v2",
@@ -13,6 +13,8 @@ export const INVESTIGATION_PROTOCOL_CAPABILITIES = [
   "strict_fields_v1",
   "cause_lead_v1",
   "responder_notes_v1",
+  "investigation_window_v1",
+  "question_checks_v1",
 ] as const;
 
 /** Client capabilities that a person can switch off with an environment variable. */

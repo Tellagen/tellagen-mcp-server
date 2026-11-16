@@ -1,0 +1,17 @@
+model = "fixture-model"
+
+# Servers
+[mcp_servers.grafana]
+command = "uvx"
+args = ["mcp-grafana"]
+env = { GRAFANA_URL = "https://grafana.example.test", GRAFANA_API_KEY = "fixture" }
+
+[mcp_servers.github]
+command = "npx"
+args = [
+  "-y",
+  "github-mcp-server",
+]
+
+[mcp_servers.github.env]
+GITHUB_TOKEN = "fixture"

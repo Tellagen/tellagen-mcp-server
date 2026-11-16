@@ -1,0 +1,45 @@
+{
+  "title": "Investigation pickup: the time window of the run",
+  "description": "How to use context.window in the pickup request. The server adds it when the client advertised investigation_window_v1 in protocol_capabilities. The window was stored when the run was created, so it does not change while the run works. The field is left out for a client without the capability and for a run made before windows. The same field is in GET /api/v1/investigations/{id}/context.",
+  "x-capability": "investigation_window_v1",
+  "x-fields": {
+    "from": "Start of the window, an RFC 3339 time.",
+    "to": "End of the window. Left out means until the run ends: the incident is still open, so use now.",
+    "basis": "Where the window came from: first_signal_moment or first_signal_ongoing (Tellagen proposed it from the incident), person (a person set it) or follow_up (copied from the run this one corrects).",
+    "baseline_from": "Start of the baseline, which ends where the window starts. Left out means the run has no baseline.",
+    "first_signal_at": "When the first signal of the incident came in. Left out when none is known."
+  },
+  "x-time-text": "A time with no zone in a request, such as 2026-11-14 00:11, is read as UTC. Send RFC 3339 times to be exact.",
+  "x-limits": {
+    "window_max_days": 30,
+    "default_window_max_hours": 24,
+    "baseline_default_days": 7,
+    "suggestion_reason_max_chars": 200
+  },
+  "x-baseline-days": [0, 1, 7, 30],
+  "x-guidance": [
+    "Search for the cause inside the window: every query that looks for what went wrong uses a range between from and to.",
+    "Use the baseline only to learn whether a number is normal, for example the error count of the same hour on earlier days. Never look for the cause in it.",
+    "When the signal starts before from or after to, do not search outside the window. Send window_suggestion with the result and say so in a finding. window_suggestion is {from, to, reason}: the same limits as a window, a reason of at most 200 characters, and to may be left out for an open incident.",
+    "The server warns evidence_outside_window when a cited source has a time range that reaches outside the window and its baseline together. It is advice, not an error. A count over the baseline does not trigger it.",
+    "A window never sets or proposes a root cause. A person accepts a root cause."
+  ],
+  "x-examples": {
+    "window": {
+      "from": "2026-11-14T00:11:00Z",
+      "to": "2026-11-14T01:26:00Z",
+      "basis": "first_signal_ongoing",
+      "baseline_from": "2026-11-07T00:11:00Z",
+      "first_signal_at": "2026-11-14T00:41:00Z"
+    },
+    "good_suggestion": {
+      "from": "2026-11-13T22:00:00Z",
+      "to": "2026-11-14T01:26:00Z",
+      "reason": "The first 502s are at 22:14, 2 hours before the window starts."
+    },
+    "bad_suggestion": {
+      "from": "2026-10-01T00:00:00Z",
+      "reason": "I want more data."
+    }
+  }
+}

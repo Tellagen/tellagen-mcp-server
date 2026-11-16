@@ -22,7 +22,10 @@
     "Send an Idempotency-Key header (or the idempotency_key field) with every finding. Use one new key for one finding, for example a UUID, and send the same key when you repeat the request after a timeout. The repeat answers 200 with the first finding and the header Idempotent-Replayed: true, and creates nothing.",
     "A cause upsert is safe to repeat: the cause key in the path is its identity. A trace step is safe to repeat by its step_id. A create of a run with an id you chose is safe to repeat: when the run exists and you made it in the same incident, the answer is 200 with that run.",
     "A value of the wrong type answers 400 invalid_field_type with field set to the path of the value, for example result_summary.causal_paths[0].steps[1].finding_ids, and a message that says which type the field wants. Correct that field and send the request again.",
-    "With strict_fields_v1 a body with a field the route does not know answers 400 unknown_field. field is the first path and details.fields lists up to 20 of them. Remove or rename those fields. Without the capability unknown fields are dropped with no message, as before."
+    "With strict_fields_v1 a body with a field the route does not know answers 400 unknown_field. field is the first path and details.fields lists up to 20 of them. Remove or rename those fields. Without the capability unknown fields are dropped with no message, as before.",
+    "A log or metric proof gets a Grafana Explore link from the data source, the query and the range. Give every Loki or Prometheus evidence ref a datasource with the name of the data source it came from. A ref with a query and no datasource gets the warning log_evidence_without_link, because no link can be built, and a link you send yourself must point at the workspace's own Grafana.",
+    "A step or finding that says a search found nothing (0 lines, no errors, no matches) must say in what range and out of how many lines. Without both it gets the warning silence_without_scope. Send a log_lines figure with matched 0, scanned and the range in source.from and source.to, or write the range and the scanned count in the result summary of the evidence.",
+    "Do not quote as the key line of a finding a line you marked unrelated in a log_lines figure. A finding whose result_sample is such a line gets the warning key_quote_unrelated. Quote a line that matches the event, or mark the line context or matches_event if it does."
   ],
   "x-examples": {
     "recorded_step": {
@@ -37,6 +40,18 @@
     },
     "field_error": {
       "good": {"code": "invalid_field_type", "field": "result_summary.causal_paths[0].steps[1].finding_ids", "message": "result_summary.causal_paths[0].steps[1].finding_ids: expected an array, got a string"}
+    },
+    "log_evidence_link": {
+      "good": {"source": "grafana-loki", "datasource": "Loki", "query": "{app=\"slack-bot\"} |= \"reply sent\"", "result_summary": "0 of 2,313 lines from 2026-11-14T00:26:02Z to 2026-11-14T01:26:02Z"},
+      "bad": {"source": "grafana-loki", "query": "{app=\"slack-bot\"} |= \"reply sent\"", "result_summary": "No lines"}
+    },
+    "silence_scope": {
+      "good": {"type": "log_lines", "title": "Replies after the ack", "matched": 0, "scanned": 2313, "source": {"kind": "loki", "datasource": "Loki", "query": "{app=\"slack-bot\"} |= \"reply sent\"", "from": "2026-11-14T00:26:02Z", "to": "2026-11-14T01:26:02Z"}, "event_at": "2026-11-14T00:26:02Z"},
+      "bad": {"claim": "The bot never replied.", "result_summary": "0 lines"}
+    },
+    "key_quote": {
+      "good": {"claim": "The leader task failed 4 minutes after the ack.", "result_sample": "00:30:12 leader task failed company=402"},
+      "bad": {"claim": "The leader task failed after the ack.", "result_sample": "00:26:02 leader task failed company=578", "note": "the same run marked this line unrelated: company 578, 11 hours after the event"}
     }
   }
 }

@@ -88,6 +88,7 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   { name: "tellagen_probe_datasource", toolset: "settings", effect: "read", openWorld: true },
   { name: "tellagen_get_diagnostic_session", toolset: "settings", effect: "read" },
   { name: "tellagen_report_diagnostic_tools", toolset: "settings", effect: "add" },
+  { name: "tellagen_report_available_sources", toolset: "settings", effect: "add", idempotent: true },
   { name: "tellagen_list_trace_steps", toolset: "settings", effect: "read" },
   { name: "tellagen_list_runbooks", toolset: "settings", effect: "read" },
   { name: "tellagen_list_investigation_runbook_waivers", toolset: "settings", effect: "read" },

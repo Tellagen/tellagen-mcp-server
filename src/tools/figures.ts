@@ -2,13 +2,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { activeRunId } from "../active-run.js";
 import type { TellagenClient } from "../client.js";
-import { supportsDiffLines, supportsFigureExtras } from "../diagnosis-structure.js";
+import { runWindowOf, supportsDiffLines, supportsFigureExtras, supportsLogLines } from "../diagnosis-structure.js";
 import { buildFigure, figureToolInputSchema, withoutFigureExtrasInBlock } from "../figures.js";
 
 export const FIGURE_GUIDE_URI = "resource://tellagen/figure-guide";
 
 /** Added to the server instructions so every agent knows figures exist. */
-export const FIGURE_INSTRUCTIONS = `Figures: Tellagen draws typed widgets (stats, compare, trend, table, checks, changes, range_overlap, histogram, run_history, diff) from data you send, in the Diagnosis tab, on the timeline and in the postmortem. Use tellagen_build_figure to turn the numbers you read from a tool result into a figure Tellagen accepts: it puts a time series on an even grid of at most 500 points, turns deploy, alert and rollback times into marks, turns cumulative histogram buckets into bucket counts, maps a GitHub Actions run list to a run history, and enforces every limit. Attach the result as a causal step's figure or as a block on a timeline event. A figure owns its numbers: never repeat them in prose, never invent one, and keep units in the unit field. Read ${FIGURE_GUIDE_URI} to choose the widget that fits the question and to learn how to plot data on it.`;
+export const FIGURE_INSTRUCTIONS = `Figures: Tellagen draws typed widgets (stats, compare, trend, table, checks, changes, range_overlap, histogram, run_history, diff, log_lines) from data you send, in the Diagnosis tab, on the timeline and in the postmortem. Use tellagen_build_figure to turn the numbers you read from a tool result into a figure Tellagen accepts: it puts a time series on an even grid of at most 500 points, turns deploy, alert and rollback times into marks, turns cumulative histogram buckets into bucket counts, maps a GitHub Actions run list to a run history, picks the log lines of a Loki result (log_lines), and enforces every limit. Attach the result as a causal step's figure or as a block on a timeline event. A figure owns its numbers: never repeat them in prose, never invent one, and keep units in the unit field. Read ${FIGURE_GUIDE_URI} to choose the widget that fits the question and to learn how to plot data on it.`;
 
 export const FIGURE_GUIDE = `# Tellagen figures
 
@@ -40,6 +40,7 @@ Use tellagen_build_figure to make one. It reshapes the numbers you already read 
 | Did the slow tail move, when the average did not? | histogram | yes | yes | 3 to 61 edges (2 to 60 buckets), one count per bucket |
 | Which build broke, and which fixed it? | run_history | yes | yes | 2 to 30 runs, runs_not_shown, 4 marks, ref 80, sha 64, job 80, url 500 |
 | What exactly changed in the code? | diff | yes | yes | path 200, ref 64, 1 to 6 hunks, 12 changed lines in all, line 160 |
+| Which log lines prove it, or show there are none? | log_lines | yes | yes | 0 to 8 lines, line text 500, 6 fields, note 160, matched and scanned up to 1,000,000,000 |
 
 ## How to plot data on each widget
 
@@ -163,9 +164,26 @@ With diff_lines_v1 the same change, with the unchanged lines around it and the n
                    { "op": "-", "text": "  position: static;", "old_no": 12 }, { "op": "+", "text": "  position: sticky;", "new_no": 12 },
                    { "op": "context", "text": "}", "old_no": 13, "new_no": 13 } ] ] }
 
+### log_lines: the log lines that prove a claim, or that there are none
+
+Use it for log evidence instead of a stats tile: the lines themselves, how many lines matched out of how many were scanned, and the range that was searched. It needs log_lines_v1 in server_capabilities. Pass run_id so the builder can check this, and so it can use the run window as the default range.
+
+1. Run the Loki query over a range inside the run window. Keep the whole result, with the stream labels.
+2. Send it as streams (the Loki result as returned: [{ stream: { labels }, values: [[ns, line]] }]) or as entries ([{ timestamp, line, labels }]), with query, datasource, from and to. Never write a line yourself: the builder takes only lines that are in the result.
+3. The builder keeps at most 8 lines, the ones that show the event first, and reads each level from a stream label, from the JSON or logfmt of the line, or from a word at its start. Text is kept as logged: it only loses colour codes and secrets, and line breaks become a mark.
+4. matched is the number of lines the query matched in the range. It defaults to the lines you sent, so send matched when the query had a limit. scanned is the number of lines the query looked at (query_loki_stats gives it). The builder works out lines_not_shown.
+5. Say which lines show the event: match lists the terms that mark a line matches_event. Mark a line that looks like proof and is not with marks, for example a line of another tenant, company or request: { "field": { "key": "company_id", "value": "578" }, "relation": "unrelated", "note": "Company 578, 11 hours after the event" }. An unrelated line stays in the figure, with its note, so a reader can see why it is not proof. Never use the text of an unrelated line as the quote of a finding.
+6. A query that found nothing is proof only with its range. Send matched 0 with scanned, from and to: 0 of 2,313 lines from 00:26 to 01:26 says something, an empty list with no range does not. Send streams as an empty list.
+7. Set event_at to the moment of the event, so the page can say how far a line is from it.
+
+    { "type": "log_lines", "title": "Errors from the worker", "query": "{app=\\"worker\\"} |= \\"timeout\\"", "datasource": "loki",
+      "from": "2026-11-14T00:11:00Z", "to": "2026-11-14T01:26:00Z", "event_at": "2026-11-14T00:41:00Z", "scanned": 2313,
+      "streams": [ { "stream": { "app": "worker", "pod": "worker-7" }, "values": [ [ "1794010860000000000", "level=error msg=\\"upstream timeout\\" task=sync" ] ] } ],
+      "match": [ "upstream timeout" ] }
+
 ## Where the figure goes
 
-- A causal step: set it as figure on the step in result_summary.causal_paths. Every type except table and changes is allowed there, at most 16 KB. This needs the diagnosis structure, which the pickup advertises as diagnosis_structure_v1. A Tellagen that does not know a figure type yet drops the figure and says so in the completion warnings (figure_invalid).
+- A causal step: set it as figure on the step in result_summary.causal_paths. Every type except table and changes is allowed there, at most 16 KB (48 KB for log_lines). This needs the diagnosis structure, which the pickup advertises as diagnosis_structure_v1. A Tellagen that does not list log_lines_v1 drops a log_lines figure, so the builder refuses to make one. A Tellagen that does not know a figure type yet drops the figure and says so in the completion warnings (figure_invalid).
 - A timeline event: put it in blocks on tellagen_post_timeline_event or tellagen_update_timeline_event. Any type is allowed, up to 12 per event. An update replaces the whole array, so send every block you want to keep, and [] clears them. Set slot to summary to draw the block above the note, or anchor to the exact heading text it sits under. Not both. Set postmortem to false to keep a block out of the postmortem.
 
 Call tellagen_build_figure with placement step_figure or timeline_block, and use the block it returns as it is.
@@ -173,7 +191,7 @@ Call tellagen_build_figure with placement step_figure or timeline_block, and use
 ## Getting the data from other servers
 
 - Grafana or Prometheus: a range query returns time and value pairs. Send them as points. Run the same query on two equal windows for a compare.
-- Loki: a count over time by step is a trend. A count by label over two windows is a compare.
+- Loki: a count over time by step is a trend. A count by label over two windows is a compare. The lines of a query result are a log_lines figure, and it is better than a stats tile for log evidence, because the reader can read the lines.
 - Prometheus histograms: the _bucket series summed by le over two equal windows are a histogram. Send them as buckets.
 - GitHub Actions: failed jobs of one run go in checks, failures first. The runs of a branch are a run_history: send the run list as github_runs.
 - GitHub commits and pull requests: the lines that broke or fixed it are a diff. Send the file's patch, and the change's additions and deletions.
@@ -187,6 +205,9 @@ The builder names the field. For a timeline block the API answers 400 invalid_bl
 const isDiff = (figure: unknown): boolean =>
   typeof figure === "object" && figure !== null && (figure as { type?: unknown }).type === "diff";
 
+const isLogLines = (figure: unknown): boolean =>
+  typeof figure === "object" && figure !== null && (figure as { type?: unknown }).type === "log_lines";
+
 const usesFigureExtras = (figure: unknown): boolean =>
   withoutFigureExtrasInBlock(figure).what.length > 0;
 
@@ -196,7 +217,7 @@ export function registerFigureTools(server: McpServer, client: TellagenClient): 
     {
       title: "Build a figure",
       description:
-        "Turn numbers you already read from a tool result into a figure (a typed widget) that Tellagen draws, and check it against Tellagen's limits before you send it. Widgets: stats (headline numbers: aim for 4, up to 8 with figure_extras_v1, and an optional title), compare (before and after per host, route or job, with an SLO line), trend (a series over time with up to 3 marks), table (a ranked list, up to 12 rows), checks (pass or fail per check, up to 12), changes (a value that moved from one thing to another), range_overlap (2 to 4 ranges that meet), histogram (bucket counts before and after), run_history (CI or deploy runs with the regression and fix marks), diff (the changed lines of a code change). For a time series send raw samples as points and the deploy, alert or rollback times as events: the tool puts them on an even grid of at most 500 points and works out the mark positions. For a histogram send Prometheus cumulative le buckets as buckets; for a run history send the GitHub Actions run list as github_runs; for a diff send the patch of one file: a change of 12 or fewer changed lines is sent whole with each removed line next to the line that replaced it, a longer one needs select_hunks (at most 3 hunks). Pass run_id so unchanged lines and line numbers are added only when this Tellagen lists diff_lines_v1, and a stats title, more than 4 stats and runs_not_shown only when it lists figure_extras_v1. It has no data of its own and never invents a value, so send only numbers from a tool result you can cite. placement step_figure is for a causal step (any type except table and changes, one per step). placement timeline_block is for a timeline event (any type). Read resource://tellagen/figure-guide to choose the widget and to see how to plot data on it.",
+        "Turn numbers you already read from a tool result into a figure (a typed widget) that Tellagen draws, and check it against Tellagen's limits before you send it. Widgets: stats (headline numbers: aim for 4, up to 8 with figure_extras_v1, and an optional title), compare (before and after per host, route or job, with an SLO line), trend (a series over time with up to 3 marks), table (a ranked list, up to 12 rows), checks (pass or fail per check, up to 12), changes (a value that moved from one thing to another), range_overlap (2 to 4 ranges that meet), histogram (bucket counts before and after), run_history (CI or deploy runs with the regression and fix marks), diff (the changed lines of a code change), log_lines (the log lines of a Loki result that prove a claim, or the proof that there are none). For a time series send raw samples as points and the deploy, alert or rollback times as events: the tool puts them on an even grid of at most 500 points and works out the mark positions. For a histogram send Prometheus cumulative le buckets as buckets; for a run history send the GitHub Actions run list as github_runs; for a diff send the patch of one file: a change of 12 or fewer changed lines is sent whole with each removed line next to the line that replaced it, a longer one needs select_hunks (at most 3 hunks). Pass run_id so unchanged lines and line numbers are added only when this Tellagen lists diff_lines_v1, and a stats title, more than 4 stats and runs_not_shown only when it lists figure_extras_v1. It has no data of its own and never invents a value, so send only numbers from a tool result you can cite. placement step_figure is for a causal step (any type except table and changes, one per step). placement timeline_block is for a timeline event (any type). Read resource://tellagen/figure-guide to choose the widget and to see how to plot data on it.",
       inputSchema: {
         placement: z
           .enum(["step_figure", "timeline_block"])
@@ -209,14 +230,17 @@ export function registerFigureTools(server: McpServer, client: TellagenClient): 
           .string()
           .min(1)
           .optional()
-          .describe("The investigation run you are working on. For a diff, a stats or a run_history figure, Tellagen is asked which features it lists in server_capabilities (diff_lines_v1: unchanged lines and line numbers; figure_extras_v1: a stats title, more than 4 stats, runs_not_shown). Without it the latest pickup of this process decides."),
+          .describe("The investigation run you are working on. For a diff, a stats, a run_history or a log_lines figure, Tellagen is asked which features it lists in server_capabilities (diff_lines_v1: unchanged lines and line numbers; figure_extras_v1: a stats title, more than 4 stats, runs_not_shown; log_lines_v1: log_lines) and, for log_lines, what the run window is. Without it the latest pickup of this process decides."),
       },
     },
     async ({ run_id: givenRunId, ...input }) => {
       const run_id = activeRunId(client, givenRunId);
       const diffLines = isDiff(input.figure) ? await supportsDiffLines(client, run_id) : false;
       const figureExtras = usesFigureExtras(input.figure) ? await supportsFigureExtras(client, run_id) : false;
-      const result = buildFigure(input, { diffLines, figureExtras });
+      const isLogs = isLogLines(input.figure);
+      const logLines = isLogs ? await supportsLogLines(client, run_id) : false;
+      const window = isLogs ? await runWindowOf(client, run_id) : undefined;
+      const result = buildFigure(input, { diffLines, figureExtras, logLines, window });
       if (!result.ok) {
         return {
           content: [

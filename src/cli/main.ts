@@ -11,6 +11,7 @@ Commands
   logout       Remove the stored key from this computer.
   status       Show the sign-in. With --line: one sentence for a client hook, or nothing.
   listen       Take diagnosis runs that wait in Tellagen and run them with your AI client, with no window.
+  doctor       Find why an AI client cannot see a tool, from its config files. Reads only; --report sends names and statuses.
   trace-hook   Record one tool call of a client hook as a step of the open run (reads the hook event on standard input).
 
 Settings: TELLAGEN_API_KEY and TELLAGEN_API_URL win over a stored sign-in. TELLAGEN_HOME moves the folder ~/.tellagen.
@@ -42,6 +43,10 @@ export async function runCli(command: string, args: readonly string[], io: CliIo
         return 2;
       }
       return runWrapped(parsed);
+    }
+    case "doctor": {
+      const { doctorCommand } = await import("./doctor.js");
+      return doctorCommand(args, io);
     }
     case "trace-hook": {
       const { traceHookCommand } = await import("./trace-hook.js");
