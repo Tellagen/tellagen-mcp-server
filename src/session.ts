@@ -23,6 +23,17 @@ export interface ActiveRun {
   sourceBases?: SourceBase[];
 }
 
+/** A request on a finished run that this session took. `text` is the person's own words. */
+export interface TakenRequest {
+  /** The number Tellagen gave the request. */
+  id: number;
+  runId: string;
+  kind: string;
+  source?: string;
+  sourceLabel?: string;
+  text?: string;
+}
+
 /** Turns a toolset on in the running session. Set by the tool registry. */
 export interface ToolsetSwitch {
   enable(toolset: string): { enabled: string[]; added: string[] };
@@ -73,6 +84,8 @@ export class Session {
   /** Points the remembered-run file at another workspace, after a sign-in. */
   setWorkspace(apiUrl: string): void {
     this.active = undefined;
+    this.amendable.clear();
+    this.requests.clear();
     this.sourceBases.clear();
     this.state = new RunStateStore(this.stateDir, workspaceKey(apiUrl));
   }
@@ -152,6 +165,71 @@ export class Session {
   rememberSourceBases(runId: string, bases: SourceBase[]): void {
     this.keepSourceBases(runId, bases);
     this.state.setSourceBases(runId, bases);
+  }
+
+  /** Runs that finished but still take additions, by run id. */
+  private amendable = new Map<string, { until?: string; incidentId?: number }>();
+
+  /**
+   * Remembers a finished run that still takes additions, so a later call in
+   * the same chat finds it. `until` is the time Tellagen gave, when it did.
+   */
+  rememberAmendable(runId: string, until?: string, incidentId?: number): void {
+    this.amendable.delete(runId);
+    this.amendable.set(runId, { ...(until ? { until } : {}), ...(incidentId !== undefined ? { incidentId } : {}) });
+    if (this.amendable.size > 10) this.amendable.delete(this.amendable.keys().next().value as string);
+  }
+
+  forgetAmendable(runId: string): void {
+    this.amendable.delete(runId);
+  }
+
+  /** The time Tellagen gave for a finished run, undefined when none was given or the run is not remembered. */
+  amendableUntil(runId: string): string | undefined {
+    return this.amendable.get(runId)?.until;
+  }
+
+  /**
+   * The finished run that most recently took additions and has not run out,
+   * for a call that gives no run id. Undefined when there is none.
+   */
+  latestAmendable(now = Date.now()): { runId: string; until?: string } | undefined {
+    for (const [runId, info] of [...this.amendable.entries()].reverse()) {
+      const end = info.until ? Date.parse(info.until) : NaN;
+      if (Number.isFinite(end) && end <= now) {
+        this.amendable.delete(runId);
+        continue;
+      }
+      return { runId, ...(info.until ? { until: info.until } : {}) };
+    }
+    return undefined;
+  }
+
+  /** Requests on a finished run that this session took, by request id. */
+  private requests = new Map<number, TakenRequest>();
+  private finishListeners: Array<(runId: string, until: string | undefined) => void> = [];
+
+  rememberRequest(request: TakenRequest): void {
+    this.requests.delete(request.id);
+    this.requests.set(request.id, request);
+    if (this.requests.size > 20) this.requests.delete(this.requests.keys().next().value as number);
+  }
+
+  takenRequest(id: number): TakenRequest | undefined {
+    return this.requests.get(id);
+  }
+
+  forgetRequest(id: number): void {
+    this.requests.delete(id);
+  }
+
+  /** Called when a run was completed by this session and still takes additions. */
+  onRunFinished(listener: (runId: string, until: string | undefined) => void): void {
+    this.finishListeners.push(listener);
+  }
+
+  runFinished(runId: string, until: string | undefined): void {
+    for (const listener of this.finishListeners) listener(runId, until);
   }
 
   /** Forgets a run that completed, failed, was cancelled or was taken over. */

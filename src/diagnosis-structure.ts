@@ -52,6 +52,12 @@ export const LOG_LINES_CAPABILITY = "log_lines_v1";
 export { FIGURE_EXTRAS_CAPABILITY, FIGURE_LIMITS_CAPABILITY };
 /** result_summary.answer and a figure on a recommended action. */
 export const ACTION_ANSWER_CAPABILITY = "action_answer_v1";
+/**
+ * The capability of a Tellagen that takes additions to a finished run and the
+ * reason, retryable and detail of a coverage entry (both ship together).
+ */
+export const RUN_AMENDMENTS_CAPABILITY = "run_amendments_v1";
+
 /** A coverage entry may have the state not_needed. */
 export const COVERAGE_NOT_NEEDED_CAPABILITY = "coverage_not_needed_v1";
 
@@ -157,6 +163,11 @@ export async function supportsFigureLimits(client: TellagenClient, runId?: strin
 /** Whether the backend takes result_summary.answer and a figure on a recommended action. */
 export async function supportsActionAnswer(client: TellagenClient, runId: string): Promise<boolean> {
   return supportsCapability(client, runId, ACTION_ANSWER_CAPABILITY);
+}
+
+/** Whether the backend takes additions to a finished run and coverage reasons. */
+export async function supportsRunAmendments(client: TellagenClient, runId: string): Promise<boolean> {
+  return supportsCapability(client, runId, RUN_AMENDMENTS_CAPABILITY);
 }
 
 /** Whether the backend takes the coverage state not_needed. */
@@ -537,6 +548,8 @@ export const ruledOutSchema = z.object({
   confidence_percent: z.number().int().min(0).max(100).optional(),
 });
 
+export const COVERAGE_REASONS = ["wrong_account", "not_connected", "auth_expired", "error", "no_source"] as const;
+
 export const coverageEntrySchema = z.object({
   id: line(0, 64).optional(),
   source: line(1, 80).describe("The data source, for example Grafana, GitHub or Kubernetes"),
@@ -546,6 +559,21 @@ export const coverageEntrySchema = z.object({
       "checked = read and used; gap = configured but could not be read or satisfied; not_configured = no such source in this workspace; not_needed = skipped on purpose, with the reason in summary (only when the server lists coverage_not_needed_v1; never send checked for a source nobody read)",
     ),
   summary: z.string().max(600).optional().describe("One line, at most 20 words. Required for not_needed: why the source was skipped."),
+  reason: z
+    .enum(COVERAGE_REASONS)
+    .optional()
+    .describe(
+      "Only on gap or not_configured: why the source was not read. wrong_account = the connector reads another account or workspace; not_connected = no connector is set up in this client; auth_expired = the sign-in ran out; error = the read failed; no_source = the source does not exist for this incident. Only when the server lists run_amendments_v1.",
+    ),
+  retryable: z
+    .boolean()
+    .optional()
+    .describe("Only with a reason: whether reading the source again can help. True by default, false for no_source."),
+  detail: z
+    .string()
+    .max(200)
+    .optional()
+    .describe("Only with a reason: one sentence, at most 200 characters, that says what went wrong. No secret, address or user name."),
   links: evidenceLinksSchema.optional(),
   step_ids: z
     .array(z.string().min(1).max(64))
@@ -1027,6 +1055,35 @@ export function stripResultNotNeeded(summary: unknown): { summary: unknown; remo
   return removed.length > 0 ? { summary: { ...summary, coverage }, removed } : { summary, removed };
 }
 
+/** The fields a coverage entry has since coverage reasons: why a source was not read. */
+const COVERAGE_REASON_FIELDS = ["reason", "retryable", "detail"] as const;
+
+/** The coverage entries of a list without reason, retryable and detail. Names each entry changed. */
+export function stripCoverageReasons(
+  coverage: unknown,
+  path = "coverage",
+): { coverage: unknown; removed: string[] } {
+  const removed: string[] = [];
+  if (!Array.isArray(coverage)) return { coverage, removed };
+  const next = coverage.map((entry, i) => {
+    if (!isRecord(entry) || !COVERAGE_REASON_FIELDS.some((field) => entry[field] !== undefined)) return entry;
+    removed.push(`${path}[${i}]`);
+    const rest = { ...entry };
+    for (const field of COVERAGE_REASON_FIELDS) delete rest[field];
+    return rest;
+  });
+  return removed.length > 0 ? { coverage: next, removed } : { coverage, removed };
+}
+
+/** A result summary without the reason of a source that was not read, for a backend that does not know it. */
+export function stripResultCoverageReasons(summary: unknown): { summary: unknown; removed: string[] } {
+  if (!isRecord(summary)) return { summary, removed: [] };
+  const stripped = stripCoverageReasons(summary.coverage, "coverage");
+  return stripped.removed.length > 0
+    ? { summary: { ...summary, coverage: stripped.coverage }, removed: stripped.removed }
+    : { summary, removed: [] };
+}
+
 /** The sentence the tool adds when it dropped fields for an older backend. */
 export function unsupportedNotice(
   removed: string[],
@@ -1048,6 +1105,9 @@ export function unsupportedNotice(
   }
   if (capability === COVERAGE_NOT_NEEDED_CAPABILITY) {
     return `This Tellagen backend does not advertise ${capability}, so the not_needed coverage entries ${shown}${more} were left out (they must not be sent as checked). Say in a finding or an unknown why the source was skipped.`;
+  }
+  if (capability === RUN_AMENDMENTS_CAPABILITY) {
+    return `This Tellagen backend does not advertise ${capability}, so the reason, retryable and detail of ${shown}${more} were not sent and the rest went through. Say why the source was not read in the summary of the entry. Update Tellagen to show the reason.`;
   }
   if (capability === FIGURE_EXTRAS_CAPABILITY) {
     return `This Tellagen backend does not advertise ${capability}, so the stats title, the stats after the fourth and runs_not_shown of ${shown}${more} were not sent and the rest of the figure went through. Update Tellagen to show them.`;
@@ -1078,7 +1138,7 @@ const WARNING_ADVICE: Record<string, string> = {
     "fix the figure to match a stats, compare, trend, checks, range_overlap, histogram, run_history, diff or log_lines block (tellagen_build_figure checks it)",
   structure_truncated: "keep ruled_out to 5, coverage to 8 and unknowns to 5",
   negative_not_ruled_out: "add a ruled_out entry for each negative finding that matters",
-  gap_without_coverage: "add a coverage entry with state gap for each gap finding",
+  gap_without_coverage: "add a coverage entry with state gap for each gap finding that is a source you could not read (or turn the finding into a coverage entry), and keep a gap finding only for a question a person can answer",
   single_source_high_confidence:
     "a step above 90% confidence rests on one source: cite a finding from a second source (a name that starts with grafana counts as one source) or send confidence_percent of 90 or less",
   change_without_link: "give each change ref a link, or repo with ref or sha so Tellagen can build one",

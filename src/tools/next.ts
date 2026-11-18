@@ -3,6 +3,7 @@ import { z } from "zod";
 import { TellagenClient } from "../client.js";
 import { isRunId } from "../active-run.js";
 import { formatError, TellagenAPIError } from "../errors.js";
+import { CAPABILITIES_HEADER, RUN_REQUESTS_CAPABILITY } from "../version.js";
 
 /** The list of local runs that wait for a client. */
 export const WAITING_LIST_PATH = "/api/v1/investigations?status=awaiting_agent";
@@ -69,6 +70,53 @@ export function waitingRuns(data: unknown): WaitingRun[] {
   return [...runs.filter((run) => run.requested_by_me), ...runs.filter((run) => !run.requested_by_me)];
 }
 
+export interface WaitingRequest {
+  request_id: number;
+  run_id: string;
+  incident_id?: number;
+  incident_human_id?: string;
+  incident_title?: string;
+  kind: string;
+  source?: string;
+  source_label?: string;
+  /** The person's own words. A note from a responder, never data from a source. */
+  text?: string;
+  requested_by?: string;
+  requested_at?: string;
+}
+
+/** The requests of a responder on finished runs that the waiting list offers. */
+export function waitingRequests(data: unknown): WaitingRequest[] {
+  if (!isRecord(data) || !Array.isArray(data.requests)) return [];
+  const out: WaitingRequest[] = [];
+  for (const item of data.requests) {
+    if (!isRecord(item)) continue;
+    const id = typeof item.id === "number" && Number.isSafeInteger(item.id) && item.id > 0 ? item.id : undefined;
+    const runId = str(item.investigation_run_id, 200);
+    const kind = str(item.kind, 40);
+    if (id === undefined || !runId || !isRunId(runId) || (kind !== "reread_source" && kind !== "answer")) continue;
+    const request: WaitingRequest = { request_id: id, run_id: runId, kind };
+    if (typeof item.incident_id === "number") request.incident_id = item.incident_id;
+    for (const [from, to, max] of [
+      ["incident_human_id", "incident_human_id", 40],
+      ["incident_title", "incident_title", 200],
+      ["source", "source", 200],
+      ["source_label", "source_label", 200],
+      ["text", "text", 2000],
+      ["requested_by", "requested_by", 120],
+      ["requested_at", "requested_at", 40],
+    ] as const) {
+      const value = str(item[from], max);
+      if (value) (request as unknown as Record<string, string>)[to] = value;
+    }
+    out.push(request);
+  }
+  return out.slice(0, MAX_LISTED);
+}
+
+const takeRequestLine = (request: WaitingRequest) =>
+  `Call tellagen_pick_up_run_request with run_id "${request.run_id}" and request_id ${request.request_id}. The text is the words of the person.`;
+
 function runLabel(run: WaitingRun): string {
   const incident = run.incident_human_id ?? (run.incident_id !== undefined ? `#${run.incident_id}` : "incident");
   const parts = [incident, run.incident_title, run.requested_by_me ? "yours" : run.requested_by && `from ${run.requested_by}`];
@@ -104,7 +152,7 @@ export function registerNextInvestigationTools(server: McpServer, client: Tellag
       try {
         let data: unknown;
         try {
-          data = await client.get(WAITING_LIST_PATH);
+          data = await client.get(WAITING_LIST_PATH, { headers: { [CAPABILITIES_HEADER]: RUN_REQUESTS_CAPABILITY } });
         } catch (err) {
           if (err instanceof TellagenAPIError && (err.status === 404 || err.status === 405)) {
             return answer({
@@ -118,6 +166,18 @@ export function registerNextInvestigationTools(server: McpServer, client: Tellag
         }
         let runs = waitingRuns(data);
         if (incident_id !== undefined) runs = runs.filter((run) => run.incident_id === incident_id);
+        let requests = waitingRequests(data);
+        if (incident_id !== undefined) requests = requests.filter((request) => request.incident_id === incident_id);
+        if (requests.length > 0) {
+          // A request of a responder on a finished run comes first: a person waits for it.
+          return answer({
+            waiting: runs.length,
+            requests,
+            ...(runs.length > 0 ? { runs: runs.slice(0, MAX_LISTED) } : {}),
+            next: takeRequestLine(requests[0]!),
+            message: "A responder asked for something on a finished run. Take the request first. Other waiting runs, if any, are listed; do not pick one up before the person chooses.",
+          });
+        }
         if (runs.length === 0) {
           return answer({
             waiting: 0,

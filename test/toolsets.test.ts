@@ -65,6 +65,9 @@ describe("toolsets", () => {
       "tellagen_get_investigation_coverage",
       "tellagen_post_timeline_event",
       "tellagen_complete_investigation",
+      "tellagen_amend_investigation",
+      "tellagen_pick_up_run_request",
+      "tellagen_end_run_request",
     ]);
     for (const toolset of TOOLSETS) expect(namesOf(toolset).length, toolset).toBeGreaterThan(0);
   });

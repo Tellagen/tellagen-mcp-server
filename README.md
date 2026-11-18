@@ -137,7 +137,7 @@ The server asks Tellagen once, right after the MCP handshake, whether the key wo
 
 ## Tools
 
-The server offers 51 tools, all with the prefix `tellagen_`, in five toolsets. A tool that reads never changes anything. A person, not an API key, accepts or rejects a root cause in Tellagen: no tool can do it.
+The server offers 54 tools, all with the prefix `tellagen_`, in five toolsets. A tool that reads never changes anything. A person, not an API key, accepts or rejects a root cause in Tellagen: no tool can do it.
 
 ### Toolsets
 
@@ -180,6 +180,9 @@ Run a diagnosis from pickup to completion. On by default.
 | `tellagen_get_investigation_coverage` | reads | Check which frozen checks and evidence are still missing before you complete |
 | `tellagen_post_timeline_event` | adds | Add a timestamped fact to the timeline, optionally with figures |
 | `tellagen_complete_investigation` | changes | Complete or fail a run with the result summary (the cause chain, what was ruled out, coverage, unknowns and change refs) |
+| `tellagen_pick_up_run_request` | adds | Take a responder's request on a finished run (read a source again, check an answer); the text is the person's words |
+| `tellagen_end_run_request` | changes | End a request with nothing new, or as failed, when no version was made |
+| `tellagen_amend_investigation` | adds | Add findings, changed coverage and, when the answer changes, a new result to a finished run, as a new version (needs `run_amendments_v1`) |
 
 ### `incidents`
 
@@ -702,3 +705,13 @@ npm run lint    # tsc --noEmit
 | `TELLAGEN_MCP_CLIENT` | No | Deprecated. `codex` or `claude`; used only when the client sends no name in the handshake, and for an older Tellagen workspace |
 | `TELLAGEN_MCP_PROFILE_ID` | No | Stable opaque profile ID used to scope local MCP access observations |
 | `GRAFANA_URL` | No | Grafana address, for `tellagen_probe_datasource` and `tellagen_build_source_link`. Used when Tellagen sends no Grafana address with the pickup, or several and none is picked; the Tellagen datasource `base_url` comes after it. The probe sends the service account token only to this address |
+
+## Requests on a finished run
+
+With `run_requests_v1` a responder can ask for a source to be read again or an answer to be checked on a run you completed. After `tellagen_complete_investigation` the server keeps sending the heartbeat (with the same client session) until `amend_until`, and takes the requests from the answer (`amendment_requests`, each delivered once); the model gets one line per request, with the text quoted as the person's words. `tellagen_next_investigation` sends `X-Tellagen-Capabilities: run_requests_v1` and lists `requests`; `tellagen_pick_up_run_request` takes one. Answer with `tellagen_amend_investigation` and `request_id` (a request of another session answers `run_request_not_available`), or end it with `tellagen_end_run_request` (`nothing_new`, or `failed` with `client_error`, `limit` or `time_limit`). `tellagen_post_trace_step` takes `request_id` for steps of that work. The headless listener (`listen`) takes requests too: with `take_runs_automatically` on, it starts the person's client for a request of the person's own run, with the read-only rules, and that client takes, answers or ends the request itself (only the session that takes a request may answer it).
+
+## Additions to a finished run
+
+A finished run takes additions for a limited time (`run_amendments_v1`). `tellagen_amend_investigation` sends `POST /api/v1/investigation-runs/{id}/amendments` with a `reason`, new `findings`, changed `coverage` entries and, only when the headline or the causal path changes, a whole new `result_summary`. The earlier version stays. The tool always sends an `Idempotency-Key` (a hash of the call), sends a conflict (409 `run_amendment_conflict`) again with the same key, and refuses with a clear message when Tellagen does not list `run_amendments_v1`. After `tellagen_complete_investigation` the server remembers the run, so the tool needs no run id in the same chat, and `tellagen_resume` says that the run takes additions. When a write to a finished run answers 409 `investigation_run_ended` with `details.amendable`, the answer starts with a line that names the tool and the end of the window.
+
+A source you could not read is a coverage entry in the state `gap` or `not_configured` with a `reason` (`wrong_account`, `not_connected`, `auth_expired`, `error` or `no_source`), `retryable` and one sentence in `detail` (at most 200 characters), not a gap finding. A gap finding is for a question a person can answer. For a Tellagen without `run_amendments_v1`, the three fields are left out and the result carries an `mcp_notice`.

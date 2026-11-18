@@ -1,6 +1,7 @@
 import type { TellagenClient } from "./client.js";
 import { TellagenAPIError } from "./errors.js";
 import { pendingNotesOf, runEventLines } from "./run-events.js";
+import { requestLines, requestsOf } from "./run-requests.js";
 
 export const HEARTBEAT_CAPABILITY = "client_heartbeat_v1";
 export const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -18,6 +19,9 @@ export class Heartbeat {
   private runId: string | undefined;
   private failures = 0;
   private sending = false;
+  /** The end of the time a finished run takes additions, when the heartbeat is for a finished run. */
+  private until: number | undefined;
+  private finished = false;
 
   constructor(
     private readonly client: TellagenClient,
@@ -30,14 +34,21 @@ export class Heartbeat {
     client.session.onRunEnd((runId) => {
       if (runId === this.runId) this.stop();
     });
+    // A run this client completed still takes additions: keep holding it, so a request reaches us.
+    client.session.onRunFinished((runId, until) => {
+      this.stop();
+      this.start(runId, until, true);
+    });
   }
 
   running(): boolean {
     return this.timer !== undefined;
   }
 
-  private start(runId: string): void {
+  private start(runId: string, until?: string, finished = false): void {
     this.runId = runId;
+    this.until = until && Number.isFinite(Date.parse(until)) ? Date.parse(until) : undefined;
+    this.finished = finished;
     this.failures = 0;
     this.timer = setInterval(() => void this.beat(), this.intervalMs);
     // The timer must not keep the process alive after the client closed.
@@ -48,6 +59,8 @@ export class Heartbeat {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
     this.runId = undefined;
+    this.until = undefined;
+    this.finished = false;
     this.failures = 0;
   }
 
@@ -55,6 +68,10 @@ export class Heartbeat {
   async beat(): Promise<void> {
     const runId = this.runId;
     if (!runId || this.sending) return;
+    if (this.until !== undefined && Date.now() >= this.until) {
+      this.stop();
+      return;
+    }
     this.sending = true;
     const session = this.client.session;
     try {
@@ -76,9 +93,21 @@ export class Heartbeat {
         const { responder_notes: _kept, ...others } = record;
         rest = others;
       }
+      // A request of a responder on a finished run comes once; this session holds it now.
+      if (this.finished) {
+        const requests = requestsOf(record, runId);
+        for (const request of requests) session.rememberRequest(request);
+        for (const line of requestLines(requests)) session.addPendingLine(line);
+        return;
+      }
       // A cancel request, or a run that ended, comes as a line.
       for (const line of runEventLines(this.client, rest)) session.addPendingLine(line);
     } catch (err) {
+      // A finished run that takes no more additions, or that another session holds: stop quietly.
+      if (this.finished && err instanceof TellagenAPIError && (err.code === "run_taken_over" || err.code === "investigation_run_ended")) {
+        this.stop();
+        return;
+      }
       if (err instanceof TellagenAPIError && (err.code === "run_taken_over" || err.code === "investigation_run_ended")) {
         const lines = runEventLines(this.client, { ...(err.payload ?? {}), error: true, code: err.code, message: err.message, run_id: runId });
         for (const line of lines) session.addPendingLine(line);

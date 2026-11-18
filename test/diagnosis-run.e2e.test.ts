@@ -350,6 +350,7 @@ describe("a replayed run against a fake Tellagen REST server", () => {
       "responder_notes_v1",
       "investigation_window_v1",
       "question_checks_v1",
+      "run_requests_v1",
     ]);
     // Tellagen shows this short name as "Claude Code".
     expect(pickup.body.client.name).toBe("claude-code");

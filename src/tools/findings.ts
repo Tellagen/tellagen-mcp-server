@@ -22,7 +22,7 @@ export const MAX_FINDING_CHECKS = 3;
 export const MAX_CHECK_QUESTION = 200;
 export const MAX_CHECK_SOURCE = 120;
 
-const findingCheckSchema = z
+export const findingCheckSchema = z
   .object({
     source: z
       .string()
@@ -60,7 +60,7 @@ export function findingChecksProblem(
   return undefined;
 }
 
-const screenshotSchema = z.object({
+export const screenshotSchema = z.object({
   url: z
     .string()
     .url()
@@ -94,7 +94,7 @@ const hasStableId = (ref: {
 const factKeyAloneNotice =
   "evidence_fact_key was sent without artifact_id, artifact_digest or tool_use_id. Tellagen works out the key itself and replaces yours, so it may not join this finding to its trace step. Send the same tool_use_id on the trace step and on the evidence ref.";
 
-const evidenceRefSchema = z
+export const evidenceRefSchema = z
   .object({
     source: z
       .string()
@@ -187,7 +187,7 @@ function allScreenshots(
   return [...(screenshots ?? []), ...(refs ?? []).flatMap((ref) => ref.screenshots ?? [])];
 }
 
-function hasScreenshots(
+export function hasScreenshots(
   screenshots: ScreenshotInput[] | undefined,
   refs: RefWithScreenshots[] | undefined,
 ): boolean {
@@ -269,13 +269,13 @@ export function registerFindingTools(
             "gap",
           ])
           .describe(
-            "Type of finding: observation (notable data), correlation (two related things), hypothesis (proposed cause), evidence (proof), recommendation (suggested action), negative (ruled out), gap (required evidence or source was unavailable)",
+            "Type of finding: observation (notable data), correlation (two related things), hypothesis (proposed cause), evidence (proof), recommendation (suggested action), negative (ruled out), gap (a question a person can answer; a source you could not read goes in coverage with a reason, not here)",
           ),
         role: z
           .enum(["confirms", "supports", "contradicts", "gap"])
           .optional()
           .describe(
-            "How this finding relates to the current diagnosis. Send contradicts on a negative finding and gap on a gap finding (a required source, check, or evidence contract could not be satisfied). Without a role Tellagen stores supports.",
+            "How this finding relates to the current diagnosis. Send contradicts on a negative finding and gap on a gap finding (a question a person can answer). Without a role Tellagen stores supports.",
           ),
         claim: z
           .string()

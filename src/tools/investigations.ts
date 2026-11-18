@@ -21,6 +21,7 @@ import {
 import {
   protocolCapabilities,
   CAPABILITIES_HEADER,
+  RUN_REQUESTS_CAPABILITY,
   MCP_SERVER_VERSION,
 } from "../version.js";
 import {
@@ -40,6 +41,9 @@ import {
   supportsFigureLimits,
   supportsActionAnswer,
   supportsCoverageNotNeeded,
+  supportsRunAmendments,
+  stripResultCoverageReasons,
+  RUN_AMENDMENTS_CAPABILITY,
   ACTION_ANSWER_CAPABILITY,
   COVERAGE_NOT_NEEDED_CAPABILITY,
   FIGURE_LIMITS_CAPABILITY,
@@ -200,7 +204,7 @@ const windowSuggestionSchema = z
     "Only when the signal you found starts before the run window or after it: the window you would use. A person applies it; it never changes your run. Never use it to search more widely without a signal outside the window.",
   );
 
-const resultSummarySchema = z
+export const resultSummarySchema = z
   .object({
     conclusion: z
       .object({
@@ -814,6 +818,132 @@ function diagnosticSessionIDError(id: string): {
   };
 }
 
+/**
+ * After a completion: a finished run of a Tellagen that takes additions is
+ * remembered, so tellagen_amend_investigation and tellagen_resume find it in
+ * the same chat. Tellagen names the end of the window in amend_until; when the
+ * answer holds none, the run is remembered without a time.
+ */
+async function rememberAmendableRun(
+  client: TellagenClient,
+  runId: string,
+  status: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  if (status !== "completed") return;
+  // Only what pickup told: a completion looks nothing up.
+  if (!knownCapability(client, runId, RUN_AMENDMENTS_CAPABILITY)) return;
+  const run = typeof data.run === "object" && data.run !== null ? (data.run as Record<string, unknown>) : undefined;
+  const raw = data.amend_until ?? run?.amend_until;
+  const until = typeof raw === "string" && Number.isFinite(Date.parse(raw)) ? raw : undefined;
+  if (until && Date.parse(until) <= Date.now()) return;
+  const incident = data.incident_id ?? run?.incident_id;
+  client.session.rememberAmendable(runId, until, typeof incident === "number" ? incident : undefined);
+  // Keep telling Tellagen that this client holds the run, so a responder's request reaches it.
+  if (knownCapability(client, runId, RUN_REQUESTS_CAPABILITY)) client.session.runFinished(runId, until);
+}
+
+/**
+ * Adapts a result summary to what the backend of a run accepts: it leaves out
+ * the parts an older Tellagen would drop or refuse, and returns one notice for
+ * each part left out. Completion and amendments both send a result summary.
+ */
+export async function adaptResultSummary(
+  client: TellagenClient,
+  runId: string,
+  result_summary: unknown,
+): Promise<{ summary: unknown; notices: string[] }> {
+  const notices: string[] = [];
+  let current: unknown = result_summary;
+  if (result_summary !== undefined) {
+    current = result_summary;
+    // The chain, ruled out, coverage and unknowns go only to a backend
+    // that advertises diagnosis_structure_v1.
+    const stripped = stripResultStructure(result_summary);
+    if (
+      stripped.removed.length > 0 &&
+      !(await supportsDiagnosisStructure(client, runId))
+    ) {
+      current = stripped.summary;
+      notices.push(unsupportedNotice(stripped.removed));
+    }
+    // change_refs and the ci_run, deployment and release link kinds go
+    // only to a backend that advertises diagnosis_changes_v1; an older
+    // one drops them and counts the links as links_dropped.
+    const changes = stripResultChanges(current);
+    if (
+      changes.removed.length > 0 &&
+      !(await supportsDiagnosisChanges(client, runId))
+    ) {
+      current = changes.summary;
+      notices.push(unsupportedNotice(changes.removed, DIAGNOSIS_CHANGES_CAPABILITY));
+    }
+    // Unchanged lines and line numbers of a diff figure go only to a
+    // backend that advertises diff_lines_v1; an older one drops the
+    // whole figure (figure_invalid).
+    const diffs = stripResultDiffLines(current);
+    if (
+      diffs.removed.length > 0 &&
+      !(await supportsDiffLines(client, runId))
+    ) {
+      current = diffs.summary;
+      notices.push(unsupportedNotice(diffs.removed, DIFF_LINES_CAPABILITY));
+    }
+    // A log_lines figure goes only to a backend that advertises
+    // log_lines_v1; an older one rejects it and drops the figure.
+    const logs = stripResultLogLines(current);
+    if (logs.removed.length > 0 && !(await supportsLogLines(client, runId))) {
+      current = logs.summary;
+      notices.push(unsupportedNotice(logs.removed, LOG_LINES_CAPABILITY));
+    }
+    // A stats title, stats after the fourth and runs_not_shown go only
+    // to a backend that advertises figure_extras_v1; an older one
+    // rejects them and drops the whole figure (figure_invalid).
+    const extras = stripResultFigureExtras(current);
+    if (
+      extras.removed.length > 0 &&
+      !(await supportsFigureExtras(client, runId))
+    ) {
+      current = extras.summary;
+      notices.push(unsupportedNotice(extras.removed, FIGURE_EXTRAS_CAPABILITY));
+    }
+  }
+  if (result_summary !== undefined) {
+    // A compare row limit goes only to a backend that advertises figure_limits_v1.
+    const limits = stripResultFigureLimits(current);
+    if (limits.removed.length > 0 && !(await supportsFigureLimits(client, runId))) {
+      current = limits.summary;
+      notices.push(unsupportedNotice(limits.removed, FIGURE_LIMITS_CAPABILITY));
+    }
+    // The answer line and the figure of an action go only to a backend that advertises action_answer_v1.
+    const answer = stripResultActionAnswer(current);
+    if (answer.removed.length > 0 && !(await supportsActionAnswer(client, runId))) {
+      current = answer.summary;
+      notices.push(unsupportedNotice(answer.removed, ACTION_ANSWER_CAPABILITY));
+    }
+    // A source skipped on purpose goes as not_needed, never as checked.
+    const skipped = stripResultNotNeeded(current);
+    if (skipped.removed.length > 0 && !(await supportsCoverageNotNeeded(client, runId))) {
+      current = skipped.summary;
+      notices.push(unsupportedNotice(skipped.removed, COVERAGE_NOT_NEEDED_CAPABILITY));
+    }
+  }
+  // The reason a source was not read goes only to a backend that advertises run_amendments_v1.
+  const reasons = stripResultCoverageReasons(current);
+  if (reasons.removed.length > 0 && !(await supportsRunAmendments(client, runId))) {
+    current = reasons.summary;
+    notices.push(unsupportedNotice(reasons.removed, RUN_AMENDMENTS_CAPABILITY));
+  }
+  // window_suggestion goes only to a run that has a window; a strict older Tellagen refuses the field.
+  const sum = current as Record<string, unknown> | undefined;
+  if (sum && sum.window_suggestion !== undefined && !(await runWindowOf(client, runId))) {
+    const { window_suggestion: _w, ...rest } = sum;
+    current = rest;
+    notices.push("This run has no window (this Tellagen does not list investigation_window_v1 for it), so window_suggestion was not sent. Say in a finding where the signal starts.");
+  }
+  return { summary: current, notices };
+}
+
 export function registerInvestigationTools(
   server: McpServer,
   client: TellagenClient,
@@ -1089,6 +1219,14 @@ export function registerInvestigationTools(
         "Post or update a readable investigation trace step for the active run. Every step requires an immutable guidance basis: exact frozen runbook ID/version/section references, or an honest non-runbook origin. Reuse the same guidance when updating a step from running to done/error.",
       inputSchema: {
         investigation_run_id: optionalRunIdSchema,
+        request_id: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "Only while you work on a request of a responder on a finished run (you took it with tellagen_pick_up_run_request or a heartbeat gave it to you): the request id. Tellagen then takes the step on the finished run. Never send it otherwise.",
+          ),
         step_id: z
           .string()
           .refine((value) => value.trim().length > 0, {
@@ -1146,6 +1284,7 @@ export function registerInvestigationTools(
     },
     async ({
       investigation_run_id: givenRunId,
+      request_id,
       step_id: givenStepId,
       step_index,
       status,
@@ -1169,7 +1308,7 @@ export function registerInvestigationTools(
       duration_ms,
     }) => {
       try {
-        const investigation_run_id = resolveRunId(client, givenRunId);
+        const investigation_run_id = resolveRunId(client, givenRunId ?? (request_id ? client.session.takenRequest(request_id)?.runId : undefined));
         let step_id = givenStepId;
         if (step_id.trim() === "recorded:latest") {
           const recorded = client.session.state.recordedSteps(investigation_run_id).at(-1);
@@ -1194,6 +1333,7 @@ export function registerInvestigationTools(
           status,
           title,
         };
+        if (request_id !== undefined) body.request_id = request_id;
         if (guidance !== undefined) {
           body.guidance = guidance;
         } else if (!knownCapability(client, investigation_run_id, RECORDED_STEPS_CAPABILITY)) {
@@ -1494,87 +1634,9 @@ export function registerInvestigationTools(
         if (mitigation_state) {
           body.mitigation_state = mitigation_state;
         }
-        const notices: string[] = [];
-        if (result_summary !== undefined) {
-          body.result_summary = result_summary;
-          // The chain, ruled out, coverage and unknowns go only to a backend
-          // that advertises diagnosis_structure_v1.
-          const stripped = stripResultStructure(result_summary);
-          if (
-            stripped.removed.length > 0 &&
-            !(await supportsDiagnosisStructure(client, run_id))
-          ) {
-            body.result_summary = stripped.summary;
-            notices.push(unsupportedNotice(stripped.removed));
-          }
-          // change_refs and the ci_run, deployment and release link kinds go
-          // only to a backend that advertises diagnosis_changes_v1; an older
-          // one drops them and counts the links as links_dropped.
-          const changes = stripResultChanges(body.result_summary);
-          if (
-            changes.removed.length > 0 &&
-            !(await supportsDiagnosisChanges(client, run_id))
-          ) {
-            body.result_summary = changes.summary;
-            notices.push(unsupportedNotice(changes.removed, DIAGNOSIS_CHANGES_CAPABILITY));
-          }
-          // Unchanged lines and line numbers of a diff figure go only to a
-          // backend that advertises diff_lines_v1; an older one drops the
-          // whole figure (figure_invalid).
-          const diffs = stripResultDiffLines(body.result_summary);
-          if (
-            diffs.removed.length > 0 &&
-            !(await supportsDiffLines(client, run_id))
-          ) {
-            body.result_summary = diffs.summary;
-            notices.push(unsupportedNotice(diffs.removed, DIFF_LINES_CAPABILITY));
-          }
-          // A log_lines figure goes only to a backend that advertises
-          // log_lines_v1; an older one rejects it and drops the figure.
-          const logs = stripResultLogLines(body.result_summary);
-          if (logs.removed.length > 0 && !(await supportsLogLines(client, run_id))) {
-            body.result_summary = logs.summary;
-            notices.push(unsupportedNotice(logs.removed, LOG_LINES_CAPABILITY));
-          }
-          // A stats title, stats after the fourth and runs_not_shown go only
-          // to a backend that advertises figure_extras_v1; an older one
-          // rejects them and drops the whole figure (figure_invalid).
-          const extras = stripResultFigureExtras(body.result_summary);
-          if (
-            extras.removed.length > 0 &&
-            !(await supportsFigureExtras(client, run_id))
-          ) {
-            body.result_summary = extras.summary;
-            notices.push(unsupportedNotice(extras.removed, FIGURE_EXTRAS_CAPABILITY));
-          }
-        }
-        if (result_summary !== undefined) {
-          // A compare row limit goes only to a backend that advertises figure_limits_v1.
-          const limits = stripResultFigureLimits(body.result_summary);
-          if (limits.removed.length > 0 && !(await supportsFigureLimits(client, run_id))) {
-            body.result_summary = limits.summary;
-            notices.push(unsupportedNotice(limits.removed, FIGURE_LIMITS_CAPABILITY));
-          }
-          // The answer line and the figure of an action go only to a backend that advertises action_answer_v1.
-          const answer = stripResultActionAnswer(body.result_summary);
-          if (answer.removed.length > 0 && !(await supportsActionAnswer(client, run_id))) {
-            body.result_summary = answer.summary;
-            notices.push(unsupportedNotice(answer.removed, ACTION_ANSWER_CAPABILITY));
-          }
-          // A source skipped on purpose goes as not_needed, never as checked.
-          const skipped = stripResultNotNeeded(body.result_summary);
-          if (skipped.removed.length > 0 && !(await supportsCoverageNotNeeded(client, run_id))) {
-            body.result_summary = skipped.summary;
-            notices.push(unsupportedNotice(skipped.removed, COVERAGE_NOT_NEEDED_CAPABILITY));
-          }
-        }
-        // window_suggestion goes only to a run that has a window; a strict older Tellagen refuses the field.
-        const sum = body.result_summary as Record<string, unknown> | undefined;
-        if (sum && sum.window_suggestion !== undefined && !(await runWindowOf(client, run_id))) {
-          const { window_suggestion: _w, ...rest } = sum;
-          body.result_summary = rest;
-          notices.push("This run has no window (this Tellagen does not list investigation_window_v1 for it), so window_suggestion was not sent. Say in a finding where the signal starts.");
-        }
+        const adapted = await adaptResultSummary(client, run_id, result_summary);
+        const notices: string[] = [...adapted.notices];
+        if (result_summary !== undefined) body.result_summary = adapted.summary;
         const headline = headlineNotice(result_summary);
         if (headline) notices.push(headline);
         const notice = notices.length > 0 ? notices.join(" ") : undefined;
@@ -1651,6 +1713,7 @@ export function registerInvestigationTools(
         );
         // The run is over: forget it, so the next run starts clean.
         client.session.clearActiveRun(run_id);
+        await rememberAmendableRun(client, run_id, status, data);
         const out: Record<string, unknown> = { ...data };
         const summary = summarizeWarnings(data.warnings);
         if (summary) out.warnings_summary = summary;

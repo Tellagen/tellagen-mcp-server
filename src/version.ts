@@ -15,7 +15,11 @@ export const INVESTIGATION_PROTOCOL_CAPABILITIES = [
   "responder_notes_v1",
   "investigation_window_v1",
   "question_checks_v1",
+  "run_requests_v1",
 ] as const;
+
+/** The server capability of Tellagen: requests on a finished run, delivered to the client. */
+export const RUN_REQUESTS_CAPABILITY = "run_requests_v1";
 
 /** Client capabilities that a person can switch off with an environment variable. */
 const OPTIONAL_CAPABILITY_SWITCH: Record<string, string> = { strict_fields_v1: "TELLAGEN_STRICT_FIELDS" };

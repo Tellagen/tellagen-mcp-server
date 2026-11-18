@@ -712,6 +712,7 @@ describe("Tool integration via client", () => {
           "responder_notes_v1",
           "investigation_window_v1",
           "question_checks_v1",
+          "run_requests_v1",
         ],
       });
     });

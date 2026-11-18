@@ -13,6 +13,7 @@
     "question_checks_v1",
     "responder_notes_v1",
     "run_images_v1",
+    "run_requests_v1",
     "runbook_plan_v2",
     "strict_fields_v1",
     "trace_check_id_v2"
@@ -30,8 +31,17 @@
     "log_lines_v1",
     "question_checks_v1",
     "recorded_steps_v1",
-    "run_images_v1"
+    "run_amendments_v1",
+    "run_images_v1",
+    "run_requests_v1"
   ],
+  "server_capabilities_since": {
+    "run_amendments_v1": "2026-11-18.1",
+    "run_requests_v1": "2026-11-18.1"
+  },
+  "protocol_capabilities_since": {
+    "run_requests_v1": "2026-11-18.1"
+  },
   "client_headers_sent": [
     "X-Tellagen-Client",
     "X-Tellagen-Client-Session",
@@ -125,8 +135,10 @@
         "recorded_by",
         "started_at",
         "completed_at",
-        "duration_ms"
+        "duration_ms",
+        "request_id"
       ],
+      "fields_since": {"request_id": "2026-11-18.1"},
       "response_fields": ["steps", "note", "run_state", "responder_notes"],
       "error_codes": ["run_taken_over", "investigation_run_ended"]
     },
@@ -172,6 +184,30 @@
       "request_fields": ["available_sources", "profile_id", "kubernetes_checks", "kubernetes_read_only_tools"],
       "response_fields": ["accepted_sources", "ignored_sources"],
       "error_codes": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investigation-runs/{id}/amendments",
+      "since_bundle": "2026-11-18.1",
+      "request_fields": ["reason", "findings", "findings.finding_type", "findings.role", "findings.claim", "findings.evidence_summary", "findings.evidence_refs", "findings.confidence", "findings.confidence_reason", "findings.screenshots", "findings.checks", "coverage", "coverage.id", "coverage.source", "coverage.state", "coverage.summary", "coverage.links", "coverage.step_ids", "coverage.integration_id", "coverage.finding_ids", "coverage.reason", "coverage.retryable", "coverage.detail", "result_summary", "request_id"],
+      "response_fields": ["run", "run.amend_until", "amendment", "amendment.version", "findings", "warnings"],
+      "error_codes": ["run_not_amendable", "run_amendment_conflict", "run_amendment_limit", "run_taken_over", "investigation_run_ended", "run_request_not_available"]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investigation-runs/{id}/requests/{requestId}/pickup",
+      "since_bundle": "2026-11-18.1",
+      "request_fields": [],
+      "response_fields": ["request", "request.id", "request.kind", "request.source", "request.source_label", "request.text", "run", "findings"],
+      "error_codes": ["run_request_not_available", "run_not_amendable"]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/investigation-runs/{id}/requests/{requestId}",
+      "since_bundle": "2026-11-18.1",
+      "request_fields": ["state", "failure_code"],
+      "response_fields": ["request", "request.state"],
+      "error_codes": ["run_request_not_available"]
     }
   ]
 }

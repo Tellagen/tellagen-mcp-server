@@ -18,6 +18,8 @@ import { registerIncidentTools } from "./incidents.js";
 import { registerInvestigationTools } from "./investigations.js";
 import { registerCauseTools } from "./causes.js";
 import { registerFindingTools } from "./findings.js";
+import { registerAmendmentTools } from "./amendments.js";
+import { registerRunRequestTools } from "./requests.js";
 import { registerTimelineTools } from "./timeline.js";
 import { registerContextTools } from "./context.js";
 import { registerDatasourceTools } from "./datasources.js";
@@ -86,6 +88,8 @@ export function registerAllTools(
   registerIncidentTools(collector, client);
   registerInvestigationTools(collector, client);
   registerFindingTools(collector, client);
+  registerAmendmentTools(collector, client);
+  registerRunRequestTools(collector, client);
   registerCauseTools(collector, client);
   registerTimelineTools(collector, client);
   registerContextTools(collector, client);

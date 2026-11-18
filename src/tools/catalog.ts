@@ -55,6 +55,9 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   { name: "tellagen_get_investigation_coverage", toolset: "diagnosis", effect: "read" },
   { name: "tellagen_post_timeline_event", toolset: "diagnosis", effect: "add" },
   { name: "tellagen_complete_investigation", toolset: "diagnosis", effect: "change" },
+  { name: "tellagen_amend_investigation", toolset: "diagnosis", effect: "add", idempotent: true },
+  { name: "tellagen_pick_up_run_request", toolset: "diagnosis", effect: "add" },
+  { name: "tellagen_end_run_request", toolset: "diagnosis", effect: "change", idempotent: true },
   // incidents
   { name: "tellagen_list_incidents", toolset: "incidents", effect: "read" },
   { name: "tellagen_get_incident", toolset: "incidents", effect: "read" },

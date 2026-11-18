@@ -73,3 +73,18 @@ export function joinFact(state: RunState): string {
   const who = state.client_name ? `${state.client_name}${state.client_version ? ` ${state.client_version}` : ""}` : "Another client";
   return `${who} on this computer is working on run ${state.run_id} (picked up at ${state.picked_up_at}). Two clients on one run write over each other.`;
 }
+
+/**
+ * The run an addition is about: the id it was given, else the finished
+ * run this session remembers that still takes additions (the one a write
+ * answered about last). Never the open run: it is not finished.
+ */
+export function resolveAmendRunId(client: TellagenClient, given?: string): string {
+  const id = given?.trim();
+  if (id) return checkedRunId(id);
+  const finished = client.session.latestAmendable();
+  if (finished) return finished.runId;
+  throw new NoActiveRunError(
+    "No finished run is remembered in this session. Pass investigation_run_id: the run you completed, or the run the person names.",
+  );
+}
