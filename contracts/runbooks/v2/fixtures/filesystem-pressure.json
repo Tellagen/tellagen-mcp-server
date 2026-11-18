@@ -19,17 +19,6 @@
       "capabilities": ["repos:read"],
       "required": true,
       "on_unavailable": {"action": "record_gap"}
-    },
-    {
-      "id": "host-filesystem",
-      "source_key": "local_host",
-      "capabilities": [
-        "host:filesystem_inventory",
-        "host:path_mount_mapping",
-        "host:filesystem_consumers"
-      ],
-      "required": true,
-      "on_unavailable": {"action": "record_gap"}
     }
   ],
   "entry_check_ids": ["identify-alert-filesystem"],
@@ -82,44 +71,46 @@
     },
     {
       "id": "map-runtime-filesystems",
-      "intent": "Map the alerted filesystem and every suspected service storage path to runtime host, device, and mountpoint identities",
-      "source_requirement_id": "host-filesystem",
+      "intent": "Map the alerted filesystem and every suspected service storage path to host, device, and mountpoint identities with the node-exporter filesystem series",
+      "source_requirement_id": "filesystem-metrics",
       "safety": "read_only",
       "invocation": {
         "kind": "query",
-        "capability": "host:path_mount_mapping",
-        "template": "Use the reviewed bounded host evidence wrapper to map root, monitoring, and container storage paths to host, device, mountpoint, and filesystem identities. Compare candidates only with explicit resource identity keys.",
-        "parameters": {},
-        "bounds": {"lookback": "5m", "step": "5m", "max_points": 1}
+        "capability": "prometheus:query",
+        "template": "node_filesystem_size_bytes{fstype=~\"ext4|xfs\"}",
+        "parameters": {
+          "time_range": {"type": "time_range", "source": "incident.time_range", "target": "request.range"}
+        },
+        "bounds": {"lookback": "30m", "step": "5m", "max_points": 6}
       },
       "evidence_contract": {
-        "kind": "command_output",
-        "required_fields": ["artifact", "query", "resource_identity", "join_basis", "result_summary"]
+        "kind": "timeseries",
+        "required_fields": ["artifact", "query", "time_range", "resource_identity", "join_basis", "result_summary"]
       },
-      "confirms_when": "The suspected consumer maps to the same host, device, and mountpoint as the alert, with the join keys recorded",
-      "falsifies_when": "The suspected consumer explicitly maps to a different device or mountpoint on the alerting host",
+      "confirms_when": "The suspected consumer's storage path maps to the same host, device, and mountpoint as the alert, with the join keys recorded",
+      "falsifies_when": "The documented storage path of the suspected consumer maps to a different device or mountpoint on the alerting host",
       "on_confirm": ["find-alerted-filesystem-consumers"],
       "on_falsify": ["find-alerted-filesystem-consumers"],
       "on_error": {"action": "record_gap"}
     },
     {
       "id": "find-alerted-filesystem-consumers",
-      "intent": "Identify bounded top-level consumers on the alerted filesystem without crossing mount boundaries",
-      "source_requirement_id": "host-filesystem",
+      "intent": "Identify the documented consumers of the alerted filesystem from the infrastructure documentation. Tellagen does not read the host itself, so a consumer the documentation does not name stays a gap finding",
+      "source_requirement_id": "infrastructure-docs",
       "safety": "read_only",
       "invocation": {
         "kind": "query",
-        "capability": "host:filesystem_consumers",
-        "template": "Use the reviewed bounded host evidence wrapper to list top-level consumers on the alerted filesystem only. Do not follow other mounts and do not read file contents, configuration, environment, or credentials.",
+        "capability": "repos:read",
+        "template": "Read the configured infrastructure repository for the services, volumes, and storage paths that sit on the alerted host and mountpoint. Return the documented consumers with their paths. Do not read credentials, configuration values, or environment files.",
         "parameters": {},
         "bounds": {"lookback": "5m", "step": "5m", "max_points": 1}
       },
       "evidence_contract": {
-        "kind": "command_output",
-        "required_fields": ["artifact", "query", "resource_identity", "result_sample", "result_summary"]
+        "kind": "document",
+        "required_fields": ["artifact", "query", "result_summary"]
       },
-      "confirms_when": "One or more bounded consumers on the alerted filesystem account for material usage and are identified by path and bytes",
-      "falsifies_when": "No inspected consumer on the alerted filesystem accounts for material usage within the bounded evidence",
+      "confirms_when": "The documentation names one or more consumers whose storage is on the alerted filesystem",
+      "falsifies_when": "The documentation shows that no documented consumer stores data on the alerted filesystem",
       "on_confirm": ["verify-filesystem-headroom"],
       "on_falsify": ["verify-filesystem-headroom"],
       "on_error": {"action": "record_gap"}
@@ -150,13 +141,13 @@
     }
   ],
   "escalation": {
-    "when": "Runtime topology is unavailable, resource identities do not match, or no bounded consumer explains the alert",
+    "when": "Runtime topology is unavailable, resource identities do not match, or no documented consumer explains the alert. Post a gap finding that says the host was not inspected",
     "target": "infrastructure owner and incident commander"
   },
   "remediation": {
     "mode": "suggest_only",
     "proposed_steps": [
-      "Ask the infrastructure owner to review evidence-linked consumers on the alerted filesystem and approve a reversible cleanup target.",
+      "Ask the infrastructure owner to inspect the alerted filesystem on the host and approve a reversible cleanup target.",
       "Treat service storage or WAL failures on a different filesystem as a separate remediation task with its own owner and verification."
     ],
     "approval_required": true,

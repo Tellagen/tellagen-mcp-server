@@ -27,10 +27,12 @@ import {
   maxStepFigureBytes,
   MAX_STEP_FIGURE_BYTES,
   FIGURE_EXTRAS_CAPABILITY,
+  FIGURE_LIMITS_CAPABILITY,
   rangeOverlapBlockSchema,
   runHistoryBlockSchema,
   withoutDiffLineDetailInBlock,
   withoutFigureExtrasInBlock,
+  withoutFigureLimitsInBlock,
 } from "./figures.js";
 
 import { knownRunWindow, rememberRunWindow, type RunWindow } from "./run-window.js";
@@ -47,7 +49,19 @@ export const RUN_IMAGES_CAPABILITY = "run_images_v1";
 export const DIFF_LINES_CAPABILITY = "diff_lines_v1";
 /** The server takes a log_lines figure. */
 export const LOG_LINES_CAPABILITY = "log_lines_v1";
-export { FIGURE_EXTRAS_CAPABILITY };
+export { FIGURE_EXTRAS_CAPABILITY, FIGURE_LIMITS_CAPABILITY };
+/** result_summary.answer and a figure on a recommended action. */
+export const ACTION_ANSWER_CAPABILITY = "action_answer_v1";
+/** result_summary.alert_verdict: the verdict on the alert behind the incident, and its proof checklist. */
+export const ALERT_VERDICT_CAPABILITY = "alert_verdict_v1";
+/**
+ * The capability of a Tellagen that takes additions to a finished run and the
+ * reason, retryable and detail of a coverage entry (both ship together).
+ */
+export const RUN_AMENDMENTS_CAPABILITY = "run_amendments_v1";
+
+/** A coverage entry may have the state not_needed. */
+export const COVERAGE_NOT_NEEDED_CAPABILITY = "coverage_not_needed_v1";
 
 /* ------------------------------------------------------------------ */
 /* Capability negotiation                                             */
@@ -140,6 +154,32 @@ export async function supportsFigureExtras(
 ): Promise<boolean> {
   if (runId !== undefined) return supportsCapability(client, runId, FIGURE_EXTRAS_CAPABILITY);
   return latestCapabilities.get(client)?.has(FIGURE_EXTRAS_CAPABILITY) ?? false;
+}
+
+/** Whether the backend takes a `limit` on a compare row. Decided like supportsDiffLines. */
+export async function supportsFigureLimits(client: TellagenClient, runId?: string): Promise<boolean> {
+  if (runId !== undefined) return supportsCapability(client, runId, FIGURE_LIMITS_CAPABILITY);
+  return latestCapabilities.get(client)?.has(FIGURE_LIMITS_CAPABILITY) ?? false;
+}
+
+/** Whether the backend takes result_summary.answer and a figure on a recommended action. */
+export async function supportsActionAnswer(client: TellagenClient, runId: string): Promise<boolean> {
+  return supportsCapability(client, runId, ACTION_ANSWER_CAPABILITY);
+}
+
+/** Whether the backend takes result_summary.alert_verdict. Listed only for a run whose incident came from an alert. */
+export async function supportsAlertVerdict(client: TellagenClient, runId: string): Promise<boolean> {
+  return supportsCapability(client, runId, ALERT_VERDICT_CAPABILITY);
+}
+
+/** Whether the backend takes additions to a finished run and coverage reasons. */
+export async function supportsRunAmendments(client: TellagenClient, runId: string): Promise<boolean> {
+  return supportsCapability(client, runId, RUN_AMENDMENTS_CAPABILITY);
+}
+
+/** Whether the backend takes the coverage state not_needed. */
+export async function supportsCoverageNotNeeded(client: TellagenClient, runId: string): Promise<boolean> {
+  return supportsCapability(client, runId, COVERAGE_NOT_NEEDED_CAPABILITY);
 }
 
 /**
@@ -346,8 +386,9 @@ const compareFigure = z
           .object({
             label: line(1, 80),
             mono: z.boolean().optional(),
-            before: blockNumber,
+            before: blockNumber.optional(),
             after: blockNumber,
+            limit: blockNumber.optional(),
             details: z
               .array(
                 z
@@ -361,7 +402,10 @@ const compareFigure = z
               .max(3)
               .optional(),
           })
-          .strict(),
+          .strict()
+          .refine((row) => row.before !== undefined || row.limit !== undefined, {
+            message: "send before, or a limit to measure after against",
+          }),
       )
       .min(1)
       .max(8),
@@ -511,15 +555,32 @@ export const ruledOutSchema = z.object({
   confidence_percent: z.number().int().min(0).max(100).optional(),
 });
 
+export const COVERAGE_REASONS = ["wrong_account", "not_connected", "auth_expired", "error", "no_source"] as const;
+
 export const coverageEntrySchema = z.object({
   id: line(0, 64).optional(),
   source: line(1, 80).describe("The data source, for example Grafana, GitHub or Kubernetes"),
   state: z
-    .enum(["checked", "gap", "not_configured"])
+    .enum(["checked", "gap", "not_configured", "not_needed"])
     .describe(
-      "checked = read and used; gap = configured but could not be read or satisfied; not_configured = no such source in this workspace",
+      "checked = read and used; gap = configured but could not be read or satisfied; not_configured = no such source in this workspace; not_needed = skipped on purpose, with the reason in summary (only when the server lists coverage_not_needed_v1; never send checked for a source nobody read)",
     ),
-  summary: z.string().max(600).optional(),
+  summary: z.string().max(600).optional().describe("One line, at most 20 words. Required for not_needed: why the source was skipped."),
+  reason: z
+    .enum(COVERAGE_REASONS)
+    .optional()
+    .describe(
+      "Only on gap or not_configured: why the source was not read. wrong_account = the connector reads another account or workspace; not_connected = no connector is set up in this client; auth_expired = the sign-in ran out; error = the read failed; no_source = the source does not exist for this incident. Only when the server lists run_amendments_v1.",
+    ),
+  retryable: z
+    .boolean()
+    .optional()
+    .describe("Only with a reason: whether reading the source again can help. True by default, false for no_source."),
+  detail: z
+    .string()
+    .max(200)
+    .optional()
+    .describe("Only with a reason: one sentence, at most 200 characters, that says what went wrong. No secret, address or user name."),
   links: evidenceLinksSchema.optional(),
   step_ids: z
     .array(z.string().min(1).max(64))
@@ -629,6 +690,91 @@ export const resultChangeShape = {
       "The changes tied to the incident, at most 6: the regression_source that introduced it, first_bad and last_good runs or deploys, the fix, and one verified_by ci_run per run after the fix with its result. Give each a link (tellagen_build_source_link) or repo with ref or sha, and finding_ids or step_ids. Needs diagnosis_changes_v1.",
     ),
 };
+
+export const ALERT_VERDICTS = ["real_problem", "already_handled", "false_alarm", "not_sure"] as const;
+export const ALERT_VERDICT_REASONS = [
+  "customer_impact",
+  "internal_only",
+  "known_incident",
+  "declared_window",
+  "rule_wrong",
+  "data_wrong",
+  "rule_needs_tuning",
+] as const;
+export const ALERT_PROOF_IDS = [
+  "alert_value_read",
+  "rule_read",
+  "value_rebuilt",
+  "flaw_removed",
+  "baseline",
+  "onset",
+  "onset_change",
+  "impact_checked",
+  "customer_signal",
+] as const;
+
+/**
+ * The verdict on the alert behind the incident (alert_verdict_v1). The server
+ * checks it and may show Not sure instead; the fields it sets itself are not
+ * part of this schema.
+ */
+export const alertVerdictSchema = z
+  .object({
+    verdict: z.enum(ALERT_VERDICTS).describe("real_problem, already_handled, false_alarm or not_sure. Send not_sure when you cannot tell."),
+    reason: z
+      .enum(ALERT_VERDICT_REASONS)
+      .optional()
+      .describe(
+        "One reason that fits the verdict: customer_impact or internal_only (real_problem); known_incident or declared_window (already_handled); rule_wrong, data_wrong or rule_needs_tuning (false_alarm). Leave it out for not_sure.",
+      ),
+    onset: z
+      .object({
+        state: z.enum(["new", "standing", "cleared"]),
+        since: z
+          .string()
+          .max(40)
+          .refine((v) => !Number.isNaN(Date.parse(v)) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(v), "RFC 3339 time, such as 2026-11-14T09:00:00Z")
+          .describe("RFC 3339 time of that state"),
+      })
+      .optional(),
+    would_change_mind: z
+      .object({
+        text: z.string().min(1).max(200).describe('One observable thing that would change the verdict, for example "Checkout 5xx above 0.5%."'),
+        check: z
+          .object({
+            command_id: z.string().min(1).max(64),
+            op: z.enum(["above", "below"]),
+            value: z.number(),
+            unit: z.string().max(16).optional(),
+          })
+          .optional(),
+      })
+      .optional()
+      .describe("Required for false_alarm and already_handled"),
+    proof: z
+      .array(
+        z.object({
+          id: z.enum(ALERT_PROOF_IDS),
+          done: z.boolean(),
+          finding_ids: z.array(z.number().int().positive()).max(12).optional(),
+        }),
+      )
+      .max(9)
+      .optional()
+      .describe("The checklist. An item counts only when done is true and finding_ids names a finding of this run that shows it."),
+    incident_id: z
+      .string()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,31}$/, "an incident id such as INC-123")
+      .optional().describe("For already_handled with known_incident: the open incident that handles the alert, such as INC-123"),
+    finding_ids: z
+      .array(z.number().int().positive())
+      .max(12)
+      .optional()
+      .describe("For already_handled with declared_window: the findings that show the declared window"),
+  })
+  .describe(
+    "The verdict on the alert behind the incident, with its proof. Only when this Tellagen lists alert_verdict_v1. Judge the alert first; the server shows Not sure instead of a claim without proof.",
+  );
 
 export const resultStructureShape = {
   ruled_out: z
@@ -926,6 +1072,118 @@ export function stripResultLogLines(summary: unknown): {
   return removed.length > 0 ? { summary: { ...summary, causal_paths: causalPaths }, removed } : { summary, removed };
 }
 
+/**
+ * A result summary whose compare figures (in steps and on actions) carry no
+ * row limit. A figure that cannot stand without its limits is taken out.
+ */
+export function stripResultFigureLimits(summary: unknown): {
+  summary: unknown;
+  removed: string[];
+} {
+  const removed: string[] = [];
+  if (!isRecord(summary)) return { summary, removed };
+  const next: Record<string, unknown> = { ...summary };
+  const fix = (holder: unknown, where: string): unknown => {
+    if (!isRecord(holder) || !("figure" in holder)) return holder;
+    const result = withoutFigureLimitsInBlock(holder.figure);
+    if (result.what.length === 0) return holder;
+    removed.push(`${where}.figure`);
+    if (result.unusable) {
+      const rest = { ...holder };
+      delete rest.figure;
+      return rest;
+    }
+    return { ...holder, figure: result.block };
+  };
+  if (Array.isArray(next.causal_paths)) {
+    next.causal_paths = next.causal_paths.map((path, i) =>
+      isRecord(path) && Array.isArray(path.steps)
+        ? { ...path, steps: path.steps.map((step, j) => fix(step, `causal_paths[${i}].steps[${j}]`)) }
+        : path,
+    );
+  }
+  if (Array.isArray(next.recommended_actions)) {
+    next.recommended_actions = next.recommended_actions.map((action, i) => fix(action, `recommended_actions[${i}]`));
+  }
+  return removed.length > 0 ? { summary: next, removed } : { summary, removed };
+}
+
+/** A result summary without the answer and the figures of recommended actions. */
+export function stripResultActionAnswer(summary: unknown): { summary: unknown; removed: string[] } {
+  const removed: string[] = [];
+  if (!isRecord(summary)) return { summary, removed };
+  const next: Record<string, unknown> = { ...summary };
+  if ("answer" in next) {
+    delete next.answer;
+    removed.push("answer");
+  }
+  if (Array.isArray(next.recommended_actions)) {
+    next.recommended_actions = next.recommended_actions.map((action, i) => {
+      if (!isRecord(action) || !("figure" in action)) return action;
+      removed.push(`recommended_actions[${i}].figure`);
+      const rest = { ...action };
+      delete rest.figure;
+      return rest;
+    });
+  }
+  return removed.length > 0 ? { summary: next, removed } : { summary, removed };
+}
+
+/** A result summary without alert_verdict, for a backend that does not list alert_verdict_v1. */
+export function stripResultAlertVerdict(summary: unknown): { summary: unknown; removed: string[] } {
+  if (!isRecord(summary) || !("alert_verdict" in summary)) return { summary, removed: [] };
+  const next: Record<string, unknown> = { ...summary };
+  delete next.alert_verdict;
+  return { summary: next, removed: ["alert_verdict"] };
+}
+
+/**
+ * A result summary without coverage entries in the state not_needed. Without
+ * coverage_not_needed_v1 the entry is left out: sending `checked` would say a
+ * source was read that nobody read.
+ */
+export function stripResultNotNeeded(summary: unknown): { summary: unknown; removed: string[] } {
+  const removed: string[] = [];
+  if (!isRecord(summary) || !Array.isArray(summary.coverage)) return { summary, removed };
+  const coverage = summary.coverage.filter((entry, i) => {
+    if (isRecord(entry) && entry.state === "not_needed") {
+      removed.push(`coverage[${i}]`);
+      return false;
+    }
+    return true;
+  });
+  return removed.length > 0 ? { summary: { ...summary, coverage }, removed } : { summary, removed };
+}
+
+/** The fields a coverage entry has since coverage reasons: why a source was not read. */
+const COVERAGE_REASON_FIELDS = ["reason", "retryable", "detail"] as const;
+
+/** The coverage entries of a list without reason, retryable and detail. Names each entry changed. */
+export function stripCoverageReasons(
+  coverage: unknown,
+  path = "coverage",
+): { coverage: unknown; removed: string[] } {
+  const removed: string[] = [];
+  if (!Array.isArray(coverage)) return { coverage, removed };
+  const next = coverage.map((entry, i) => {
+    if (!isRecord(entry) || !COVERAGE_REASON_FIELDS.some((field) => entry[field] !== undefined)) return entry;
+    removed.push(`${path}[${i}]`);
+    const rest = { ...entry };
+    for (const field of COVERAGE_REASON_FIELDS) delete rest[field];
+    return rest;
+  });
+  return removed.length > 0 ? { coverage: next, removed } : { coverage, removed };
+}
+
+/** A result summary without the reason of a source that was not read, for a backend that does not know it. */
+export function stripResultCoverageReasons(summary: unknown): { summary: unknown; removed: string[] } {
+  if (!isRecord(summary)) return { summary, removed: [] };
+  const stripped = stripCoverageReasons(summary.coverage, "coverage");
+  return stripped.removed.length > 0
+    ? { summary: { ...summary, coverage: stripped.coverage }, removed: stripped.removed }
+    : { summary, removed: [] };
+}
+
 /** The sentence the tool adds when it dropped fields for an older backend. */
 export function unsupportedNotice(
   removed: string[],
@@ -938,6 +1196,21 @@ export function unsupportedNotice(
   }
   if (capability === LOG_LINES_CAPABILITY) {
     return `This Tellagen backend does not advertise ${capability}, so the log_lines figure of ${shown}${more} was not sent and the rest went through. Show the log evidence as a checks figure, and put the lines in the finding. Update Tellagen to show log lines.`;
+  }
+  if (capability === FIGURE_LIMITS_CAPABILITY) {
+    return `This Tellagen backend does not advertise ${capability}, so the row limits of ${shown}${more} were not sent. A figure that needed them was left out. Put the limit in the caption or the finding, never in before.`;
+  }
+  if (capability === ACTION_ANSWER_CAPABILITY) {
+    return `This Tellagen backend does not advertise ${capability}, so ${shown}${more} were not sent and the rest went through. Update Tellagen to show the answer line and the figure of an action.`;
+  }
+  if (capability === ALERT_VERDICT_CAPABILITY) {
+    return `This Tellagen does not list ${capability} for this run (the Tellagen is older, the feature is off for this workspace, or the run is not on an alert), so the alert verdict was not sent and the rest went through. Say in the headline or a finding whether the alert was real.`;
+  }
+  if (capability === COVERAGE_NOT_NEEDED_CAPABILITY) {
+    return `This Tellagen backend does not advertise ${capability}, so the not_needed coverage entries ${shown}${more} were left out (they must not be sent as checked). Say in a finding or an unknown why the source was skipped.`;
+  }
+  if (capability === RUN_AMENDMENTS_CAPABILITY) {
+    return `This Tellagen backend does not advertise ${capability}, so the reason, retryable and detail of ${shown}${more} were not sent and the rest went through. Say why the source was not read in the summary of the entry. Update Tellagen to show the reason.`;
   }
   if (capability === FIGURE_EXTRAS_CAPABILITY) {
     return `This Tellagen backend does not advertise ${capability}, so the stats title, the stats after the fourth and runs_not_shown of ${shown}${more} were not sent and the rest of the figure went through. Update Tellagen to show them.`;
@@ -968,7 +1241,7 @@ const WARNING_ADVICE: Record<string, string> = {
     "fix the figure to match a stats, compare, trend, checks, range_overlap, histogram, run_history, diff or log_lines block (tellagen_build_figure checks it)",
   structure_truncated: "keep ruled_out to 5, coverage to 8 and unknowns to 5",
   negative_not_ruled_out: "add a ruled_out entry for each negative finding that matters",
-  gap_without_coverage: "add a coverage entry with state gap for each gap finding",
+  gap_without_coverage: "add a coverage entry with state gap for each gap finding that is a source you could not read (or turn the finding into a coverage entry), and keep a gap finding only for a question a person can answer",
   single_source_high_confidence:
     "a step above 90% confidence rests on one source: cite a finding from a second source (a name that starts with grafana counts as one source) or send confidence_percent of 90 or less",
   change_without_link: "give each change ref a link, or repo with ref or sha so Tellagen can build one",
@@ -980,6 +1253,21 @@ const WARNING_ADVICE: Record<string, string> = {
     "a diff of a change that adds and removes lines must show both: send each removed line next to the line that replaced it",
   diff_short_change_cut:
     "a change of 12 or fewer changed lines is sent whole: send every changed line of it",
+  text_too_long:
+    "cut the text named in the warning to the word limit: answer, headline 15; claim 20; evidence summary 60; action title 12, summary 20; ruled out 30; coverage 20; unknown 12; customer impact 15",
+  filler_phrase: "delete the stock phrase and state the fact; do not repeat a rule of the protocol",
+  raw_id_in_text: "move the run, job, commit or other long id into links; keep a sentence free of ids",
+  coverage_not_needed_without_reason: "give each not_needed coverage entry a summary that says why the source was skipped",
+  verdict_downgraded: "the server shows Not sure because proof is missing or a signal is open: read claimed and missing in the answer, then amend the run with the missing proof or keep Not sure",
+  verdict_proof_missing: "mark a proof item done only with a finding of this run behind it (finding_ids)",
+  verdict_without_onset: "send onset {state, since}: new, standing or cleared, with an RFC 3339 time",
+  verdict_without_change_mind: "send would_change_mind with one observable thing and, when you can, a check on a query of this run",
+  verdict_real_without_impact_check: "check customer impact and cite a finding for impact_checked before you call the alert a real problem",
+  verdict_dropped: "this run takes no verdict: leave alert_verdict out",
+  cause_without_runtime_evidence: "a cause that rests only on code or documents needs a runtime source (metrics, logs, a CI run or a deployment) or it is shown as a leading hypothesis",
+  empty_result_link_dropped: "a link to a query that returned nothing is dropped: say in the claim that nothing was found, or cite a query that returned data",
+  step_names_fix_not_cause: "a step names the fix, not the cause: state what broke and why",
+  false_alarm_without_rule: "a false alarm needs a finding that shows the alert rule (read the alert rules) and the proof item rule_read",
   headline_too_long:
     "write the headline claim (conclusion.sentence) in 15 words or fewer, with one cause, and keep the detail in findings",
   question_not_a_question:

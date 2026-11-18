@@ -9,6 +9,8 @@ import {
   LOG_LINES_CAPABILITY,
   supportsDiffLines,
   supportsFigureExtras,
+  supportsFigureLimits,
+  FIGURE_LIMITS_CAPABILITY,
   supportsLogLines,
   unsupportedNotice,
 } from "../diagnosis-structure.js";
@@ -17,6 +19,7 @@ import {
   timelineBlockRefSchema,
   withoutDiffLineDetailInBlock,
   withoutFigureExtrasInBlock,
+  withoutFigureLimitsInBlock,
 } from "../figures.js";
 
 const timelineMutationSchema = {
@@ -161,6 +164,17 @@ async function blocksForBackend<T extends { blocks?: unknown[] }>(
   if (extrasRemoved.length > 0 && !(await supportsFigureExtras(client))) {
     blocks = noExtras;
     notices.push(unsupportedNotice(extrasRemoved, FIGURE_EXTRAS_CAPABILITY));
+  }
+
+  const limitsRemoved: string[] = [];
+  const noLimits = blocks.flatMap((block, index) => {
+    const result = withoutFigureLimitsInBlock(block);
+    if (result.what.length > 0) limitsRemoved.push(`blocks[${index}]`);
+    return result.unusable ? [] : [result.block];
+  });
+  if (limitsRemoved.length > 0 && !(await supportsFigureLimits(client))) {
+    blocks = noLimits;
+    notices.push(unsupportedNotice(limitsRemoved, FIGURE_LIMITS_CAPABILITY));
   }
 
   if (notices.length === 0) return { params };

@@ -39,12 +39,18 @@ interface RouteUse {
   request_fields: string[];
   response_fields: string[];
   error_codes: string[];
+  /** The first bundle version that holds a field of this route (request, response or query). Older pins skip it. */
+  fields_since?: Record<string, string>;
   /** The first bundle version that holds this route. Older pins skip it: the route is new in Tellagen. */
   since_bundle?: string;
 }
 interface McpProtocol {
   protocol_capabilities_sent: string[];
   server_capabilities_used: string[];
+  /** The first bundle version that lists a capability. Older pins skip it: the capability is new in Tellagen. */
+  server_capabilities_since?: Record<string, string>;
+  /** The same for the capabilities the server advertises at pickup. */
+  protocol_capabilities_since?: Record<string, string>;
   client_headers_sent: string[];
   routes: RouteUse[];
 }
@@ -60,9 +66,13 @@ interface BackendProtocol {
 export function compareProtocols(mcp: McpProtocol, backend: BackendProtocol, pinned = "9999"): string[] {
   const problems: string[] = [];
   for (const name of mcp.protocol_capabilities_sent) {
+    const sinceProtocol = mcp.protocol_capabilities_since?.[name];
+    if (sinceProtocol && pinned < sinceProtocol) continue;
     if (!backend.protocol_capabilities.includes(name)) problems.push(`The server advertises the capability "${name}" at pickup, but Tellagen does not know it.`);
   }
   for (const name of mcp.server_capabilities_used) {
+    const since = mcp.server_capabilities_since?.[name];
+    if (since && pinned < since) continue;
     if (!backend.server_capabilities.includes(name)) problems.push(`The server relies on the server capability "${name}", but Tellagen does not list it.`);
   }
   for (const name of mcp.client_headers_sent) {
@@ -77,12 +87,15 @@ export function compareProtocols(mcp: McpProtocol, backend: BackendProtocol, pin
       continue;
     }
     for (const field of route.request_fields) {
+      if (route.fields_since?.[field] && pinned < route.fields_since[field]!) continue;
       if (!theirs.request_fields.includes(field)) problems.push(`${label}: the server sends the request field "${field}", but Tellagen's contract has no such field.`);
     }
     for (const param of route.query ?? []) {
+      if (route.fields_since?.[param] && pinned < route.fields_since[param]!) continue;
       if (!(theirs.query ?? []).includes(param)) problems.push(`${label}: the server sends the query parameter "${param}", but Tellagen's contract has no such parameter.`);
     }
     for (const field of route.response_fields) {
+      if (route.fields_since?.[field] && pinned < route.fields_since[field]!) continue;
       if (!theirs.response_fields.includes(field)) problems.push(`${label}: the server reads the response field "${field}", but Tellagen's contract does not return it.`);
     }
     for (const code of route.error_codes) {
@@ -121,7 +134,8 @@ describe("contracts/mcp-protocol.json says what the source does", () => {
           .replace(/\$\{query\}/g, "")
           .replace(/\$\{[^}]+\}/g, "{id}")
           .replace(/\?.*$/, "")
-          .replace(/\/causes\/\{id\}$/, "/causes/{key}"),
+          .replace(/\/causes\/\{id\}$/, "/causes/{key}")
+          .replace(/\/requests\/\{id\}/, "/requests/{requestId}"),
       );
     }
     const listed = new Set(ours.routes.map((route) => route.path));
@@ -179,6 +193,13 @@ describe("a deliberate break turns the check red with the name of the field", ()
     expect(compareProtocols(ours, broken, "2026-11-12.4")).toEqual([]);
     const text = compareProtocols(ours, broken, "2026-12-01.1").join("\n");
     expect(text).toContain("POST /api/v1/settings/agent/tool-report: the server calls this route");
+  });
+
+  it("skips a capability that is newer than the pinned bundle, and checks it once the pin reaches it", () => {
+    const broken = backend();
+    broken.server_capabilities = broken.server_capabilities.filter((name) => name !== "run_amendments_v1");
+    expect(compareProtocols(ours, broken, "2026-11-17.1").filter((line) => line.includes("run_amendments_v1"))).toEqual([]);
+    expect(compareProtocols(ours, broken, "2026-11-18.1").join("\n")).toContain('"run_amendments_v1"');
   });
 
   it("names the field when Tellagen renames a pickup field", () => {

@@ -97,7 +97,15 @@ After a restart of the client, ask it to continue. `tellagen_resume` picks the r
 
 In **Settings > Local diagnosis**, under **For admins**, **Check MCP tools** gives a prompt with a `diagnostic_session_id` such as `diag_abc123`. That is a tool check, not a run: the client turns on the `settings` toolset, runs safe read-only checks and calls `tellagen_report_diagnostic_tools`.
 
-To recheck from the client with no prompt to copy, ask it to run `tellagen_report_available_sources`: it posts the tools the client can reach (`grafana`, `kubernetes`, `github`, `docs`, `local_host`, each found or not found) to Tellagen, and the tools table in Settings shows them for that client. For Kubernetes the client also runs four `kubectl auth can-i` tests (create pods, delete pods, create `pods/exec`, get secrets) and reports them as checks. The tests read access rules and change nothing. They say what the Kubernetes identity could do, not what a model will do: a session that is not listened has no guard on its commands, so Tellagen never calls such a session read-only.
+To recheck from the client with no prompt to copy, ask it to run `tellagen_report_available_sources`: it posts the tools the client can reach (`grafana`, `kubernetes`, `github`, `docs`, each found or not found) to Tellagen, and the tools table in Settings shows them for that client. For Kubernetes the client also runs four `kubectl auth can-i` tests (create pods, delete pods, create `pods --subresource=exec`, get secrets) and reports them as checks. The tests read access rules and change nothing. They say what the Kubernetes identity could do, not what a model will do: a session that is not listened has no guard on its commands, so Tellagen never calls such a session read-only.
+
+### Set up Kubernetes in one command
+
+```
+npx @tellagen/mcp-server kubernetes setup [--client claude-code|claude-desktop|codex|cursor] [--context NAME] [--service-account NAME [-n NAMESPACE] [--duration 8h]] [--yes] [--no-report]
+```
+
+It writes `~/.config/tellagen/kubernetes-mcp.toml` for `kubernetes-mcp-server` (read-only tools, destructive tools off, the Secret resource denied), adds the server to your client after you say yes, runs the four `can-i` checks with the kubeconfig the server will use and reports them to Tellagen. `--context` gives the server a private copy of the kubeconfig with only that context. `--service-account` creates a token for that service account, writes a private kubeconfig (mode 600) and prints how long it lasts; run the command again to renew it. It prints no token. The read-only setting of your Kubernetes server entry is reported too (`kubernetes_read_only_tools`), so Tellagen can tell "read-only tools, account can write" from a server with no guard.
 
 ### Find out why a tool is not found
 
@@ -129,7 +137,7 @@ The server asks Tellagen once, right after the MCP handshake, whether the key wo
 
 ## Tools
 
-The server offers 51 tools, all with the prefix `tellagen_`, in five toolsets. A tool that reads never changes anything. A person, not an API key, accepts or rejects a root cause in Tellagen: no tool can do it.
+The server offers 54 tools, all with the prefix `tellagen_`, in five toolsets. A tool that reads never changes anything. A person, not an API key, accepts or rejects a root cause in Tellagen: no tool can do it.
 
 ### Toolsets
 
@@ -172,6 +180,9 @@ Run a diagnosis from pickup to completion. On by default.
 | `tellagen_get_investigation_coverage` | reads | Check which frozen checks and evidence are still missing before you complete |
 | `tellagen_post_timeline_event` | adds | Add a timestamped fact to the timeline, optionally with figures |
 | `tellagen_complete_investigation` | changes | Complete or fail a run with the result summary (the cause chain, what was ruled out, coverage, unknowns and change refs) |
+| `tellagen_pick_up_run_request` | adds | Take a responder's request on a finished run (read a source again, check an answer); the text is the person's words |
+| `tellagen_end_run_request` | changes | End a request with nothing new, or as failed, when no version was made |
+| `tellagen_amend_investigation` | adds | Add findings, changed coverage and, when the answer changes, a new result to a finished run, as a new version (needs `run_amendments_v1`) |
 
 ### `incidents`
 
@@ -251,6 +262,7 @@ Setup checks and run inspection.
 | `status` | Show the sign-in. `--line` prints one sentence for a client hook, or nothing when all is well; `--json` for a script |
 | `listen` | Take the diagnosis runs that wait for you and run each with Claude Code, with no window |
 | `doctor` | Find why a client cannot see a tool, from the config files of the clients on this computer. Reads only; `--fix` prints a corrected entry, `--report` sends names and statuses |
+| `kubernetes setup` | Set up a read-only Kubernetes server: writes its settings, adds it to your client (asks first), runs the four access checks and reports them |
 | `trace-hook` | Record one tool call of a client hook as a step of the open run |
 
 (`listen-guard` and `listen-wrap` are internal: the listener starts Claude Code through them.)
@@ -445,6 +457,8 @@ A server-only capability, `log_lines_v1`, means Tellagen takes a `log_lines` fig
 One more capability is the server's alone: Tellagen lists `diff_lines_v1` in `server_capabilities` when a diff figure may carry unchanged lines (`op: "context"`) and line numbers (`old_no`, `new_no`). The MCP does not advertise it. Without it, a diff goes out with only its `+` and `-` lines and no numbers (an older Tellagen would drop the whole figure), and the tool result carries an `mcp_notice`. `tellagen_build_figure` takes the `run_id` for this check; the timeline tools go by the latest pickup of the process.
 
 Likewise Tellagen lists `figure_extras_v1` when a `stats` figure may carry a `title` and more than four items, and a `run_history` figure may carry `runs_not_shown`. Without it the MCP cuts a stats figure to its first four items and drops the title and `runs_not_shown`, and the tool result carries an `mcp_notice`; `tellagen_build_figure` says so in `notes`. `tellagen_build_figure` takes the `run_id` for this check, and the timeline tools and `tellagen_complete_investigation` apply it to the figures they send.
+
+Tellagen lists `alert_verdict_v1` only for a run whose incident came from an alert. Then `tellagen_complete_investigation` takes `result_summary.alert_verdict`: `verdict` (`real_problem`, `already_handled`, `false_alarm`, `not_sure`), `reason`, `onset`, `would_change_mind` and a `proof` checklist of `{id, done, finding_ids}`. The server checks the proof and may show Not sure instead of the claim; it answers with the `verdict_*` warnings and never rejects the result for a weak verdict. Without the capability (an older Tellagen, the feature off for the workspace, or a run that is not on an alert) the MCP leaves `alert_verdict` out and the tool result carries an `mcp_notice`. The guide teaches the method (judge the alert first) and the evidence rules.
 
 The fields behind a capability go **only** to a run whose response lists it in `server_capabilities`. Against an older Tellagen they are removed before the request leaves, the call still succeeds, and the tool result carries an `mcp_notice` naming what was not sent. A run this process did not pick up is checked once through `GET /api/v1/investigations/{id}/context`.
 
@@ -693,3 +707,13 @@ npm run lint    # tsc --noEmit
 | `TELLAGEN_MCP_CLIENT` | No | Deprecated. `codex` or `claude`; used only when the client sends no name in the handshake, and for an older Tellagen workspace |
 | `TELLAGEN_MCP_PROFILE_ID` | No | Stable opaque profile ID used to scope local MCP access observations |
 | `GRAFANA_URL` | No | Grafana address, for `tellagen_probe_datasource` and `tellagen_build_source_link`. Used when Tellagen sends no Grafana address with the pickup, or several and none is picked; the Tellagen datasource `base_url` comes after it. The probe sends the service account token only to this address |
+
+## Requests on a finished run
+
+With `run_requests_v1` a responder can ask for a source to be read again or an answer to be checked on a run you completed. After `tellagen_complete_investigation` the server keeps sending the heartbeat (with the same client session) until `amend_until`, and takes the requests from the answer (`amendment_requests`, each delivered once); the model gets one line per request, with the text quoted as the person's words. `tellagen_next_investigation` sends `X-Tellagen-Capabilities: run_requests_v1` and lists `requests`; `tellagen_pick_up_run_request` takes one. Answer with `tellagen_amend_investigation` and `request_id` (a request of another session answers `run_request_not_available`), or end it with `tellagen_end_run_request` (`nothing_new`, or `failed` with `client_error`, `limit` or `time_limit`). `tellagen_post_trace_step` takes `request_id` for steps of that work. The headless listener (`listen`) takes requests too: with `take_runs_automatically` on, it starts the person's client for a request of the person's own run, with the read-only rules, and that client takes, answers or ends the request itself (only the session that takes a request may answer it).
+
+## Additions to a finished run
+
+A finished run takes additions for a limited time (`run_amendments_v1`). `tellagen_amend_investigation` sends `POST /api/v1/investigation-runs/{id}/amendments` with a `reason`, new `findings`, changed `coverage` entries and, only when the headline or the causal path changes, a whole new `result_summary`. The earlier version stays. The tool always sends an `Idempotency-Key` (a hash of the call), sends a conflict (409 `run_amendment_conflict`) again with the same key, and refuses with a clear message when Tellagen does not list `run_amendments_v1`. After `tellagen_complete_investigation` the server remembers the run, so the tool needs no run id in the same chat, and `tellagen_resume` says that the run takes additions. When a write to a finished run answers 409 `investigation_run_ended` with `details.amendable`, the answer starts with a line that names the tool and the end of the window.
+
+A source you could not read is a coverage entry in the state `gap` or `not_configured` with a `reason` (`wrong_account`, `not_connected`, `auth_expired`, `error` or `no_source`), `retryable` and one sentence in `detail` (at most 200 characters), not a gap finding. A gap finding is for a question a person can answer. For a Tellagen without `run_amendments_v1`, the three fields are left out and the result carries an `mcp_notice`.

@@ -7,6 +7,8 @@ import {
   KUBERNETES_SAFETY_PROTOCOL,
   KUBERNETES_SAFETY_STATUSES,
 } from "../k8s-safety.js";
+import { kubernetesReadOnlyOfClient } from "../doctor/k8s-read-only.js";
+import { realDoctorFs } from "../doctor/real-fs.js";
 import { TOOL_REPORT_PATH } from "../tool-report.js";
 import { AVAILABLE_SOURCE_KEYS, availableSourceSchema } from "./investigations.js";
 
@@ -123,10 +125,25 @@ export function registerDiagnosticTools(
     },
     async ({ diagnostic_session_id, reports }) => {
       try {
-        const data = await client.post(
-          `/api/v1/settings/agent/diagnostic-sessions/${diagnostic_session_id}/reports`,
-          { reports: reports.map(normalizeDiagnosticReport) },
-        );
+        const path = `/api/v1/settings/agent/diagnostic-sessions/${diagnostic_session_id}/reports`;
+        const plain = reports.map(normalizeDiagnosticReport);
+        // Whether the Kubernetes server runs read-only is read from its client config entry, like
+        // in the tool report, and only for the kubernetes report of a tool that was found.
+        const found = reports.some((r) => r.tool_id === "kubernetes" && r.installed);
+        const readOnly = found ? kubernetesReadOnlyOfClient(client.session.identity?.name, realDoctorFs()) : undefined;
+        let data: unknown;
+        if (readOnly === undefined) {
+          data = await client.post(path, { reports: plain });
+        } else {
+          const withFlag = plain.map((r) => (r.tool_id === "kubernetes" ? { ...r, kubernetes_read_only_tools: readOnly } : r));
+          try {
+            data = await client.post(path, { reports: withFlag });
+          } catch (err) {
+            // An older Tellagen refuses a field it does not know: send the report without it.
+            if (!(err instanceof TellagenAPIError && err.status === 400 && err.code === "unknown_field")) throw err;
+            data = await client.post(path, { reports: plain });
+          }
+        }
         return {
           content: [{ type: "text" as const, text: JSON.stringify(data) }],
         };
@@ -161,7 +178,7 @@ function registerReportAvailableSources(server: McpServer, client: TellagenClien
   server.registerTool(
     "tellagen_report_available_sources",
     {
-      description: `Tell Tellagen which data sources this client can reach, with no run and no diagnostic session ID, so the tools table in Settings shows the current state of this client. Look at the MCP servers and shell tools you have and map them to ${AVAILABLE_SOURCE_KEYS.join(", ")}, as tellagen_pick_up_investigation does: one entry for each key, found or not_found, with an optional short detail that holds no token, no password and no path with a user name. Safe to repeat. ${KUBERNETES_SAFETY_PROTOCOL} Pass those results as kubernetes_checks only when you ran them.`,
+      description: `Tell Tellagen which data sources this client can reach, with no run and no diagnostic session ID, so the tools table in Settings shows the current state of this client. Look at the MCP servers and shell tools you have and map them to ${AVAILABLE_SOURCE_KEYS.join(", ")}, as tellagen_pick_up_investigation does: one entry for each key, found or not_found, with an optional short detail that holds no token, no password and no path with a user name (for docs, the name of the source, such as Confluence, Notion or repository folder). Safe to repeat. ${KUBERNETES_SAFETY_PROTOCOL} Pass those results as kubernetes_checks only when you ran them.`,
       inputSchema: {
         available_sources: z
           .array(availableSourceSchema)
@@ -189,23 +206,38 @@ function registerReportAvailableSources(server: McpServer, client: TellagenClien
           ...(profileId ? { profile_id: profileId } : {}),
         };
         const checks = input.kubernetes_checks ?? [];
-        let data: Record<string, unknown>;
+        // Whether the Kubernetes server of this client runs read-only is read from its own
+        // config entry, only when the report says Kubernetes was found. Only the one fact leaves.
+        const kubernetesFound = input.available_sources.some((source) => source.key === "kubernetes" && source.state === "found");
+        const readOnly = kubernetesFound ? kubernetesReadOnlyOfClient(client.session.identity?.name, realDoctorFs()) : undefined;
+        const extras: Record<string, unknown> = {
+          ...(checks.length > 0 ? { kubernetes_checks: checks } : {}),
+          ...(readOnly !== undefined ? { kubernetes_read_only_tools: readOnly } : {}),
+        };
+        // An older Tellagen refuses a field it does not know. Try the fields it may know first
+        // (the checks), and the plain sources last.
+        const attempts: Record<string, unknown>[] = [{ ...body, ...extras }];
+        if (readOnly !== undefined && checks.length > 0) attempts.push({ ...body, kubernetes_checks: checks });
+        if (Object.keys(extras).length > 0) attempts.push(body);
+        let data: Record<string, unknown> | undefined;
         let note: string | undefined;
-        try {
-          data = await client.post<Record<string, unknown>>(
-            TOOL_REPORT_PATH,
-            checks.length > 0 ? { ...body, kubernetes_checks: checks } : body,
-            { safeToRepeat: true },
-          );
-        } catch (err) {
-          if (checks.length > 0 && err instanceof TellagenAPIError && err.status === 400 && err.code === "unknown_field") {
-            // An older Tellagen takes the sources and not the checks.
-            data = await client.post<Record<string, unknown>>(TOOL_REPORT_PATH, body, { safeToRepeat: true });
-            note = "This Tellagen stored the sources but not the Kubernetes safety checks yet.";
-          } else {
-            throw err;
+        for (let i = 0; i < attempts.length && !data; i++) {
+          try {
+            data = await client.post<Record<string, unknown>>(TOOL_REPORT_PATH, attempts[i], { safeToRepeat: true });
+          } catch (err) {
+            const last = i === attempts.length - 1;
+            if (last || !(err instanceof TellagenAPIError && err.status === 400 && err.code === "unknown_field")) throw err;
+          }
+          if (data && i > 0) {
+            const sent = attempts[i]!;
+            note = "kubernetes_checks" in sent
+              ? "This Tellagen stored the sources and checks but not whether the Kubernetes tools are read-only yet."
+              : checks.length > 0
+                ? "This Tellagen stored the sources but not the Kubernetes safety checks yet."
+                : "This Tellagen stored the sources but not whether the Kubernetes tools are read-only yet.";
           }
         }
+        if (!data) throw new Error("tool report was not sent");
         return {
           content: [{ type: "text" as const, text: JSON.stringify(note ? { ...data, note } : data) }],
         };

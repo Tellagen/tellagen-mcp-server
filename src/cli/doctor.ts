@@ -1,5 +1,3 @@
-import { accessSync, constants, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { TellagenClient } from "../client.js";
 import { createRuntime } from "../bootstrap.js";
 import { checkEntry, DOCTOR_TOOLS, toolOfEntry, type CheckDeps, type DoctorTool, type ToolResult } from "../doctor/checks.js";
@@ -11,43 +9,16 @@ import {
   type DoctorClient,
   type DoctorFs,
 } from "../doctor/config-files.js";
+import { realDoctorFs } from "../doctor/real-fs.js";
 import { formatError, TellagenAPIError } from "../errors.js";
 import { TOOL_REPORT_PATH } from "../tool-report.js";
 import { MCP_SERVER_VERSION } from "../version.js";
 import { parseArgs, type CliIo } from "./io.js";
 
-const MAX_CONFIG_BYTES = 4 << 20;
-
 export const DOCTOR_USAGE =
   "Usage: tellagen-mcp-server doctor [--client claude-code|claude-desktop|codex|cursor] [--tool grafana|kubernetes|github|docs] [--fix] [--report]\n";
 
-/** The computer this process runs on. */
-export function realDoctorFs(): DoctorFs {
-  return {
-    platform: process.platform,
-    home: homedir(),
-    cwd: process.cwd(),
-    appData: process.env.APPDATA ?? "",
-    xdgConfig: process.env.XDG_CONFIG_HOME ?? "",
-    readText(path) {
-      try {
-        if (statSync(path).size > MAX_CONFIG_BYTES) return undefined;
-        return readFileSync(path, "utf8");
-      } catch {
-        return undefined;
-      }
-    },
-    isExecutable(path) {
-      try {
-        if (!statSync(path).isFile()) return false;
-        if (process.platform !== "win32") accessSync(path, constants.X_OK);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-  };
-}
+export { realDoctorFs };
 
 export interface DoctorDeps {
   fs?: DoctorFs;

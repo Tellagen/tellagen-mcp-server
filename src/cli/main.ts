@@ -12,6 +12,7 @@ Commands
   status       Show the sign-in. With --line: one sentence for a client hook, or nothing.
   listen       Take diagnosis runs that wait in Tellagen and run them with your AI client, with no window.
   doctor       Find why an AI client cannot see a tool, from its config files. Reads only; --report sends names and statuses.
+  kubernetes   Set up a read-only Kubernetes server for diagnosis: "kubernetes setup" writes its settings, adds it to your client and checks what it can do.
   trace-hook   Record one tool call of a client hook as a step of the open run (reads the hook event on standard input).
 
 Settings: TELLAGEN_API_KEY and TELLAGEN_API_URL win over a stored sign-in. TELLAGEN_HOME moves the folder ~/.tellagen.
@@ -47,6 +48,10 @@ export async function runCli(command: string, args: readonly string[], io: CliIo
     case "doctor": {
       const { doctorCommand } = await import("./doctor.js");
       return doctorCommand(args, io);
+    }
+    case "kubernetes": {
+      const { kubernetesCommand } = await import("./kubernetes.js");
+      return kubernetesCommand(args, io);
     }
     case "trace-hook": {
       const { traceHookCommand } = await import("./trace-hook.js");

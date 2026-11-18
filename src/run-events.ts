@@ -143,7 +143,10 @@ export function runEventLines(client: TellagenClient, payload: unknown, callRunI
 
   if (payload.error === true) {
     const code = typeof payload.code === "string" ? payload.code : "";
-    if (code === "run_taken_over") {
+    if (code === "run_taken_over" && payload.amendment === true) {
+      // An addition from a session that did not run the run: the run is not lost.
+      lines.push("Tellagen takes additions to this run only from the client session that ran it. Do not retry. Tell the person what you found.");
+    } else if (code === "run_taken_over") {
       const at = text(payload.taken_over_at ?? (isRecord(payload.details) ? payload.details.taken_over_at : undefined), 40);
       const runId = runIdOf(payload, active);
       if (runId) session.clearActiveRun(runId);
@@ -153,6 +156,15 @@ export function runEventLines(client: TellagenClient, payload: unknown, callRunI
     } else if (code === "investigation_run_ended") {
       const runId = runIdOf(payload, active);
       if (runId) session.clearActiveRun(runId);
+      if (isRecord(payload.details) && payload.details.amendable === true) {
+        // The run is finished, but Tellagen still takes additions to it.
+        const until = text(payload.details.amend_until, 40);
+        if (runId) session.rememberAmendable(runId, until || undefined);
+        lines.push(
+          `The run is finished but takes additions${until ? ` until ${until}` : ""}. Use tellagen_amend_investigation. Do not write trace steps, causes or findings to it any more.`,
+        );
+        return lines;
+      }
       const reason = isRecord(payload.details) ? text(payload.details.reason, 100) : "";
       const why = [text(payload.message, 300), reason && `reason: ${reason}`].filter(Boolean).join("; ");
       lines.push(

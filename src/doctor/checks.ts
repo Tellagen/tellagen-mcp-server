@@ -27,13 +27,19 @@ const PROFILES: Record<DoctorTool, ToolProfile> = {
   },
   kubernetes: { name: /kubernetes|k8s|kubectl/i, command: /kubernetes-mcp-server|mcp-server-kubernetes/i, env: [] },
   github: { name: /github/i, command: /github-mcp-server|server-github/i, env: [["GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN"]] },
-  docs: { name: /(^|[^a-z])(docs?|documentation)([^a-z]|$)/i, command: /docs-mcp|mcp-docs/i, env: [] },
+  docs: {
+    // A documentation server, or the Atlassian, Confluence or Notion servers that hold the runbooks.
+    // A Bitbucket server is a code server, not documentation.
+    name: /^(?!.*bitbucket).*((^|[^a-z])(docs?|documentation|atlassian|jira|confluence|notion)([^a-z]|$))/i,
+    command: /docs-mcp|mcp-docs|mcp-atlassian|atlassian[-/]?mcp|mcp\.atlassian\.com|confluence|notion-mcp|mcp\.notion\.com|@notionhq/i,
+    env: [],
+  },
 };
 
 /** The catalog tool an entry is, by its name first and then by its command line. */
 export function toolOfEntry(entry: ServerEntry): DoctorTool | undefined {
   for (const tool of DOCTOR_TOOLS) if (PROFILES[tool].name.test(entry.name)) return tool;
-  const line = [entry.command ?? "", ...entry.args].join(" ");
+  const line = [entry.command ?? "", ...entry.args, entry.url ?? ""].join(" ");
   for (const tool of DOCTOR_TOOLS) if (PROFILES[tool].command.test(line)) return tool;
   return undefined;
 }

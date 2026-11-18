@@ -5,7 +5,7 @@
   "description": "The blocks field of a timeline event: typed widgets that hold the numbers behind a note. Send it with the REST timeline create (POST /api/v1/incidents/{id}/timeline) or update (PATCH /api/v1/timeline/{id}); the MCP tools tellagen_post_timeline_event and tellagen_update_timeline_event pass it through. The server validates every block and answers one bad block with 400 invalid_block, a message, the path of the first bad field in field and up to ten bad fields in details.errors. An update that sends blocks replaces the whole array; [] removes them; leaving the field out keeps them. Strings are trimmed, one line and free of control characters (only source.query may hold line breaks; a diff line's text is the one string that is not trimmed, so it keeps its indentation, and it may hold tabs). The same blocks, except table and changes, are the figure of a Diagnosis chain step (causal_paths[].steps[].figure). Numbers are finite and between -1e12 and 1e12. An event carries at most 12 blocks and 64 KB of block JSON.",
   "x-guidance": [
     "Put the few numbers a responder scans for in one stats block, each with a short label, a value, a caption that says what it is measured on, and a tone. Send at most four when you can: the first four are drawn as tiles in one row, the total first, and colour goes only on the exception. A block may hold up to eight figures, and the web draws the ones after the fourth as plain rows under the tiles. Give the block a title of at most 80 characters when the tiles need a name. A title and more than four figures are optional, and a client that picked up a run sends them only when server_capabilities lists figure_extras_v1. In the figure of a Diagnosis step, a source name such as a test runner summary belongs in a source chip (the step's evidence), not in a tile caption.",
-    "Use a compare block for a metric that has a value before, a value after and a threshold (an SLO or alert line). Give the unit, say which direction is better, and put one row per host, route or query.",
+    "Use a compare block for a metric that has a value before, a value after and a threshold (an SLO or alert line). Give the unit, say which direction is better, and put one row per host, route or query. Never put a limit, a budget or a threshold in before: before is what the value was earlier. When each row has its own limit (a page length against its budget), give the row a limit and leave before out, so the row reads after against limit. A client that picked up a run sends limit only when server_capabilities lists figure_limits_v1.",
     "Use a trend block for a series over time. Send start and step_seconds together, reduce the range to at most 500 points, add at most three marks for the events that explain the shape, and fill source with the query that produced the series (kind, datasource, query, step, and artifact_id when you have it).",
     "Use a table block for a ranked list (top queries, failing routes), a checks block for a recovery checklist with a result per check, and a changes block for a value that moved from one thing to another.",
     "Use a range_overlap block when the cause is two ranges meeting (layout offsets, a maintenance window against an error spike, memory or port ranges): two to four rows with a from and a to, in one unit. Tellagen computes the overlap and zooms to it; send min and max for the whole range, and a window only to choose the zoom yourself.",
@@ -123,12 +123,14 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["label", "before", "after"],
+            "required": ["label", "after"],
+            "anyOf": [{"required": ["before"]}, {"required": ["limit"]}],
             "properties": {
               "label": {"type": "string", "minLength": 1, "maxLength": 80},
               "mono": {"type": "boolean"},
               "before": {"$ref": "#/$defs/number"},
               "after": {"$ref": "#/$defs/number"},
+              "limit": {"$ref": "#/$defs/number"},
               "details": {
                 "type": "array",
                 "maxItems": 3,

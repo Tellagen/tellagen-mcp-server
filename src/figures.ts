@@ -92,6 +92,8 @@ export const MAX_STATS_TILES = 4;
 const MAX_RUNS_NOT_SHOWN = 1_000_000;
 /** The server takes a stats title, more than 4 stats and runs_not_shown. */
 export const FIGURE_EXTRAS_CAPABILITY = "figure_extras_v1";
+/** The server takes a `limit` on a compare row (the row is then "after against limit"). */
+export const FIGURE_LIMITS_CAPABILITY = "figure_limits_v1";
 /** The server takes a log_lines figure. */
 export const LOG_LINES_CAPABILITY = "log_lines_v1";
 
@@ -146,8 +148,11 @@ const compareBase = z
           .object({
             label: text(1, 80).describe("One host, route, query or job"),
             mono: z.boolean().optional().describe("Draw the label in a monospace face"),
-            before: number,
+            before: number.optional().describe("The value before the change. Left out only on a row with a limit. Never put a limit or a budget here."),
             after: number,
+            limit: number
+              .optional()
+              .describe("A limit or budget the after value is measured against, in the figure's unit. Only when the server lists figure_limits_v1; the row then needs no before."),
             details: z
               .array(
                 z
@@ -157,7 +162,8 @@ const compareBase = z
               .max(3)
               .optional(),
           })
-          .strict(),
+          .strict()
+          .refine((row) => row.before !== undefined || row.limit !== undefined, { message: "send before, or a limit to measure after against" }),
       )
       .min(1)
       .max(8)
@@ -1465,6 +1471,8 @@ type DiffInput = z.infer<typeof diffInput>;
 export type FigureOptions = {
   /** The server lists figure_extras_v1: a stats title, more than 4 stats and runs_not_shown. */
   figureExtras?: boolean;
+  /** The server lists figure_limits_v1: a compare row may carry a limit. */
+  figureLimits?: boolean;
   /** The server lists diff_lines_v1: a diff may carry unchanged lines and line numbers. */
   diffLines?: boolean;
   /** The server lists log_lines_v1: it takes a log_lines figure. */
@@ -1654,6 +1662,27 @@ export function withoutFigureExtrasInBlock(block: unknown): { block: unknown; wh
   return what.length > 0 ? { block: record, what } : { block, what };
 }
 
+/**
+ * A compare block as a server without figure_limits_v1 takes it: no `limit`
+ * on a row. A row that had only a limit has no before then, so `unusable` is
+ * true and the figure cannot be sent. Any other block is returned as it is.
+ */
+export function withoutFigureLimitsInBlock(block: unknown): { block: unknown; what: string[]; unusable: boolean } {
+  if (typeof block !== "object" || block === null || Array.isArray(block)) return { block, what: [], unusable: false };
+  const record = block as Record<string, unknown>;
+  if (record.type !== "compare" || !Array.isArray(record.rows) || !record.rows.some((row) => typeof row === "object" && row !== null && "limit" in row)) {
+    return { block, what: [], unusable: false };
+  }
+  let unusable = false;
+  const rows = record.rows.map((row) => {
+    if (typeof row !== "object" || row === null) return row;
+    const { limit: _limit, ...rest } = row as Record<string, unknown>;
+    if (rest.before === undefined) unusable = true;
+    return rest;
+  });
+  return { block: { ...record, rows }, what: ["the row limits"], unusable };
+}
+
 /** Whether a block is a log_lines figure. */
 export function isLogLinesBlock(block: unknown): boolean {
   return typeof block === "object" && block !== null && (block as { type?: unknown }).type === "log_lines";
@@ -1784,6 +1813,20 @@ export function buildFigure(input: BuildFigureInput, options: FigureOptions = {}
     if (stripped.what.length > 0) {
       block = stripped.block as Record<string, unknown>;
       notes.push(`Left out ${stripped.what.join(" and ")}: this Tellagen does not list ${FIGURE_EXTRAS_CAPABILITY} in server_capabilities.`);
+    }
+  }
+
+  if (options.figureLimits !== true) {
+    const stripped = withoutFigureLimitsInBlock(block);
+    if (stripped.what.length > 0) {
+      if (stripped.unusable) {
+        return {
+          ok: false,
+          issues: [`rows: this Tellagen does not list ${FIGURE_LIMITS_CAPABILITY} in server_capabilities, so a row needs before. Send the value before the change, or leave the limit out of the figure and say it in the caption.`],
+        };
+      }
+      block = stripped.block as Record<string, unknown>;
+      notes.push(`Left out ${stripped.what.join(" and ")}: this Tellagen does not list ${FIGURE_LIMITS_CAPABILITY} in server_capabilities.`);
     }
   }
 

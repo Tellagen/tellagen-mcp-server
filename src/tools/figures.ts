@@ -2,8 +2,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { activeRunId } from "../active-run.js";
 import type { TellagenClient } from "../client.js";
-import { runWindowOf, supportsDiffLines, supportsFigureExtras, supportsLogLines } from "../diagnosis-structure.js";
-import { buildFigure, figureToolInputSchema, withoutFigureExtrasInBlock } from "../figures.js";
+import { runWindowOf, supportsDiffLines, supportsFigureExtras, supportsFigureLimits, supportsLogLines } from "../diagnosis-structure.js";
+import { buildFigure, figureToolInputSchema, withoutFigureExtrasInBlock, withoutFigureLimitsInBlock } from "../figures.js";
 
 export const FIGURE_GUIDE_URI = "resource://tellagen/figure-guide";
 
@@ -57,6 +57,10 @@ Use it for a value measured before and after a deploy, rollback, fix or config c
       "rows": [ { "label": "POST /checkout", "before": 180, "after": 640 },
                 { "label": "GET /cart", "before": 95, "after": 110 } ] }
 
+A row may also be measured against a limit or a budget (a page-weight budget, a connection cap): when the pickup lists figure_limits_v1 in server_capabilities, send {"label": "Checkout bundle", "after": 7908, "limit": 7500} and leave before out. Never put a limit or a budget in before: a row that reads 7,680 before and 7,908 after, where 7,680 is the budget, says the value grew when it only crossed a line. The builder drops the limit and says so in notes when the pickup does not list figure_limits_v1, and then the row needs a before.
+
+A figure shows the fact its step states. Do not put a table of jobs under a step that the jobs do not prove, and keep the run, job and commit ids in links, not in the title or a label.
+
 A distribution is a compare of percentiles: use p50, p95 and p99 as rows, with the SLO as the threshold.
 
 ### trend: a series over time
@@ -93,7 +97,7 @@ Top queries, failing routes, slowest endpoints. Give columns, then one cell per 
 
 A recovery checklist or a CI job list. Put failures first. The block holds 12 items, so for a larger list send every failure and the checks that matter, and give the counts of the rest in the step.
 
-    { "type": "checks", "title": "Jobs on run 41289327533",
+    { "type": "checks", "title": "Jobs of the failing run",
       "items": [ { "label": "Frontend Tests", "state": "fail", "detail": "1 failed of 13516" }, { "label": "E2E Tests", "state": "pass" } ] }
 
 ### changes: a value that moved
@@ -205,6 +209,9 @@ The builder names the field. For a timeline block the API answers 400 invalid_bl
 const isDiff = (figure: unknown): boolean =>
   typeof figure === "object" && figure !== null && (figure as { type?: unknown }).type === "diff";
 
+const usesFigureLimits = (figure: unknown): boolean =>
+  withoutFigureLimitsInBlock(figure).what.length > 0;
+
 const isLogLines = (figure: unknown): boolean =>
   typeof figure === "object" && figure !== null && (figure as { type?: unknown }).type === "log_lines";
 
@@ -217,7 +224,7 @@ export function registerFigureTools(server: McpServer, client: TellagenClient): 
     {
       title: "Build a figure",
       description:
-        "Turn numbers you already read from a tool result into a figure (a typed widget) that Tellagen draws, and check it against Tellagen's limits before you send it. Widgets: stats (headline numbers: aim for 4, up to 8 with figure_extras_v1, and an optional title), compare (before and after per host, route or job, with an SLO line), trend (a series over time with up to 3 marks), table (a ranked list, up to 12 rows), checks (pass or fail per check, up to 12), changes (a value that moved from one thing to another), range_overlap (2 to 4 ranges that meet), histogram (bucket counts before and after), run_history (CI or deploy runs with the regression and fix marks), diff (the changed lines of a code change), log_lines (the log lines of a Loki result that prove a claim, or the proof that there are none). For a time series send raw samples as points and the deploy, alert or rollback times as events: the tool puts them on an even grid of at most 500 points and works out the mark positions. For a histogram send Prometheus cumulative le buckets as buckets; for a run history send the GitHub Actions run list as github_runs; for a diff send the patch of one file: a change of 12 or fewer changed lines is sent whole with each removed line next to the line that replaced it, a longer one needs select_hunks (at most 3 hunks). Pass run_id so unchanged lines and line numbers are added only when this Tellagen lists diff_lines_v1, and a stats title, more than 4 stats and runs_not_shown only when it lists figure_extras_v1. It has no data of its own and never invents a value, so send only numbers from a tool result you can cite. placement step_figure is for a causal step (any type except table and changes, one per step). placement timeline_block is for a timeline event (any type). Read resource://tellagen/figure-guide to choose the widget and to see how to plot data on it.",
+        "Turn numbers you already read from a tool result into a figure (a typed widget) that Tellagen draws, and check it against Tellagen's limits before you send it. Widgets: stats (headline numbers: aim for 4, up to 8 with figure_extras_v1, and an optional title), compare (before and after per host, route or job, with an SLO line), trend (a series over time with up to 3 marks), table (a ranked list, up to 12 rows), checks (pass or fail per check, up to 12), changes (a value that moved from one thing to another), range_overlap (2 to 4 ranges that meet), histogram (bucket counts before and after), run_history (CI or deploy runs with the regression and fix marks), diff (the changed lines of a code change), log_lines (the log lines of a Loki result that prove a claim, or the proof that there are none). For a time series send raw samples as points and the deploy, alert or rollback times as events: the tool puts them on an even grid of at most 500 points and works out the mark positions. For a histogram send Prometheus cumulative le buckets as buckets; for a run history send the GitHub Actions run list as github_runs; for a diff send the patch of one file: a change of 12 or fewer changed lines is sent whole with each removed line next to the line that replaced it, a longer one needs select_hunks (at most 3 hunks). Pass run_id so unchanged lines and line numbers are added only when this Tellagen lists diff_lines_v1, a stats title, more than 4 stats and runs_not_shown only when it lists figure_extras_v1, and the limit of a compare row only when it lists figure_limits_v1 (a row with a limit needs no before; never put a limit in before). It has no data of its own and never invents a value, so send only numbers from a tool result you can cite. placement step_figure is for a causal step (any type except table and changes, one per step). placement timeline_block is for a timeline event (any type). Read resource://tellagen/figure-guide to choose the widget and to see how to plot data on it.",
       inputSchema: {
         placement: z
           .enum(["step_figure", "timeline_block"])
@@ -230,17 +237,18 @@ export function registerFigureTools(server: McpServer, client: TellagenClient): 
           .string()
           .min(1)
           .optional()
-          .describe("The investigation run you are working on. For a diff, a stats, a run_history or a log_lines figure, Tellagen is asked which features it lists in server_capabilities (diff_lines_v1: unchanged lines and line numbers; figure_extras_v1: a stats title, more than 4 stats, runs_not_shown; log_lines_v1: log_lines) and, for log_lines, what the run window is. Without it the latest pickup of this process decides."),
+          .describe("The investigation run you are working on. For a diff, a stats, a run_history or a log_lines figure, Tellagen is asked which features it lists in server_capabilities (diff_lines_v1: unchanged lines and line numbers; figure_extras_v1: a stats title, more than 4 stats, runs_not_shown; figure_limits_v1: a limit on a compare row; log_lines_v1: log_lines) and, for log_lines, what the run window is. Without it the latest pickup of this process decides."),
       },
     },
     async ({ run_id: givenRunId, ...input }) => {
       const run_id = activeRunId(client, givenRunId);
       const diffLines = isDiff(input.figure) ? await supportsDiffLines(client, run_id) : false;
       const figureExtras = usesFigureExtras(input.figure) ? await supportsFigureExtras(client, run_id) : false;
+      const figureLimits = usesFigureLimits(input.figure) ? await supportsFigureLimits(client, run_id) : false;
       const isLogs = isLogLines(input.figure);
       const logLines = isLogs ? await supportsLogLines(client, run_id) : false;
       const window = isLogs ? await runWindowOf(client, run_id) : undefined;
-      const result = buildFigure(input, { diffLines, figureExtras, logLines, window });
+      const result = buildFigure(input, { diffLines, figureExtras, figureLimits, logLines, window });
       if (!result.ok) {
         return {
           content: [

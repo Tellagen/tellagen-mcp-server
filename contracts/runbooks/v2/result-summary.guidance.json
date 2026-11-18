@@ -1,12 +1,32 @@
 {
-  "title": "Investigation result: the headline claim and the blocking question",
-  "description": "How to write the two sentences a responder reads first in the result of an investigation run: conclusion.summary (the headline claim, stored as the verdict) and the claim of a gap finding that blocks the diagnosis (the blocking question). The server accepts any text. It adds the advice warnings headline_too_long and question_not_a_question to the completion response and to the run's quality_warnings, and never rejects the result for them. They apply whether or not the client advertised diagnosis_structure_v1.",
-  "x-limits": {"headline_max_words": 15},
+  "title": "Investigation result: the words a responder reads",
+  "description": "How to write the text a responder reads in the result of an investigation run: the headline claim (conclusion.summary, stored as the verdict), the answer line, the blocking question and every claim, summary, action and explanation. The server accepts any text. It adds the advice warnings headline_too_long, question_not_a_question, text_too_long, filler_phrase and raw_id_in_text (and coverage_not_needed_without_reason) to the completion response and to the run's quality_warnings, and never rejects the result for them. A dry run (completion_repairs_v1) lists each text warning as a repair with advice true: ready stays true, because the run would complete as it is. They apply whether or not the client advertised diagnosis_structure_v1.",
+  "x-limits": {
+    "headline_max_words": 15,
+    "answer_max_words": 15,
+    "step_claim_max_words": 20,
+    "finding_claim_max_words": 20,
+    "finding_evidence_summary_max_words": 60,
+    "action_title_max_words": 12,
+    "action_summary_max_words": 20,
+    "ruled_out_explanation_max_words": 30,
+    "coverage_summary_max_words": 20,
+    "unknown_label_max_words": 12,
+    "customer_impact_label_max_words": 15
+  },
   "x-guidance": [
     "The headline claim states one cause in at most 15 words. Name what broke and why, in plain words. Put the detail, the numbers and the other possible causes in findings, causal_paths and ruled_out, not in the headline.",
     "A blocking question is a gap finding that a person has to answer before the diagnosis can be trusted. Write its claim as one real question that ends with a question mark and that a person with access to the system can answer with a fact. Do not write it as a statement about what is unknown.",
     "Ask one thing in a blocking question. If you have two questions, post two gap findings. Put what you already checked in the evidence summary, not in the question.",
-    "If the headline is over 15 words, completion answers with the warning headline_too_long and keeps the result. If a blocking question does not end with a question mark, completion answers with question_not_a_question and keeps the result. Fix the sentence and send the result again when you can; the run is not failed either way."
+    "If the headline is over 15 words, completion answers with the warning headline_too_long and keeps the result. If a blocking question does not end with a question mark, completion answers with question_not_a_question and keeps the result. Fix the sentence and send the result again when you can; the run is not failed either way.",
+    "Keep every sentence short. The limits in words are: answer 15, claim of a causal step 20, claim of a finding 20, evidence summary of a finding 60 (three sentences at most), action title 12, action summary 20, ruled-out explanation 30, coverage summary or reason 20, unknown label 12, customer impact label 15. A text over its limit completes with the warning text_too_long, which names the path, the count and the limit; the page folds it behind Show more.",
+    "Do not repeat a rule of this protocol in your text. The page shows who decides.",
+    "The phrases in x-banned-phrase-openers are filler only at the start of a sentence: a sentence that opens with Based on the is flagged, a fact that says the threshold is based on the p99 latency is not.",
+    "A finding states a fact. Do not write in the first person; a source you did not read is a coverage entry, not a sentence.",
+    "Do not put a raw id in a sentence: a number of 9 digits or more, such as a run or job number, or a hex string of 12 characters or more. Put the id in links and name the thing in words. A short commit id of 7 characters or a pull request number such as #421 is fine. A long number followed by a unit word, such as 107374182400 bytes, is a measurement and is fine. The warning is raw_id_in_text.",
+    "When the run's question asks what to do, write result_summary.answer: one plain sentence of at most 15 words that answers it directly. Leave it out when the run had no question beyond the default. When an action changes a file, add a diff figure of the exact lines to the action (recommended_actions[].figure). Both need the server capability action_answer_v1.",
+    "A source you skipped on purpose is a coverage entry in state not_needed with a reason of at most 20 words (coverage_not_needed_v1). It is not checked, and it is not a gap. Never send checked for a source nobody read.",
+    "In a compare figure, never put a limit or a budget in before. Give the row its own limit instead (figure_limits_v1): the row then reads after against limit and needs no before."
   ],
   "x-examples": {
     "headline": {
@@ -16,6 +36,34 @@
     "blocking_question": {
       "good": "Did the 14:02 deploy of the billing service lower the retry limit?",
       "bad": "Whether the retry limit was lowered by the 14:02 deploy of the billing service could not be established from the available data and needs to be confirmed by someone with access to the deploy history."
+    },
+    "answer": {
+      "good": "Keep the P1 alert for master. Stop paging for pull requests.",
+      "bad": "Based on the investigation, I recommend that the team considers whether the alert should be moved to a lower priority or removed."
+    },
+    "finding_evidence_summary": {
+      "good": "The pool reached 100 of 100 connections at 14:02. Errors began 40 seconds later. The pool recovered after the restart at 14:20.",
+      "bad": "Run 43852571837 failed. I could not find a written paging policy. This is a proposal. A person decides."
     }
-  }
+  },
+  "x-banned-phrases": [
+    "This is a proposal. A person decides.",
+    "A person decides",
+    "Only a person can",
+    "Based on the",
+    "It is likely that",
+    "It is worth noting",
+    "Please note",
+    "I could not find",
+    "I did not",
+    "in the data I read",
+    "Not queried on purpose",
+    "Investigation complete"
+  ],
+  "x-banned-phrase-openers": [
+    "Based on the",
+    "It is likely that",
+    "It is worth noting",
+    "Please note"
+  ]
 }

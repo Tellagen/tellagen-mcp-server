@@ -75,7 +75,7 @@ export function registerResumeTools(server: McpServer, client: TellagenClient): 
     async ({ model, takeover }) => {
       const session = client.session;
       const remembered = session.state.read();
-      const runId = session.activeRun()?.runId ?? remembered?.run_id;
+      const runId = session.activeRun()?.runId ?? remembered?.run_id ?? session.latestAmendable()?.runId;
       if (!runId || !isRunId(runId)) {
         return text({
           resumed: false,
@@ -103,6 +103,19 @@ export function registerResumeTools(server: McpServer, client: TellagenClient): 
         }
         const run = isRecord(context) && isRecord(context.run) ? context.run : {};
         const status = typeof run.status === "string" ? run.status : "";
+        // A finished run that still takes additions is not picked up again: it takes an amendment.
+        const amendUntil = typeof run.amend_until === "string" ? run.amend_until : undefined;
+        if (status === "completed" && amendUntil && Date.parse(amendUntil) > Date.now()) {
+          session.clearActiveRun(runId);
+          session.rememberAmendable(runId, amendUntil);
+          return text({
+            resumed: false,
+            code: "run_amendable",
+            run_id: runId,
+            amend_until: amendUntil,
+            message: `The run is finished but takes additions until ${amendUntil}. Use tellagen_amend_investigation. Do not pick it up again.`,
+          });
+        }
         if (TERMINAL_STATUSES.has(status)) {
           session.clearActiveRun(runId);
           return text({
