@@ -18,12 +18,15 @@
     "trace_check_id_v2"
   ],
   "server_capabilities_used": [
+    "action_answer_v1",
     "client_heartbeat_v1",
     "completion_repairs_v1",
+    "coverage_not_needed_v1",
     "diagnosis_changes_v1",
     "diagnosis_structure_v1",
     "diff_lines_v1",
     "figure_extras_v1",
+    "figure_limits_v1",
     "log_lines_v1",
     "question_checks_v1",
     "recorded_steps_v1",
@@ -93,6 +96,13 @@
       "error_codes": []
     },
     {
+      "method": "PATCH",
+      "path": "/api/v1/investigations/{id}",
+      "request_fields": ["status", "failure_reason", "mitigation_state", "dry_run", "result_summary", "result_summary.answer"],
+      "response_fields": ["dry_run", "ready", "repairs", "repairs.advice", "warnings", "coverage"],
+      "error_codes": []
+    },
+    {
       "method": "POST",
       "path": "/api/v1/investigation-runs/{id}/trace",
       "request_fields": [
@@ -159,7 +169,7 @@
       "method": "POST",
       "path": "/api/v1/settings/agent/tool-report",
       "since_bundle": "2026-11-15.1",
-      "request_fields": ["available_sources", "profile_id"],
+      "request_fields": ["available_sources", "profile_id", "kubernetes_checks", "kubernetes_read_only_tools"],
       "response_fields": ["accepted_sources", "ignored_sources"],
       "error_codes": []
     }

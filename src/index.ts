@@ -6,7 +6,7 @@ import { MCP_SERVER_VERSION } from "./version.js";
  * commands below are for a person, or for a hook of a client. They load only
  * what they need, so a hook starts fast.
  */
-const COMMANDS = new Set(["login", "logout", "status", "listen", "trace-hook", "doctor", "listen-wrap", "listen-guard", "help", "--help", "-h", "--version", "-v"]);
+const COMMANDS = new Set(["login", "logout", "status", "listen", "trace-hook", "doctor", "kubernetes", "listen-wrap", "listen-guard", "help", "--help", "-h", "--version", "-v"]);
 
 async function serve(): Promise<void> {
   const [{ StdioServerTransport }, { readConfig }, { startTellagenServer }, { createRuntime }] = await Promise.all([

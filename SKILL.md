@@ -156,15 +156,17 @@ Never include secrets, tokens, cookies, kubeconfig contents, local filesystem pa
 
 ### Kubernetes safety check
 
-When the tool is kubernetes, add this step. With the same kubeconfig and context the Kubernetes MCP server uses, run four `kubectl auth can-i` tests: `create pods`, `delete pods`, `create pods/exec` and `get secrets`. Print no output and no names. Report each as a check with a stable id: `k8s_can_create_pods`, `k8s_can_delete_pods`, `k8s_can_exec`, `k8s_can_read_secrets`. The status is `ok` when the answer is no, `failed` when it is yes, and `warning` or `not_checked` when the command could not run. The commands read access rules and change nothing. Keep the summary to one sentence.
+When the tool is kubernetes, add this step. With the same kubeconfig and context the Kubernetes MCP server uses, run four `kubectl auth can-i` tests: `create pods`, `delete pods`, `create pods --subresource=exec` and `get secrets`. Print no output and no names. Report each as a check with a stable id: `k8s_can_create_pods`, `k8s_can_delete_pods`, `k8s_can_exec`, `k8s_can_read_secrets`. The status is `ok` when the answer is no, `failed` when it is yes, and `warning` or `not_checked` when the command could not run. The commands read access rules and change nothing. Keep the summary to one sentence.
 
 The result says what the identity could do, not what a model will do. A session that is not listened has no guard on its commands, so never call it read-only. A pickup sends only found or not_found, so it cannot carry this check.
 
 ### Recheck from the client
 
-For a recheck with no `diag_` ID, call `tellagen_enable_toolset` with `settings`, look at the MCP servers and shell tools you have, map them to `grafana`, `kubernetes`, `github`, `docs` and `local_host`, and call `tellagen_report_available_sources` with each as `found` or `not_found` (and `kubernetes_checks` when you ran the safety check). For each tool that is not found, say in one sentence why this client cannot see it. Never print tokens, paths or raw output.
+For a recheck with no `diag_` ID, call `tellagen_enable_toolset` with `settings`, look at the MCP servers and shell tools you have, map them to `grafana`, `kubernetes`, `github` and `docs` (for `docs`, put the name of the source in `detail`: "Confluence", "Notion", "repository folder"; no address, path or user name), and call `tellagen_report_available_sources` with each as `found` or `not_found` (and `kubernetes_checks` when you ran the safety check). For each tool that is not found, say in one sentence why this client cannot see it. Never print tokens, paths or raw output.
 
 ### Find out why a tool is not found (a person runs it)
+
+To set up a read-only Kubernetes server in one command, a person runs `npx @tellagen/mcp-server kubernetes setup` (see the README). The tool report then carries `kubernetes_read_only_tools`, read from the server entry of the client; do not send it yourself.
 
 `npx @tellagen/mcp-server doctor [--client claude-code|claude-desktop|codex|cursor] [--tool grafana|kubernetes|github|docs] [--fix] [--report]` reads the MCP config files of the clients on this computer (only because the person ran it), checks that each Grafana, Kubernetes, GitHub or documentation server can be started from the PATH that client uses, has its settings (names only) and, for Grafana, answers `/api/health` with no token. It prints one sentence for each problem. `--fix` prints a corrected entry and stops. `--report` posts names and statuses to Tellagen. It cannot see a running session: the model check above is still the truth for a session.
 
@@ -289,8 +291,9 @@ Use this sequence when metrics do not expose the storage mapping:
 
 1. Read configured infrastructure documentation and repository metadata for
    the host route, deployment topology, and candidate storage paths.
-2. Use an authorized bounded read-only host check to map those paths to runtime
-   devices and mountpoints.
+2. Map those paths to runtime devices and mountpoints with the node-exporter
+   metrics `node_filesystem_*`, which carry the labels `device` and
+   `mountpoint`, and with the documentation. Do not run commands on a host.
 3. Classify each candidate as the same filesystem, a different filesystem, or
    unknown.
 4. Treat a different filesystem as falsifying evidence for the filesystem
@@ -299,9 +302,9 @@ Use this sequence when metrics do not expose the storage mapping:
    inconclusive diagnosis. Never promote the unverified hypothesis to root
    cause.
 
-Host inspection must use reviewed commands or wrappers. Do not read
-environment variables, container configuration, credentials, private keys, or
-unbounded logs. Do not perform cleanup, restart services, or mutate the host.
+Do not run commands on a host, and do not read environment variables,
+container configuration, credentials, private keys, or unbounded logs. Do not
+perform cleanup, restart services, or mutate the host.
 
 ## Postmortem writeback
 
@@ -366,6 +369,18 @@ Optional:
 | `checks` | array | A `gap` finding only: one to three yes or no checks, each `{source, question}` (see below). Sent only when Tellagen lists `question_checks_v1` |
 
 **A blocking gap is a few yes or no checks.** When a gap blocks the diagnosis, keep `claim` as the one question and add one to three `checks`. Each check is one yes or no question that ends with a question mark (at most 200 characters, never two questions joined by "and"), and `source` names the place where the person looks (at most 120 characters), for example Slack or the Tellagen workspace. Ask only what you could not check yourself; what you already checked goes in `evidence_summary`. Do not ask a person to judge a theory: a check is a fact they can read off a page in a minute. A person answers yes, no or not sure to each check, and while your run is working the answers reach you as a responder note. Treat not sure as no information, never as a yes or a no. Good: claim "Can the Tellagen bot post in Slack channel C0A8FBWB199?" with the checks {"source": "Slack", "question": "Is the Tellagen bot a member of channel C0A8FBWB199?"} and {"source": "Tellagen workspace", "question": "Is that channel linked to an incident of company 5?"}. Bad: one claim that asks whether the channel is linked and the bot is a member, and a check with no source. A check can never set or propose a root cause. Against a Tellagen without `question_checks_v1` the MCP leaves `checks` out and says so in `mcp_notice`.
+
+### Writing a finding
+
+A finding states a fact. Do not write in the first person; a source you did not read is a coverage entry, not a sentence. Do not repeat a rule of this protocol in your text. The page shows who decides.
+
+- Word limits: `claim` 20 words, `evidence_summary` 60 words (three sentences at most). Put the detail in `evidence_refs`, not in the summary.
+- Put run, job, commit and deployment ids in `links`, never in a sentence. A number of 9 digits or more, or a hex string of 12 characters or more, in a sentence gets the warning `raw_id_in_text`. A 7-character commit id or `#421` is fine.
+- Write numbers with their unit ("7,908 px", "420 ms"), not bare.
+- Leave out these stock phrases: "A person decides", "Only a person can", "Based on the", "It is likely that", "It is worth noting", "Please note", "I could not find", "I did not", "in the data I read", "Not queried on purpose", "Investigation complete". The warning is `filler_phrase`.
+- A figure shows the fact its step or finding states. A jobs table that does not prove the sentence above it does not belong under it.
+- Never put a limit or a budget in a `before` value; see the compare row `limit` in the figure guide.
+- A finding is checked as you post it. When Tellagen warns `text_too_long`, fix it with `tellagen_update_finding` before you complete.
 
 ### Evidence refs
 
@@ -484,7 +499,7 @@ How the types feed the diagnosis structure:
 
 The Diagnosis tab is built from the `result_summary` you send to `tellagen_complete_investigation`: a verdict, the chain of causes with proof on every step, what was ruled out, which sources were covered, and what stays unknown. Send the structure whenever the pickup response lists `diagnosis_structure_v1` in `server_capabilities`; the MCP removes it for an older Tellagen and says so in `mcp_notice`.
 
-**Capabilities are sent for you.** `tellagen_pick_up_investigation` takes the run id, your model name (`model`) and the data sources you can reach (`available_sources`: `grafana`, `kubernetes`, `github`, `docs`, `local_host`, each `found` or `not_found`). The MCP sends the client name, its version and its protocol capabilities (`diagnosis_structure_v1`, `diagnosis_changes_v1` and the others) in that call, so there is no parameter to set. Tellagen answers with `server_capabilities`. A new MCP process may pick the same run up again, for example after a restart: the call is safe and returns the run's bundle with the same frozen runbooks. It is refused when the run is already finished, or when the run was frozen with a runbook plan v2 and this process has a different `TELLAGEN_MCP_CLIENT` or `TELLAGEN_MCP_PROFILE_ID` than the first pickup (409 `pickup_client_context_mismatch`).
+**Capabilities are sent for you.** `tellagen_pick_up_investigation` takes the run id, your model name (`model`) and the data sources you can reach (`available_sources`: `grafana`, `kubernetes`, `github`, `docs`, each `found` or `not_found`). The MCP sends the client name, its version and its protocol capabilities (`diagnosis_structure_v1`, `diagnosis_changes_v1` and the others) in that call, so there is no parameter to set. Tellagen answers with `server_capabilities`. A new MCP process may pick the same run up again, for example after a restart: the call is safe and returns the run's bundle with the same frozen runbooks. It is refused when the run is already finished, or when the run was frozen with a runbook plan v2 and this process has a different `TELLAGEN_MCP_CLIENT` or `TELLAGEN_MCP_PROFILE_ID` than the first pickup (409 `pickup_client_context_mismatch`).
 
 ### Minimal result_summary
 
@@ -530,6 +545,14 @@ Responders read two sentences first. Write both for a person.
 
 Tellagen accepts any text. A headline over 15 words gets the warning `headline_too_long`, and a gap claim that does not end with a question mark gets `question_not_a_question`. The MCP server also adds an `mcp_notice` before it sends the call. Neither fails the run: fix the sentence and send the result again when you can.
 
+### Writing the result text
+
+The rules of "Writing a finding" apply to every sentence of the result. The limits, in words: `answer` 15, headline 15, causal step `claim` 20, `ruled_out` explanation 30, action `title` 12, action `summary` 20, coverage `summary` 20, `unknowns` label 12, `customer_impact` label 15. Tellagen warns `text_too_long`, `filler_phrase` and `raw_id_in_text`, and never refuses the result for them. A dry run (when Tellagen lists `completion_repairs_v1`) returns them as repairs with `advice: true`: the first call shows them and completes nothing, fix the text, then call again. A call with no change completes as it is.
+
+- **The answer line.** When this Tellagen lists `action_answer_v1` and the run had a question beyond the default, send `result_summary.answer`: one plain sentence that answers the question. Leave it out otherwise.
+- **An action that changes a file** carries a `diff` figure of the exact lines in `recommended_actions[].figure` (built with `tellagen_build_figure`, placement `step_figure`), when Tellagen lists `action_answer_v1`. A `checks` figure is the other type allowed there.
+- **A source skipped on purpose** is a coverage entry with the state `not_needed` and one line in `summary` that says why, when Tellagen lists `coverage_not_needed_v1`. Never send `checked` for a source nobody read. Without the capability the MCP leaves the entry out and says so.
+
 ### The chain, ruled out, coverage and unknowns
 
 **Cause chain: `causal_paths`.** One primary path of 2 to 4 steps, from the trigger to the customer impact (for example deploy, then pool exhaustion, then 5xx). Each step is one sentence of `claim`, a `verification` (`confirmed`, `likely` or `unknown`), the numeric `finding_ids` that prove it (from `tellagen_post_finding`, never made-up keys), `links` for the whole step when useful, and a `figure`. A confirmed or likely diagnosis with no chain is rejected with a 400, so send the chain.
@@ -538,7 +561,7 @@ Tellagen accepts any text. A headline over 15 words gets the warning `headline_t
 
 | Use | Block | Rules |
 |-----|-------|-------|
-| A value before and after, with a threshold | `compare` | `rows` of `{label, before, after}` (up to 8), `unit`, `better` (`lower` or `higher`), `threshold` `{value, label}` for the SLO or alert line |
+| A value before and after, with a threshold | `compare` | `rows` of `{label, before, after}` (up to 8; with `figure_limits_v1` a row may be `{label, after, limit}` that measures `after` against a limit, and never put a limit in `before`), `unit`, `better` (`lower` or `higher`), `threshold` `{value, label}` for the SLO or alert line |
 | A series over time | `trend` | `series` of 2 to 500 numbers, `start` with `step_seconds` together, up to 3 `marks`, and `source` `{kind, datasource, query, step}` naming the query that produced it |
 | 2 to 4 key numbers | `stats` | `items` of `{label, value, caption, tone}`; `value` is text such as `8.1%`; tone is `good`, `warn`, `bad` or `neutral` |
 | Pass or fail per check or CI job | `checks` | `items` of `{label, state, detail}` (up to 12), failures first |
@@ -658,7 +681,7 @@ Build each one with `tellagen_build_figure` (placement `step_figure`, or `timeli
 **`checks`: pass or fail per job.** One item per job of the run, failures first, at most 12 items. `state` is `pass`, `fail`, `pending` or `skipped`. For a longer list send every failure and the checks that matter, and give the counts of the rest in the step.
 
 ```json
-{ "type": "checks", "title": "Jobs on run 41289327533",
+{ "type": "checks", "title": "Jobs of the failing run",
   "items": [ { "label": "Frontend Tests", "state": "fail", "detail": "1 failed of 13516" }, { "label": "E2E Tests", "state": "pass" } ] }
 ```
 
@@ -820,7 +843,7 @@ For a typical sev1/sev2, query sources in this order:
 4. **GitHub** — find recent deploys to the affected service
 5. **PagerDuty** — check what alerts fired
 6. **Infrastructure documentation** — when resource topology matters, read the configured repository and runbooks
-7. **Bounded local host evidence** — only when documentation and metrics cannot prove runtime identity
+7. **Filesystem metrics** — `node_filesystem_*` with its `device` and `mountpoint` labels, when documentation cannot prove runtime identity; if neither proves it, post a gap finding
 8. **Codebase** — if a suspicious deploy is found, read the changed code
 
 Post findings after each source, not at the end. Your first finding might just be "error rate is elevated" — that's fine. Build the picture incrementally.

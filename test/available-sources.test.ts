@@ -48,7 +48,7 @@ describe("the client reports its data sources at pickup", () => {
   it("accepts only catalog keys, the two states and a short detail", () => {
     const harness = createToolHarness();
     const schema = harness.getTool("tellagen_pick_up_investigation").config.inputSchema!.available_sources as z.ZodTypeAny;
-    for (const key of ["grafana", "kubernetes", "github", "docs", "local_host"]) {
+    for (const key of ["grafana", "kubernetes", "github", "docs"]) {
       expect(schema.safeParse([{ key, state: "found" }]).success, key).toBe(true);
     }
     expect(schema.safeParse([{ key: "made_up", state: "found" }]).success).toBe(false);
@@ -63,7 +63,7 @@ describe("the client reports its data sources at pickup", () => {
     const description = String((harness.getTool("tellagen_pick_up_investigation").config as { description?: string }).description);
     expect(description).toContain("available_sources");
     expect(description).toContain("MCP servers and shell tools");
-    for (const key of ["grafana", "kubernetes", "github", "docs", "local_host"]) expect(description).toContain(key);
+    for (const key of ["grafana", "kubernetes", "github", "docs"]) expect(description).toContain(key);
   });
 
   it("drops the report for an older Tellagen that refuses the field, and the pickup still works", async () => {

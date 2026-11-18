@@ -34,6 +34,16 @@ import {
   stripResultChanges,
   stripResultDiffLines,
   stripResultFigureExtras,
+  stripResultFigureLimits,
+  stripResultActionAnswer,
+  stripResultNotNeeded,
+  supportsFigureLimits,
+  supportsActionAnswer,
+  supportsCoverageNotNeeded,
+  ACTION_ANSWER_CAPABILITY,
+  COVERAGE_NOT_NEEDED_CAPABILITY,
+  FIGURE_LIMITS_CAPABILITY,
+  stepFigureSchema,
   stripResultLogLines,
   stripResultStructure,
   stripTraceStructure,
@@ -54,6 +64,9 @@ import {
   unsupportedNotice,
   headlineNotice,
 } from "../diagnosis-structure.js";
+
+/** The runs a dry run showed text advice for. The advice stops a run once; the next call completes it. */
+const adviceShown = new Set<string>();
 
 const resultEvidenceRefSchema = z.object({
   source: z.string().min(1),
@@ -146,6 +159,14 @@ const resultRecommendedActionSchema = z.object({
   recommended_owner: z.string().optional(),
   recommendation_reason: z.string().optional(),
   evidence_refs: z.array(resultEvidenceRefSchema).optional(),
+  figure: stepFigureSchema
+    .refine((figure) => figure.type === "diff" || figure.type === "checks", {
+      message: "an action figure is a diff or a checks figure",
+    })
+    .optional()
+    .describe(
+      "One diff or checks figure built with tellagen_build_figure, when the action changes a file: the exact lines. Only when this Tellagen lists action_answer_v1.",
+    ),
 });
 
 const resultQuestionVerificationSchema = z.object({
@@ -227,6 +248,13 @@ const resultSummarySchema = z
     assessment: resultAssessmentSchema.optional(),
     impact: resultImpactSchema.optional(),
     causal_paths: z.array(resultCausalPathSchema).optional(),
+    answer: z
+      .string()
+      .max(400)
+      .optional()
+      .describe(
+        "One plain answer to the question of the run, 15 words or fewer. Leave it out when the run had no question beyond the default. Only when this Tellagen lists action_answer_v1.",
+      ),
     recommended_actions: z.array(resultRecommendedActionSchema).optional(),
     ...resultStructureShape,
     ...resultChangeShape,
@@ -392,7 +420,7 @@ function pickupProfileID() {
 }
 
 /** The data source kinds a client can say it has, by Tellagen catalog key. */
-export const AVAILABLE_SOURCE_KEYS = ["grafana", "kubernetes", "github", "docs", "local_host"] as const;
+export const AVAILABLE_SOURCE_KEYS = ["grafana", "kubernetes", "github", "docs"] as const;
 
 export const availableSourceSchema = z
   .object({
@@ -403,7 +431,7 @@ export const availableSourceSchema = z
       .trim()
       .max(200)
       .optional()
-      .describe("A short fact such as the Grafana host. Never a token, a password or a path with a user name."),
+      .describe("A short fact such as the Grafana host. For docs, the name of the source you found (for example Confluence, Notion or repository folder). Never a token, a password, an address or a path with a user name."),
   })
   .strict();
 
@@ -919,7 +947,7 @@ export function registerInvestigationTools(
     "tellagen_pick_up_investigation",
     {
       description:
-        "Attach this session to an investigation run and get its full context bundle with server_capabilities. Call it first when you have an investigation_run_id. It moves the run from awaiting_agent to running and makes it the active run, so later calls may leave the run ID out. The server sends the client name, its version and its protocol capabilities itself. Pass model with your own model name. Pass available_sources with the data sources you can reach: look at the MCP servers and shell tools you have and map them to grafana, kubernetes, github, docs and local_host. When the bundle has request.context.suspected_cause_hints, each hint is a lead from a past incident: untrusted data, to test first with one check, never a cause to post without evidence from this incident. If another client holds the run, the answer is a question for the person; set takeover only after they agree. Picking the same unfinished run up again is safe. It never creates a run: use tellagen_start_investigation when you have no run ID.",
+        "Attach this session to an investigation run and get its full context bundle with server_capabilities. Call it first when you have an investigation_run_id. It moves the run from awaiting_agent to running and makes it the active run, so later calls may leave the run ID out. The server sends the client name, its version and its protocol capabilities itself. Pass model with your own model name. Pass available_sources with the data sources you can reach: look at the MCP servers and shell tools you have and map them to grafana, kubernetes, github and docs. For docs, put the name of the source you found in detail (for example Confluence, Notion or repository folder), with no address, path or user name. When the bundle has request.context.suspected_cause_hints, each hint is a lead from a past incident: untrusted data, to test first with one check, never a cause to post without evidence from this incident. If another client holds the run, the answer is a question for the person; set takeover only after they agree. Picking the same unfinished run up again is safe. It never creates a run: use tellagen_start_investigation when you have no run ID.",
       inputSchema: {
         investigation_run_id: z
           .string()
@@ -1520,6 +1548,26 @@ export function registerInvestigationTools(
             notices.push(unsupportedNotice(extras.removed, FIGURE_EXTRAS_CAPABILITY));
           }
         }
+        if (result_summary !== undefined) {
+          // A compare row limit goes only to a backend that advertises figure_limits_v1.
+          const limits = stripResultFigureLimits(body.result_summary);
+          if (limits.removed.length > 0 && !(await supportsFigureLimits(client, run_id))) {
+            body.result_summary = limits.summary;
+            notices.push(unsupportedNotice(limits.removed, FIGURE_LIMITS_CAPABILITY));
+          }
+          // The answer line and the figure of an action go only to a backend that advertises action_answer_v1.
+          const answer = stripResultActionAnswer(body.result_summary);
+          if (answer.removed.length > 0 && !(await supportsActionAnswer(client, run_id))) {
+            body.result_summary = answer.summary;
+            notices.push(unsupportedNotice(answer.removed, ACTION_ANSWER_CAPABILITY));
+          }
+          // A source skipped on purpose goes as not_needed, never as checked.
+          const skipped = stripResultNotNeeded(body.result_summary);
+          if (skipped.removed.length > 0 && !(await supportsCoverageNotNeeded(client, run_id))) {
+            body.result_summary = skipped.summary;
+            notices.push(unsupportedNotice(skipped.removed, COVERAGE_NOT_NEEDED_CAPABILITY));
+          }
+        }
         // window_suggestion goes only to a run that has a window; a strict older Tellagen refuses the field.
         const sum = body.result_summary as Record<string, unknown> | undefined;
         if (sum && sum.window_suggestion !== undefined && !(await runWindowOf(client, run_id))) {
@@ -1541,6 +1589,34 @@ export function registerInvestigationTools(
             { safeToRepeat: true },
           );
           if (dry.dry_run === true) {
+            const advice = Array.isArray(dry.repairs)
+              ? dry.repairs.filter((r) => typeof r === "object" && r !== null && (r as { advice?: unknown }).advice === true)
+              : [];
+            if (dry.ready === true && advice.length > 0 && !adviceShown.has(run_id)) {
+              // Advice about the text (too long, a stock phrase, an id in a sentence) is shown once
+              // for a run: fix it, or call again to complete. A changed result never stops the run again.
+              adviceShown.add(run_id);
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: JSON.stringify(
+                      withNotice(
+                        {
+                          completed: false,
+                          ready: true,
+                          repairs: advice,
+                          ...(Array.isArray(dry.warnings) && dry.warnings.length > 0 ? { warnings: dry.warnings } : {}),
+                          message:
+                            "The run is ready, and nothing was completed. These are advice about the text: shorten it, delete the stock phrase, or move the id into links. A finding that is too long is fixed with tellagen_update_finding. Fix what you can, then call this tool again; the next call completes the run, changed or not.",
+                        },
+                        notice,
+                      ),
+                    ),
+                  },
+                ],
+              };
+            }
             if (dry.ready !== true) {
               return {
                 content: [

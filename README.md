@@ -97,7 +97,15 @@ After a restart of the client, ask it to continue. `tellagen_resume` picks the r
 
 In **Settings > Local diagnosis**, under **For admins**, **Check MCP tools** gives a prompt with a `diagnostic_session_id` such as `diag_abc123`. That is a tool check, not a run: the client turns on the `settings` toolset, runs safe read-only checks and calls `tellagen_report_diagnostic_tools`.
 
-To recheck from the client with no prompt to copy, ask it to run `tellagen_report_available_sources`: it posts the tools the client can reach (`grafana`, `kubernetes`, `github`, `docs`, `local_host`, each found or not found) to Tellagen, and the tools table in Settings shows them for that client. For Kubernetes the client also runs four `kubectl auth can-i` tests (create pods, delete pods, create `pods/exec`, get secrets) and reports them as checks. The tests read access rules and change nothing. They say what the Kubernetes identity could do, not what a model will do: a session that is not listened has no guard on its commands, so Tellagen never calls such a session read-only.
+To recheck from the client with no prompt to copy, ask it to run `tellagen_report_available_sources`: it posts the tools the client can reach (`grafana`, `kubernetes`, `github`, `docs`, each found or not found) to Tellagen, and the tools table in Settings shows them for that client. For Kubernetes the client also runs four `kubectl auth can-i` tests (create pods, delete pods, create `pods --subresource=exec`, get secrets) and reports them as checks. The tests read access rules and change nothing. They say what the Kubernetes identity could do, not what a model will do: a session that is not listened has no guard on its commands, so Tellagen never calls such a session read-only.
+
+### Set up Kubernetes in one command
+
+```
+npx @tellagen/mcp-server kubernetes setup [--client claude-code|claude-desktop|codex|cursor] [--context NAME] [--service-account NAME [-n NAMESPACE] [--duration 8h]] [--yes] [--no-report]
+```
+
+It writes `~/.config/tellagen/kubernetes-mcp.toml` for `kubernetes-mcp-server` (read-only tools, destructive tools off, the Secret resource denied), adds the server to your client after you say yes, runs the four `can-i` checks with the kubeconfig the server will use and reports them to Tellagen. `--context` gives the server a private copy of the kubeconfig with only that context. `--service-account` creates a token for that service account, writes a private kubeconfig (mode 600) and prints how long it lasts; run the command again to renew it. It prints no token. The read-only setting of your Kubernetes server entry is reported too (`kubernetes_read_only_tools`), so Tellagen can tell "read-only tools, account can write" from a server with no guard.
 
 ### Find out why a tool is not found
 
@@ -251,6 +259,7 @@ Setup checks and run inspection.
 | `status` | Show the sign-in. `--line` prints one sentence for a client hook, or nothing when all is well; `--json` for a script |
 | `listen` | Take the diagnosis runs that wait for you and run each with Claude Code, with no window |
 | `doctor` | Find why a client cannot see a tool, from the config files of the clients on this computer. Reads only; `--fix` prints a corrected entry, `--report` sends names and statuses |
+| `kubernetes setup` | Set up a read-only Kubernetes server: writes its settings, adds it to your client (asks first), runs the four access checks and reports them |
 | `trace-hook` | Record one tool call of a client hook as a step of the open run |
 
 (`listen-guard` and `listen-wrap` are internal: the listener starts Claude Code through them.)

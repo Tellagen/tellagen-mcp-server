@@ -19,7 +19,10 @@ describe("Tellagen MCP startup", () => {
       expect(text).toContain("same host, device, and mountpoint");
       expect(text).toContain("cross-resource");
       expect(text).toContain("inconclusive");
-      expect(text).toContain("bounded read-only host");
+      expect(text).toContain("node_filesystem_*");
+      expect(text).toContain("gap finding");
+      expect(text).not.toContain("local_host");
+      expect(text).not.toMatch(/host check|local host|host inspection/i);
       expect(text).toContain("infrastructure documentation");
     }
   });

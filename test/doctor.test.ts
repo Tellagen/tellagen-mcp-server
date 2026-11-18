@@ -106,6 +106,32 @@ describe("reading the config files of each client", () => {
     expect(toolOfEntry(entry("notes", "node"))).toBeUndefined();
     expect(toolOfEntry(entry("docs", "docs-mcp"))).toBe("docs");
   });
+
+  it("recognises the Atlassian, Confluence and Notion servers as docs, by name, command or address", () => {
+    const entry = (name: string, command: string | undefined, args: string[] = [], url?: string): ServerEntry => ({
+      client: "claude-code", source: "s", name, ...(command ? { command } : {}), args, env: {}, ...(url ? { url } : {}),
+    });
+    expect(toolOfEntry(entry("atlassian", "npx", ["-y", "mcp-remote"]))).toBe("docs");
+    expect(toolOfEntry(entry("my-confluence", "uvx", ["mcp-atlassian"]))).toBe("docs");
+    expect(toolOfEntry(entry("x", "uvx", ["mcp-atlassian"]))).toBe("docs");
+    expect(toolOfEntry(entry("wiki", "npx", ["-y", "mcp-remote", "https://mcp.atlassian.com/v1/sse"]))).toBe("docs");
+    expect(toolOfEntry(entry("wiki", undefined, [], "https://mcp.atlassian.com/v1/sse"))).toBe("docs");
+    expect(toolOfEntry(entry("notion", undefined, [], "https://mcp.notion.com/mcp"))).toBe("docs");
+    expect(toolOfEntry(entry("pages", "npx", ["-y", "@notionhq/notion-mcp-server"]))).toBe("docs");
+    expect(toolOfEntry(entry("notes", "node"))).toBeUndefined();
+    expect(toolOfEntry(entry("notional", "node"))).toBeUndefined();
+    expect(toolOfEntry(entry("atlassian-bitbucket", "node"))).toBeUndefined();
+  });
+
+  it("doctor --tool docs finds an Atlassian server entry", async () => {
+    const fs = computer(["/usr/bin/npx"]);
+    const file = join(fs.home, ".cursor", "mcp.json");
+    const text = JSON.stringify({ mcpServers: { atlassian: { command: "npx", args: ["-y", "mcp-remote", "https://mcp.atlassian.com/v1/sse"] } } });
+    const io = memoryIo();
+    const code = await doctorCommand(["--client", "cursor", "--tool", "docs"], io.io, { fs: { ...fs, readText: (p: string) => (p === file ? text : fs.readText(p)) }, shellPath: "/usr/bin", fetch: async () => ({ status: 200 }) });
+    expect(io.out()).toContain('docs: server "atlassian"');
+    expect(code).toBe(0);
+  });
 });
 
 describe("the checks", () => {

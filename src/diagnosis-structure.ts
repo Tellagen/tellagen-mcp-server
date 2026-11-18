@@ -27,10 +27,12 @@ import {
   maxStepFigureBytes,
   MAX_STEP_FIGURE_BYTES,
   FIGURE_EXTRAS_CAPABILITY,
+  FIGURE_LIMITS_CAPABILITY,
   rangeOverlapBlockSchema,
   runHistoryBlockSchema,
   withoutDiffLineDetailInBlock,
   withoutFigureExtrasInBlock,
+  withoutFigureLimitsInBlock,
 } from "./figures.js";
 
 import { knownRunWindow, rememberRunWindow, type RunWindow } from "./run-window.js";
@@ -47,7 +49,11 @@ export const RUN_IMAGES_CAPABILITY = "run_images_v1";
 export const DIFF_LINES_CAPABILITY = "diff_lines_v1";
 /** The server takes a log_lines figure. */
 export const LOG_LINES_CAPABILITY = "log_lines_v1";
-export { FIGURE_EXTRAS_CAPABILITY };
+export { FIGURE_EXTRAS_CAPABILITY, FIGURE_LIMITS_CAPABILITY };
+/** result_summary.answer and a figure on a recommended action. */
+export const ACTION_ANSWER_CAPABILITY = "action_answer_v1";
+/** A coverage entry may have the state not_needed. */
+export const COVERAGE_NOT_NEEDED_CAPABILITY = "coverage_not_needed_v1";
 
 /* ------------------------------------------------------------------ */
 /* Capability negotiation                                             */
@@ -140,6 +146,22 @@ export async function supportsFigureExtras(
 ): Promise<boolean> {
   if (runId !== undefined) return supportsCapability(client, runId, FIGURE_EXTRAS_CAPABILITY);
   return latestCapabilities.get(client)?.has(FIGURE_EXTRAS_CAPABILITY) ?? false;
+}
+
+/** Whether the backend takes a `limit` on a compare row. Decided like supportsDiffLines. */
+export async function supportsFigureLimits(client: TellagenClient, runId?: string): Promise<boolean> {
+  if (runId !== undefined) return supportsCapability(client, runId, FIGURE_LIMITS_CAPABILITY);
+  return latestCapabilities.get(client)?.has(FIGURE_LIMITS_CAPABILITY) ?? false;
+}
+
+/** Whether the backend takes result_summary.answer and a figure on a recommended action. */
+export async function supportsActionAnswer(client: TellagenClient, runId: string): Promise<boolean> {
+  return supportsCapability(client, runId, ACTION_ANSWER_CAPABILITY);
+}
+
+/** Whether the backend takes the coverage state not_needed. */
+export async function supportsCoverageNotNeeded(client: TellagenClient, runId: string): Promise<boolean> {
+  return supportsCapability(client, runId, COVERAGE_NOT_NEEDED_CAPABILITY);
 }
 
 /**
@@ -346,8 +368,9 @@ const compareFigure = z
           .object({
             label: line(1, 80),
             mono: z.boolean().optional(),
-            before: blockNumber,
+            before: blockNumber.optional(),
             after: blockNumber,
+            limit: blockNumber.optional(),
             details: z
               .array(
                 z
@@ -361,7 +384,10 @@ const compareFigure = z
               .max(3)
               .optional(),
           })
-          .strict(),
+          .strict()
+          .refine((row) => row.before !== undefined || row.limit !== undefined, {
+            message: "send before, or a limit to measure after against",
+          }),
       )
       .min(1)
       .max(8),
@@ -515,11 +541,11 @@ export const coverageEntrySchema = z.object({
   id: line(0, 64).optional(),
   source: line(1, 80).describe("The data source, for example Grafana, GitHub or Kubernetes"),
   state: z
-    .enum(["checked", "gap", "not_configured"])
+    .enum(["checked", "gap", "not_configured", "not_needed"])
     .describe(
-      "checked = read and used; gap = configured but could not be read or satisfied; not_configured = no such source in this workspace",
+      "checked = read and used; gap = configured but could not be read or satisfied; not_configured = no such source in this workspace; not_needed = skipped on purpose, with the reason in summary (only when the server lists coverage_not_needed_v1; never send checked for a source nobody read)",
     ),
-  summary: z.string().max(600).optional(),
+  summary: z.string().max(600).optional().describe("One line, at most 20 words. Required for not_needed: why the source was skipped."),
   links: evidenceLinksSchema.optional(),
   step_ids: z
     .array(z.string().min(1).max(64))
@@ -926,6 +952,81 @@ export function stripResultLogLines(summary: unknown): {
   return removed.length > 0 ? { summary: { ...summary, causal_paths: causalPaths }, removed } : { summary, removed };
 }
 
+/**
+ * A result summary whose compare figures (in steps and on actions) carry no
+ * row limit. A figure that cannot stand without its limits is taken out.
+ */
+export function stripResultFigureLimits(summary: unknown): {
+  summary: unknown;
+  removed: string[];
+} {
+  const removed: string[] = [];
+  if (!isRecord(summary)) return { summary, removed };
+  const next: Record<string, unknown> = { ...summary };
+  const fix = (holder: unknown, where: string): unknown => {
+    if (!isRecord(holder) || !("figure" in holder)) return holder;
+    const result = withoutFigureLimitsInBlock(holder.figure);
+    if (result.what.length === 0) return holder;
+    removed.push(`${where}.figure`);
+    if (result.unusable) {
+      const rest = { ...holder };
+      delete rest.figure;
+      return rest;
+    }
+    return { ...holder, figure: result.block };
+  };
+  if (Array.isArray(next.causal_paths)) {
+    next.causal_paths = next.causal_paths.map((path, i) =>
+      isRecord(path) && Array.isArray(path.steps)
+        ? { ...path, steps: path.steps.map((step, j) => fix(step, `causal_paths[${i}].steps[${j}]`)) }
+        : path,
+    );
+  }
+  if (Array.isArray(next.recommended_actions)) {
+    next.recommended_actions = next.recommended_actions.map((action, i) => fix(action, `recommended_actions[${i}]`));
+  }
+  return removed.length > 0 ? { summary: next, removed } : { summary, removed };
+}
+
+/** A result summary without the answer and the figures of recommended actions. */
+export function stripResultActionAnswer(summary: unknown): { summary: unknown; removed: string[] } {
+  const removed: string[] = [];
+  if (!isRecord(summary)) return { summary, removed };
+  const next: Record<string, unknown> = { ...summary };
+  if ("answer" in next) {
+    delete next.answer;
+    removed.push("answer");
+  }
+  if (Array.isArray(next.recommended_actions)) {
+    next.recommended_actions = next.recommended_actions.map((action, i) => {
+      if (!isRecord(action) || !("figure" in action)) return action;
+      removed.push(`recommended_actions[${i}].figure`);
+      const rest = { ...action };
+      delete rest.figure;
+      return rest;
+    });
+  }
+  return removed.length > 0 ? { summary: next, removed } : { summary, removed };
+}
+
+/**
+ * A result summary without coverage entries in the state not_needed. Without
+ * coverage_not_needed_v1 the entry is left out: sending `checked` would say a
+ * source was read that nobody read.
+ */
+export function stripResultNotNeeded(summary: unknown): { summary: unknown; removed: string[] } {
+  const removed: string[] = [];
+  if (!isRecord(summary) || !Array.isArray(summary.coverage)) return { summary, removed };
+  const coverage = summary.coverage.filter((entry, i) => {
+    if (isRecord(entry) && entry.state === "not_needed") {
+      removed.push(`coverage[${i}]`);
+      return false;
+    }
+    return true;
+  });
+  return removed.length > 0 ? { summary: { ...summary, coverage }, removed } : { summary, removed };
+}
+
 /** The sentence the tool adds when it dropped fields for an older backend. */
 export function unsupportedNotice(
   removed: string[],
@@ -938,6 +1039,15 @@ export function unsupportedNotice(
   }
   if (capability === LOG_LINES_CAPABILITY) {
     return `This Tellagen backend does not advertise ${capability}, so the log_lines figure of ${shown}${more} was not sent and the rest went through. Show the log evidence as a checks figure, and put the lines in the finding. Update Tellagen to show log lines.`;
+  }
+  if (capability === FIGURE_LIMITS_CAPABILITY) {
+    return `This Tellagen backend does not advertise ${capability}, so the row limits of ${shown}${more} were not sent. A figure that needed them was left out. Put the limit in the caption or the finding, never in before.`;
+  }
+  if (capability === ACTION_ANSWER_CAPABILITY) {
+    return `This Tellagen backend does not advertise ${capability}, so ${shown}${more} were not sent and the rest went through. Update Tellagen to show the answer line and the figure of an action.`;
+  }
+  if (capability === COVERAGE_NOT_NEEDED_CAPABILITY) {
+    return `This Tellagen backend does not advertise ${capability}, so the not_needed coverage entries ${shown}${more} were left out (they must not be sent as checked). Say in a finding or an unknown why the source was skipped.`;
   }
   if (capability === FIGURE_EXTRAS_CAPABILITY) {
     return `This Tellagen backend does not advertise ${capability}, so the stats title, the stats after the fourth and runs_not_shown of ${shown}${more} were not sent and the rest of the figure went through. Update Tellagen to show them.`;
@@ -980,6 +1090,11 @@ const WARNING_ADVICE: Record<string, string> = {
     "a diff of a change that adds and removes lines must show both: send each removed line next to the line that replaced it",
   diff_short_change_cut:
     "a change of 12 or fewer changed lines is sent whole: send every changed line of it",
+  text_too_long:
+    "cut the text named in the warning to the word limit: answer, headline 15; claim 20; evidence summary 60; action title 12, summary 20; ruled out 30; coverage 20; unknown 12; customer impact 15",
+  filler_phrase: "delete the stock phrase and state the fact; do not repeat a rule of the protocol",
+  raw_id_in_text: "move the run, job, commit or other long id into links; keep a sentence free of ids",
+  coverage_not_needed_without_reason: "give each not_needed coverage entry a summary that says why the source was skipped",
   headline_too_long:
     "write the headline claim (conclusion.sentence) in 15 words or fewer, with one cause, and keep the detail in findings",
   question_not_a_question:

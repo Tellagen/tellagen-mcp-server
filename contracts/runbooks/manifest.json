@@ -1,6 +1,6 @@
 {
-  "contract_version": "2026-11-15.2",
-  "bundle_sha256": "2b938382ff9164ec69435795c60c7a56d5dd13e61dc5bdd7e7cf67461b47df61",
+  "contract_version": "2026-11-17.1",
+  "bundle_sha256": "f0c6dbed0bd3e716de808f5cf42553def829864a0c26cb40f3c85cae7ec3fd3e",
   "bundle_digest_algorithm": "sha256(sorted(path + NUL + file_sha256 + LF))",
   "files": [
     {
@@ -10,8 +10,8 @@
     },
     {
       "path": "v2/client-protocol.json",
-      "sha256": "65fd7731653370816489c6ffea7925a765e01440cd14d4a72042a649b06c5d7e",
-      "bytes": 27974
+      "sha256": "280e08fe0455bfec03a466328a1a02f54d6988921b940b627b5bab256070d7bd",
+      "bytes": 28149
     },
     {
       "path": "v2/client-writes.guidance.json",
@@ -25,8 +25,8 @@
     },
     {
       "path": "v2/fixtures/filesystem-pressure.json",
-      "sha256": "8c7b92f5dc4b68e94d20459ff33089f93d41bf5b8b876c76ce28f5d4a5fb48af",
-      "bytes": 8804
+      "sha256": "093860c63b91dcb0528c87c769d03e2cc4aa88edcd444a4d305acd86a93c2c11",
+      "bytes": 8632
     },
     {
       "path": "v2/fixtures/grafana-error-rate-plan.json",
@@ -60,8 +60,8 @@
     },
     {
       "path": "v2/result-summary.guidance.json",
-      "sha256": "8d9372a00de80e4326205e0fbdb50269005dffc8f54ad594ec259ea03071cde4",
-      "bytes": 2418
+      "sha256": "3d0f2a7d1b451efdfad41f42d946107e41c4b1ea1d6ba520932adcf500d9d854",
+      "bytes": 6087
     },
     {
       "path": "v2/runbook-definition.schema.json",
@@ -70,8 +70,8 @@
     },
     {
       "path": "v2/timeline-event-blocks.schema.json",
-      "sha256": "3026b10055809bd0dd7aa219e2b89a07190822e1d27861d6cc1eb839478261ec",
-      "bytes": 31084
+      "sha256": "ff84b0b9ebb6a97b123c1c318548af31a74fcf95cc28a452edeeb2027b34df98",
+      "bytes": 31536
     }
   ]
 }
