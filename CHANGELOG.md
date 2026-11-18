@@ -2,7 +2,7 @@
 
 All notable changes to `@tellagen/mcp-server` are in this file. The newest version is first. Each heading is `## <version> - <date>`; the release workflow copies the section of the tagged version into the GitHub release.
 
-## 0.7.0 - 2026-11-18
+## 0.7.0 - 2026-11-19
 
 ### Added
 
@@ -19,6 +19,8 @@ All notable changes to `@tellagen/mcp-server` are in this file. The newest versi
 - The guide teaches the word limits of the result text (answer and headline 15, claim 20, evidence summary 60, action title 12 and summary 20, ruled out 30, coverage 20, unknowns 12, customer impact 15), the stock phrases to leave out, ids in `links` and never in a sentence, numbers with units, and "a figure shows the fact its step states". The completion tool reads the new warnings (`text_too_long`, `filler_phrase`, `raw_id_in_text`, `coverage_not_needed_without_reason`) with advice. When a dry run returns only advice about the text, the first call for a run shows it and completes nothing; the next call completes the run, changed or not.
 - `result_summary.answer` and a `diff` or `checks` figure on a recommended action, sent only when the pickup lists `action_answer_v1`. A coverage entry in the state `not_needed` with its reason in `summary`, sent only when the pickup lists `coverage_not_needed_v1` (without it the entry is left out, never sent as `checked`). A compare row `limit` (the row then needs no `before`), in `tellagen_build_figure`, the result and the timeline blocks, sent only when the pickup lists `figure_limits_v1`. Without a capability the field is left out and `mcp_notice` says so.
 
+- `result_summary.alert_verdict` on `tellagen_complete_investigation`: the verdict on the alert behind the incident (`real_problem`, `already_handled`, `false_alarm`, `not_sure`), its reason, onset, `would_change_mind` and a proof checklist. It is sent only when the pickup lists `alert_verdict_v1`; otherwise the field is left out and `mcp_notice` says so. The guide and the server instructions teach judging the alert first, the proof rules, and the four evidence rules (`cause_without_runtime_evidence`, `empty_result_link_dropped`, `step_names_fix_not_cause`, `false_alarm_without_rule`). The completion tool explains the `verdict_*` warnings.
+
 ### Changed
 
 - For `docs`, the report tools and the pickup ask the model to put the name of the source it found in `detail` ("Confluence", "Notion", "repository folder"), with no address, path or user name.
@@ -27,6 +29,10 @@ All notable changes to `@tellagen/mcp-server` are in this file. The newest versi
 ### Removed
 
 - The `local_host` source key. The report tools and the pickup no longer accept it, and the guide no longer asks for a host check.
+
+### Fixed
+
+- `listen` says why it could not prove the shell guard. When the guard saw no call, the refusal now shows the client's exit code and what it printed (on one line, cut to 300 characters, secrets masked), and a line that starts with "To fix it:". It names an expired or missing Claude Code sign-in (run `claude`, then `/login`), a refused `ANTHROPIC_API_KEY`, a usage limit, a model that is not available, a client that did not finish in 3 minutes, and a `disableAllHooks` or `allowManagedHooksOnly` setting that keeps the hook from running. Before, every such case said only that the client did not call the guard.
 
 ## 0.6.0 - 2026-11-15
 

@@ -37,14 +37,18 @@ import {
   stripResultFigureExtras,
   stripResultFigureLimits,
   stripResultActionAnswer,
+  stripResultAlertVerdict,
   stripResultNotNeeded,
   supportsFigureLimits,
   supportsActionAnswer,
+  supportsAlertVerdict,
   supportsCoverageNotNeeded,
   supportsRunAmendments,
   stripResultCoverageReasons,
   RUN_AMENDMENTS_CAPABILITY,
   ACTION_ANSWER_CAPABILITY,
+  ALERT_VERDICT_CAPABILITY,
+  alertVerdictSchema,
   COVERAGE_NOT_NEEDED_CAPABILITY,
   FIGURE_LIMITS_CAPABILITY,
   stepFigureSchema,
@@ -262,6 +266,7 @@ export const resultSummarySchema = z
     recommended_actions: z.array(resultRecommendedActionSchema).optional(),
     ...resultStructureShape,
     ...resultChangeShape,
+    alert_verdict: alertVerdictSchema.optional(),
     window_suggestion: windowSuggestionSchema.optional(),
   })
   .describe("Structured RCA summary shown in Tellagen when the run completes");
@@ -920,6 +925,12 @@ export async function adaptResultSummary(
     if (answer.removed.length > 0 && !(await supportsActionAnswer(client, runId))) {
       current = answer.summary;
       notices.push(unsupportedNotice(answer.removed, ACTION_ANSWER_CAPABILITY));
+    }
+    // The alert verdict goes only to a backend that lists alert_verdict_v1 for this run.
+    const verdict = stripResultAlertVerdict(current);
+    if (verdict.removed.length > 0 && !(await supportsAlertVerdict(client, runId))) {
+      current = verdict.summary;
+      notices.push(unsupportedNotice(verdict.removed, ALERT_VERDICT_CAPABILITY));
     }
     // A source skipped on purpose goes as not_needed, never as checked.
     const skipped = stripResultNotNeeded(current);

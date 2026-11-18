@@ -52,6 +52,8 @@ export const LOG_LINES_CAPABILITY = "log_lines_v1";
 export { FIGURE_EXTRAS_CAPABILITY, FIGURE_LIMITS_CAPABILITY };
 /** result_summary.answer and a figure on a recommended action. */
 export const ACTION_ANSWER_CAPABILITY = "action_answer_v1";
+/** result_summary.alert_verdict: the verdict on the alert behind the incident, and its proof checklist. */
+export const ALERT_VERDICT_CAPABILITY = "alert_verdict_v1";
 /**
  * The capability of a Tellagen that takes additions to a finished run and the
  * reason, retryable and detail of a coverage entry (both ship together).
@@ -163,6 +165,11 @@ export async function supportsFigureLimits(client: TellagenClient, runId?: strin
 /** Whether the backend takes result_summary.answer and a figure on a recommended action. */
 export async function supportsActionAnswer(client: TellagenClient, runId: string): Promise<boolean> {
   return supportsCapability(client, runId, ACTION_ANSWER_CAPABILITY);
+}
+
+/** Whether the backend takes result_summary.alert_verdict. Listed only for a run whose incident came from an alert. */
+export async function supportsAlertVerdict(client: TellagenClient, runId: string): Promise<boolean> {
+  return supportsCapability(client, runId, ALERT_VERDICT_CAPABILITY);
 }
 
 /** Whether the backend takes additions to a finished run and coverage reasons. */
@@ -684,6 +691,91 @@ export const resultChangeShape = {
     ),
 };
 
+export const ALERT_VERDICTS = ["real_problem", "already_handled", "false_alarm", "not_sure"] as const;
+export const ALERT_VERDICT_REASONS = [
+  "customer_impact",
+  "internal_only",
+  "known_incident",
+  "declared_window",
+  "rule_wrong",
+  "data_wrong",
+  "rule_needs_tuning",
+] as const;
+export const ALERT_PROOF_IDS = [
+  "alert_value_read",
+  "rule_read",
+  "value_rebuilt",
+  "flaw_removed",
+  "baseline",
+  "onset",
+  "onset_change",
+  "impact_checked",
+  "customer_signal",
+] as const;
+
+/**
+ * The verdict on the alert behind the incident (alert_verdict_v1). The server
+ * checks it and may show Not sure instead; the fields it sets itself are not
+ * part of this schema.
+ */
+export const alertVerdictSchema = z
+  .object({
+    verdict: z.enum(ALERT_VERDICTS).describe("real_problem, already_handled, false_alarm or not_sure. Send not_sure when you cannot tell."),
+    reason: z
+      .enum(ALERT_VERDICT_REASONS)
+      .optional()
+      .describe(
+        "One reason that fits the verdict: customer_impact or internal_only (real_problem); known_incident or declared_window (already_handled); rule_wrong, data_wrong or rule_needs_tuning (false_alarm). Leave it out for not_sure.",
+      ),
+    onset: z
+      .object({
+        state: z.enum(["new", "standing", "cleared"]),
+        since: z
+          .string()
+          .max(40)
+          .refine((v) => !Number.isNaN(Date.parse(v)) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(v), "RFC 3339 time, such as 2026-11-14T09:00:00Z")
+          .describe("RFC 3339 time of that state"),
+      })
+      .optional(),
+    would_change_mind: z
+      .object({
+        text: z.string().min(1).max(200).describe('One observable thing that would change the verdict, for example "Checkout 5xx above 0.5%."'),
+        check: z
+          .object({
+            command_id: z.string().min(1).max(64),
+            op: z.enum(["above", "below"]),
+            value: z.number(),
+            unit: z.string().max(16).optional(),
+          })
+          .optional(),
+      })
+      .optional()
+      .describe("Required for false_alarm and already_handled"),
+    proof: z
+      .array(
+        z.object({
+          id: z.enum(ALERT_PROOF_IDS),
+          done: z.boolean(),
+          finding_ids: z.array(z.number().int().positive()).max(12).optional(),
+        }),
+      )
+      .max(9)
+      .optional()
+      .describe("The checklist. An item counts only when done is true and finding_ids names a finding of this run that shows it."),
+    incident_id: z
+      .string()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,31}$/, "an incident id such as INC-123")
+      .optional().describe("For already_handled with known_incident: the open incident that handles the alert, such as INC-123"),
+    finding_ids: z
+      .array(z.number().int().positive())
+      .max(12)
+      .optional()
+      .describe("For already_handled with declared_window: the findings that show the declared window"),
+  })
+  .describe(
+    "The verdict on the alert behind the incident, with its proof. Only when this Tellagen lists alert_verdict_v1. Judge the alert first; the server shows Not sure instead of a claim without proof.",
+  );
+
 export const resultStructureShape = {
   ruled_out: z
     .array(ruledOutSchema)
@@ -1037,6 +1129,14 @@ export function stripResultActionAnswer(summary: unknown): { summary: unknown; r
   return removed.length > 0 ? { summary: next, removed } : { summary, removed };
 }
 
+/** A result summary without alert_verdict, for a backend that does not list alert_verdict_v1. */
+export function stripResultAlertVerdict(summary: unknown): { summary: unknown; removed: string[] } {
+  if (!isRecord(summary) || !("alert_verdict" in summary)) return { summary, removed: [] };
+  const next: Record<string, unknown> = { ...summary };
+  delete next.alert_verdict;
+  return { summary: next, removed: ["alert_verdict"] };
+}
+
 /**
  * A result summary without coverage entries in the state not_needed. Without
  * coverage_not_needed_v1 the entry is left out: sending `checked` would say a
@@ -1103,6 +1203,9 @@ export function unsupportedNotice(
   if (capability === ACTION_ANSWER_CAPABILITY) {
     return `This Tellagen backend does not advertise ${capability}, so ${shown}${more} were not sent and the rest went through. Update Tellagen to show the answer line and the figure of an action.`;
   }
+  if (capability === ALERT_VERDICT_CAPABILITY) {
+    return `This Tellagen does not list ${capability} for this run (the Tellagen is older, the feature is off for this workspace, or the run is not on an alert), so the alert verdict was not sent and the rest went through. Say in the headline or a finding whether the alert was real.`;
+  }
   if (capability === COVERAGE_NOT_NEEDED_CAPABILITY) {
     return `This Tellagen backend does not advertise ${capability}, so the not_needed coverage entries ${shown}${more} were left out (they must not be sent as checked). Say in a finding or an unknown why the source was skipped.`;
   }
@@ -1155,6 +1258,16 @@ const WARNING_ADVICE: Record<string, string> = {
   filler_phrase: "delete the stock phrase and state the fact; do not repeat a rule of the protocol",
   raw_id_in_text: "move the run, job, commit or other long id into links; keep a sentence free of ids",
   coverage_not_needed_without_reason: "give each not_needed coverage entry a summary that says why the source was skipped",
+  verdict_downgraded: "the server shows Not sure because proof is missing or a signal is open: read claimed and missing in the answer, then amend the run with the missing proof or keep Not sure",
+  verdict_proof_missing: "mark a proof item done only with a finding of this run behind it (finding_ids)",
+  verdict_without_onset: "send onset {state, since}: new, standing or cleared, with an RFC 3339 time",
+  verdict_without_change_mind: "send would_change_mind with one observable thing and, when you can, a check on a query of this run",
+  verdict_real_without_impact_check: "check customer impact and cite a finding for impact_checked before you call the alert a real problem",
+  verdict_dropped: "this run takes no verdict: leave alert_verdict out",
+  cause_without_runtime_evidence: "a cause that rests only on code or documents needs a runtime source (metrics, logs, a CI run or a deployment) or it is shown as a leading hypothesis",
+  empty_result_link_dropped: "a link to a query that returned nothing is dropped: say in the claim that nothing was found, or cite a query that returned data",
+  step_names_fix_not_cause: "a step names the fix, not the cause: state what broke and why",
+  false_alarm_without_rule: "a false alarm needs a finding that shows the alert rule (read the alert rules) and the proof item rule_read",
   headline_too_long:
     "write the headline claim (conclusion.sentence) in 15 words or fewer, with one cause, and keep the detail in findings",
   question_not_a_question:

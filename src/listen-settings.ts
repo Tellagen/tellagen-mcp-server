@@ -62,3 +62,29 @@ export function inspectClientSettings(
   }
   return { problems, unreadable };
 }
+
+/**
+ * The settings that stop the client from running the listener's hook: with
+ * `disableAllHooks` no hook runs, and with `allowManagedHooksOnly` (a managed
+ * setting) a hook from `--settings` does not run. Either one makes the guard
+ * silent, so the proof at the start fails. Each entry names the setting and
+ * the file, and no value.
+ */
+export function findHookBlockers(cwd: string, home = homedir(), env: Record<string, string | undefined> = process.env): string[] {
+  const found: string[] = [];
+  for (const file of [...new Set(settingsFiles(cwd, home, env))]) {
+    if (!existsSync(file)) continue;
+    let data: Record<string, unknown> | undefined;
+    try {
+      const stat = lstatSync(file);
+      if (!stat.isFile() || stat.size > 1024 * 1024) continue;
+      data = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    for (const key of ["disableAllHooks", "allowManagedHooksOnly"]) {
+      if (data?.[key] === true) found.push(`"${key}": true in ${file}`);
+    }
+  }
+  return found;
+}

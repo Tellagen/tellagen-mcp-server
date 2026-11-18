@@ -20,6 +20,7 @@
   ],
   "server_capabilities_used": [
     "action_answer_v1",
+    "alert_verdict_v1",
     "client_heartbeat_v1",
     "completion_repairs_v1",
     "coverage_not_needed_v1",
@@ -36,6 +37,7 @@
     "run_requests_v1"
   ],
   "server_capabilities_since": {
+    "alert_verdict_v1": "2026-11-18.2",
     "run_amendments_v1": "2026-11-18.1",
     "run_requests_v1": "2026-11-18.1"
   },
@@ -108,7 +110,8 @@
     {
       "method": "PATCH",
       "path": "/api/v1/investigations/{id}",
-      "request_fields": ["status", "failure_reason", "mitigation_state", "dry_run", "result_summary", "result_summary.answer"],
+      "request_fields": ["status", "failure_reason", "mitigation_state", "dry_run", "result_summary", "result_summary.answer", "result_summary.alert_verdict"],
+      "fields_since": {"result_summary.alert_verdict": "2026-11-18.2"},
       "response_fields": ["dry_run", "ready", "repairs", "repairs.advice", "warnings", "coverage"],
       "error_codes": []
     },

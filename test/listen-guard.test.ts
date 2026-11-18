@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { listenGuardCommand } from "../src/cli/listen-guard.js";
 import type { CliIo } from "../src/cli/io.js";
 import type { CommandResult } from "../src/credentials.js";
-import { inspectClientSettings } from "../src/listen-settings.js";
-import { judgeCanary, judgeGuardLog, PROBE_CANARY, PROBE_PASS, PROBE_PROMPT, readGuardLog, verifyEnforcement } from "../src/listen-probe.js";
+import { findHookBlockers, inspectClientSettings } from "../src/listen-settings.js";
+import { clientText, explainClientResult, judgeCanary, judgeGuardLog, PROBE_CANARY, PROBE_PASS, PROBE_PROMPT, readGuardLog, verifyEnforcement } from "../src/listen-probe.js";
 import { reasonForEnd } from "../src/listener.js";
 
 const event = (command: string, mode = "dontAsk") => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command }, permission_mode: mode });
@@ -79,6 +79,7 @@ describe("the proof that the client calls the guard", () => {
     clientVersion: "9.9.9",
     guardScript: guardScript(),
     run,
+    hookBlockers: () => [] as string[],
   });
   /**
    * A client that calls the guard for both test commands, as the real one does, runs the
@@ -175,6 +176,98 @@ describe("the proof that the client calls the guard", () => {
     mkdirSync(join(dir, "listen"), { recursive: true });
     const { readdirSync } = await import("node:fs");
     expect(readdirSync(join(dir, "listen")).filter((name) => name.startsWith("probe-"))).toEqual([]);
+  });
+});
+
+describe("what the client printed when the guard saw nothing, and how to fix it", () => {
+  const result = (over: Partial<CommandResult>): CommandResult => ({ code: 1, stdout: "", stderr: "", missing: false, timedOut: false, ...over });
+
+  it("names an expired sign-in and tells the person to sign in again", () => {
+    const { detail, fix } = explainClientResult(result({ stdout: "Failed to authenticate: OAuth session expired and could not be refreshed\n" }), "claude", [], {});
+    // The generic key: value mask hides "OAuth" after "authenticate:"; the fix is still found from the raw text.
+    expect(detail).toBe('The client stopped with exit code 1. The client said: "Failed to authenticate: [redacted] session expired and could not be refreshed"');
+    expect(fix).toContain("run `claude` in a terminal, type /login");
+  });
+
+  it("sends a refused key to ANTHROPIC_API_KEY only when that variable is set", () => {
+    const refused = result({ stdout: "Invalid API key · Please run /login" });
+    expect(explainClientResult(refused, "claude", [], { ANTHROPIC_API_KEY: "x" }).fix).toContain("unset ANTHROPIC_API_KEY");
+    expect(explainClientResult(refused, "claude", [], {}).fix).toContain("type /login");
+  });
+
+  it("names a usage limit, a missing model and a timeout", () => {
+    expect(explainClientResult(result({ stderr: "Claude AI usage limit reached" }), "claude", [], {}).fix).toContain("usage limit");
+    expect(explainClientResult(result({ stderr: "model claude-x not found" }), "claude", [], {}).fix).toContain('Remove "model" from listen.json');
+    const slow = explainClientResult(result({ code: null, timedOut: true }), "claude", [], {});
+    expect(slow.detail).toBe("The client did not finish in 3 minutes.");
+    expect(slow.fix).toContain('claude -p "say ok"');
+  });
+
+  it("names a setting that turns hooks off when the client gave no other reason", () => {
+    const { detail, fix } = explainClientResult(result({ code: 0, stdout: "done" }), "claude", ['"disableAllHooks": true in /h/.claude/settings.json'], {});
+    expect(detail).toContain('turn hooks off: "disableAllHooks": true in /h/.claude/settings.json.');
+    expect(fix).toContain("Remove that setting");
+  });
+
+  it("says the model did not use the shell tool when the client finished, and gives a general step for an unknown error", () => {
+    expect(explainClientResult(result({ code: 0, stdout: "I will not run that." }), "claude", [], {}).fix).toContain("If the model did not try the two commands");
+    const unknown = explainClientResult(result({ code: 2, stderr: "segfault" }), "claude", [], {});
+    expect(unknown.detail).toBe('The client stopped with exit code 2. The client said: "segfault"');
+    expect(unknown.fix).toContain('claude -p "say ok"');
+    expect(explainClientResult(result({ code: 3 }), "claude", [], {}).detail).toBe("The client stopped with exit code 3. The client printed nothing.");
+  });
+
+  it("puts the client's words on one short line with colour codes and secrets removed", () => {
+    const text = clientText({ stdout: `\x1b[31mError\x1b[0m\n  token=sk-ant-api03-${"a".repeat(40)}\n${"x".repeat(400)}`, stderr: "" });
+    expect(text).not.toContain("\x1b");
+    expect(text).not.toContain("aaaaaaaa");
+    expect(text).not.toContain("\n");
+    expect(text.length).toBe(300);
+    expect(text.endsWith("...")).toBe(true);
+  });
+
+  it("puts the client's error and the fix in the refusal of the listener", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tellagen-probe-why-"));
+    try {
+      const guard = join(dir, "index.js");
+      writeFileSync(guard, "// guard");
+      const refusal = await verifyEnforcement({
+        home: dir,
+        command: { command: "claude", args: ["-p"] },
+        cwd: dir,
+        clientVersion: "9.9.9",
+        guardScript: guard,
+        run: async () => result({ stdout: "Failed to authenticate: OAuth session expired and could not be refreshed\n" }),
+        hookBlockers: () => [],
+      });
+      expect(refusal.ok).toBe(false);
+      const lines = (refusal as { reason: string }).reason.split("\n");
+      expect(lines[0]).toBe("Could not prove that the shell guard is active (The client did not call the shell guard at all.) The listener will not start the client.");
+      expect(lines[1]).toContain("session expired and could not be refreshed");
+      expect(lines[2]).toMatch(/^To fix it: Sign in to Claude Code again/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the settings that turn the client's hooks off", () => {
+  it("finds disableAllHooks and allowManagedHooksOnly in the files the client reads, and names no other key", () => {
+    const home = mkdtempSync(join(tmpdir(), "tellagen-hooks-"));
+    try {
+      const work = join(home, "work");
+      mkdirSync(join(home, ".claude"), { recursive: true });
+      mkdirSync(join(work, ".claude"), { recursive: true });
+      writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ disableAllHooks: true, permissions: { allow: [] } }));
+      writeFileSync(join(work, ".claude", "settings.local.json"), JSON.stringify({ allowManagedHooksOnly: true }));
+      const found = findHookBlockers(work, home, {});
+      expect(found).toContain(`"disableAllHooks": true in ${join(home, ".claude", "settings.json")}`);
+      expect(found).toContain(`"allowManagedHooksOnly": true in ${join(work, ".claude", "settings.local.json")}`);
+      writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ disableAllHooks: false }));
+      expect(findHookBlockers(work, home, {}).some((entry) => entry.includes("disableAllHooks"))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

@@ -458,6 +458,8 @@ One more capability is the server's alone: Tellagen lists `diff_lines_v1` in `se
 
 Likewise Tellagen lists `figure_extras_v1` when a `stats` figure may carry a `title` and more than four items, and a `run_history` figure may carry `runs_not_shown`. Without it the MCP cuts a stats figure to its first four items and drops the title and `runs_not_shown`, and the tool result carries an `mcp_notice`; `tellagen_build_figure` says so in `notes`. `tellagen_build_figure` takes the `run_id` for this check, and the timeline tools and `tellagen_complete_investigation` apply it to the figures they send.
 
+Tellagen lists `alert_verdict_v1` only for a run whose incident came from an alert. Then `tellagen_complete_investigation` takes `result_summary.alert_verdict`: `verdict` (`real_problem`, `already_handled`, `false_alarm`, `not_sure`), `reason`, `onset`, `would_change_mind` and a `proof` checklist of `{id, done, finding_ids}`. The server checks the proof and may show Not sure instead of the claim; it answers with the `verdict_*` warnings and never rejects the result for a weak verdict. Without the capability (an older Tellagen, the feature off for the workspace, or a run that is not on an alert) the MCP leaves `alert_verdict` out and the tool result carries an `mcp_notice`. The guide teaches the method (judge the alert first) and the evidence rules.
+
 The fields behind a capability go **only** to a run whose response lists it in `server_capabilities`. Against an older Tellagen they are removed before the request leaves, the call still succeeds, and the tool result carries an `mcp_notice` naming what was not sent. A run this process did not pick up is checked once through `GET /api/v1/investigations/{id}/context`.
 
 ### Change refs
