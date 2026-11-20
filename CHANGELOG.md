@@ -2,6 +2,13 @@
 
 All notable changes to `@tellagen/mcp-server` are in this file. The newest version is first. Each heading is `## <version> - <date>`; the release workflow copies the section of the tagged version into the GitHub release.
 
+## 0.8.1 - 2026-11-20
+
+### Changed
+
+- Clearer descriptions for eight tools, after a review of all 54. Each one now says in plain words what the tool does, when to use it, what it returns and what it never does. `tellagen_post_trace_step` names `outcome`, `cause_key` and the optional `guidance`. `tellagen_post_runbook_check_attempt` explains the source resolution and the skipped attempt for a blocked source. `tellagen_get_investigation_coverage`, `tellagen_list_trace_steps`, `tellagen_list_runbooks`, `tellagen_list_investigation_runbook_waivers`, `tellagen_update_investigation_scope` and `tellagen_post_timeline_event` say what they return. No tool name, input or behavior changed.
+- The Kubernetes safety check says "a session that `tellagen-mcp-server listen` did not start" instead of "a session that is not listened".
+
 ## 0.8.0 - 2026-11-20
 
 ### Added

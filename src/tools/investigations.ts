@@ -1164,7 +1164,7 @@ export function registerInvestigationTools(
     "tellagen_post_runbook_check_attempt",
     {
       description:
-        "Post or update one execution attempt for a frozen structured v2 runbook check. Copy runbook_id, runbook_version, check_id, and the source resolution selected by the frozen fallback policy. Reuse step_id and attempt_number while moving a usable source from running to done/error. For a frozen blocked record_gap source, post one direct terminal skipped attempt with a linked gap finding instead. Tellagen owns the final logical outcome.",
+        "Post one attempt at a structured check of a runbook that the pickup matched, and update it as it goes. Copy runbook_id, runbook_version, check_id and source_resolution_id exactly as the pickup gave them: the source resolution is the source the runbook's fallback rules chose for this check. Keep step_id and attempt_number while you move the attempt from running to done or error. When the pickup marks the chosen source as blocked with record_gap, post one attempt that is done at once with proposed_outcome skipped and gap_finding_id of a gap finding you posted. proposed_outcome is your reading; Tellagen decides the final state of the check. Returns the stored attempt. For a check outside a structured runbook, use tellagen_post_trace_step.",
       inputSchema: {
         investigation_run_id: optionalRunIdSchema,
         runbook_id: z.number().int().positive(),
@@ -1240,7 +1240,7 @@ export function registerInvestigationTools(
     "tellagen_post_trace_step",
     {
       description:
-        "Post or update a readable investigation trace step for the active run. Every step requires an immutable guidance basis: exact frozen runbook ID/version/section references, or an honest non-runbook origin. Reuse the same guidance when updating a step from running to done/error.",
+        "Post one check you make as a trace step of the active run, and update it as it goes: first with status running, then done or error with the same step_id. On a finished step, outcome says what the check did to the cause it tested (supports, rules_out, nothing_notable, inconclusive or unavailable), and cause_key links it to a cause you post with tellagen_update_cause. guidance names the matched runbook section the check follows, with the runbook ID, version and section exactly as the pickup gave them, or says that the check is your own choice; leave it out and Tellagen uses the step title as the reason. Send the same guidance on every update of a step. For a structured check of a matched runbook, use tellagen_post_runbook_check_attempt. Returns the stored step. It never posts a finding.",
       inputSchema: {
         investigation_run_id: optionalRunIdSchema,
         request_id: z
@@ -1420,7 +1420,7 @@ export function registerInvestigationTools(
     "tellagen_list_trace_steps",
     {
       description:
-        "List trace steps already posted for an investigation run. Use this when resuming a run to avoid duplicate work.",
+        "List the trace steps already posted for an investigation run, with their status and outcome. Use it when you go on with a run, so you repeat no check. It changes nothing.",
       inputSchema: {
         investigation_run_id: optionalRunIdSchema,
       },
@@ -1473,7 +1473,7 @@ export function registerInvestigationTools(
     "tellagen_update_investigation_scope",
     {
       description:
-        "Update the investigation scope for an incident, including target services, observability aliases, and time range.",
+        "Change the investigation scope of an incident: the target services, their names in the observability tools, and the time range. Returns the stored scope. It starts no run.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
         scope: investigationScopeSchema,
@@ -1501,7 +1501,7 @@ export function registerInvestigationTools(
     "tellagen_list_runbooks",
     {
       description:
-        "List the runbooks/skills matched for an investigation run. Runbooks are guidance for the local agent, not executable code.",
+        "List the runbooks that Tellagen matched to an investigation run, with their versions. A runbook is guidance for you to follow, not code that runs. It changes nothing.",
       inputSchema: {
         investigation_run_id: optionalRunIdSchema,
       },
@@ -1560,7 +1560,7 @@ export function registerInvestigationTools(
     "tellagen_get_investigation_coverage",
     {
       description:
-        "Preflight frozen runbook completion coverage for an active investigation. Use this before completion and after repairing missing checks or evidence; the response identifies exact missing check/evidence IDs and blocked sources.",
+        "Ask whether the active run has done the checks and posted the evidence that its matched runbooks require before it can complete. Use it before tellagen_complete_investigation, and again after you post a missing check or finding. Returns the IDs of each missing check and missing evidence, and the sources that are blocked. It changes nothing.",
       inputSchema: {
         investigation_run_id: optionalRunIdSchema,
         mitigation_state: z
@@ -1596,7 +1596,7 @@ export function registerInvestigationTools(
     "tellagen_list_investigation_runbook_waivers",
     {
       description:
-        "List responder-created waivers for frozen runbook checks on an investigation. Waivers are read-only here and make covered completion explicitly inconclusive.",
+        "List the waivers that responders made for checks of the matched runbooks of a run. A waiver lets the run complete without that check, and a run that completes with one is marked inconclusive. You cannot create or remove a waiver with this server. It changes nothing.",
       inputSchema: {
         investigation_run_id: optionalRunIdSchema,
       },

@@ -97,7 +97,7 @@ After a restart of the client, ask it to continue. `tellagen_resume` picks the r
 
 In **Settings > Local diagnosis**, under **For admins**, **Check MCP tools** gives a prompt with a `diagnostic_session_id` such as `diag_abc123`. That is a tool check, not a run: the client turns on the `settings` toolset, runs safe read-only checks and calls `tellagen_report_diagnostic_tools`.
 
-To recheck from the client with no prompt to copy, ask it to run `tellagen_report_available_sources`: it posts the tools the client can reach (`grafana`, `kubernetes`, `github`, `docs`, each found or not found) to Tellagen, and the tools table in Settings shows them for that client. For Kubernetes the client also runs four `kubectl auth can-i` tests (create pods, delete pods, create `pods --subresource=exec`, get secrets) and reports them as checks. The tests read access rules and change nothing. They say what the Kubernetes identity could do, not what a model will do: a session that is not listened has no guard on its commands, so Tellagen never calls such a session read-only.
+To recheck from the client with no prompt to copy, ask it to run `tellagen_report_available_sources`: it posts the tools the client can reach (`grafana`, `kubernetes`, `github`, `docs`, each found or not found) to Tellagen, and the tools table in Settings shows them for that client. For Kubernetes the client also runs four `kubectl auth can-i` tests (create pods, delete pods, create `pods --subresource=exec`, get secrets) and reports them as checks. The tests read access rules and change nothing. They say what the Kubernetes identity could do, not what a model will do: a session that `tellagen-mcp-server listen` did not start has no guard on its commands, so Tellagen never calls such a session read-only.
 
 ### Set up Kubernetes in one command
 
@@ -170,14 +170,14 @@ Run a diagnosis from pickup to completion. On by default.
 | `tellagen_resume` | adds | Continue the run this computer was working on, after a restart of the client |
 | `tellagen_get_incident_context` | reads | Re-read the context bundle of a run you already picked up |
 | `tellagen_post_trace_step` | adds | Post or update a readable progress step, with the guidance basis |
-| `tellagen_post_runbook_check_attempt` | adds | Post an attempt at one frozen runbook check and source |
+| `tellagen_post_runbook_check_attempt` | adds | Post an attempt at one structured runbook check, with the source the pickup chose |
 | `tellagen_update_cause` | changes | Post or update a cause under test while the run is live |
 | `tellagen_post_finding` | adds | Post one finding with its evidence refs, screenshots and links |
 | `tellagen_update_finding` | changes | Dismiss a finding or restore it to draft |
 | `tellagen_build_figure` | reads | Turn numbers from a tool result into a figure that Tellagen draws, and check it against the limits |
 | `tellagen_build_source_link` | reads | Build the link or the copyable command for an evidence ref (Grafana, GitHub, Kubernetes) |
 | `tellagen_get_context_attachment` | reads | Read one screenshot that a responder attached to a run |
-| `tellagen_get_investigation_coverage` | reads | Check which frozen checks and evidence are still missing before you complete |
+| `tellagen_get_investigation_coverage` | reads | Check which runbook checks and evidence are still missing before you complete |
 | `tellagen_post_timeline_event` | adds | Add a timestamped fact to the timeline, optionally with figures |
 | `tellagen_complete_investigation` | changes | Complete or fail a run with the result summary (the cause chain, what was ruled out, coverage, unknowns and change refs) |
 | `tellagen_pick_up_run_request` | adds | Take a responder's request on a finished run (read a source again, check an answer); the text is the person's words |

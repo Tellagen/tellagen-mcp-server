@@ -76,7 +76,7 @@ The run ID is optional on every run tool. After `tellagen_pick_up_investigation`
 | `tellagen_list_trace_steps` | GET | Read prior trace steps for a run before resuming work or completing the investigation |
 | `tellagen_list_runbooks` | GET | List matched runbooks/skills for a run; guidance only, not executable code |
 | `tellagen_list_investigation_runs` | GET | List runs for an incident (shows status, agent info, finding counts) |
-| `tellagen_get_investigation_coverage` | GET | Preflight frozen runbook completion coverage and exact repair targets |
+| `tellagen_get_investigation_coverage` | GET | Check which runbook checks and evidence are still missing, with the exact IDs to repair |
 | `tellagen_list_investigation_runbook_waivers` | GET | List responder-created check waivers for a run |
 | `tellagen_get_investigation_workspace` | GET | Read the incident investigation workspace: current scope, runs, findings, and related work context |
 | `tellagen_update_investigation_scope` | PATCH | Refine investigation scope as evidence narrows or broadens the suspected blast radius |
@@ -161,7 +161,7 @@ Never include secrets, tokens, cookies, kubeconfig contents, local filesystem pa
 
 When the tool is kubernetes, add this step. With the same kubeconfig and context the Kubernetes MCP server uses, run four `kubectl auth can-i` tests: `create pods`, `delete pods`, `create pods --subresource=exec` and `get secrets`. Print no output and no names. Report each as a check with a stable id: `k8s_can_create_pods`, `k8s_can_delete_pods`, `k8s_can_exec`, `k8s_can_read_secrets`. The status is `ok` when the answer is no, `failed` when it is yes, and `warning` or `not_checked` when the command could not run. The commands read access rules and change nothing. Keep the summary to one sentence.
 
-The result says what the identity could do, not what a model will do. A session that is not listened has no guard on its commands, so never call it read-only. A pickup sends only found or not_found, so it cannot carry this check.
+The result says what the identity could do, not what a model will do. A session that `tellagen-mcp-server listen` did not start has no guard on its commands, so never call it read-only. A pickup sends only found or not_found, so it cannot carry this check.
 
 ### Recheck from the client
 

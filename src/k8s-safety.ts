@@ -9,7 +9,7 @@
  * `warning` or `not_checked` when the command could not run.
  *
  * The result says what the identity COULD do. It does not say what a model
- * will do, and a session that is not listened by `tellagen-mcp-server listen`
+ * will do, and a session that `tellagen-mcp-server listen` did not start
  * has no guard on its commands. Never call such a session read-only.
  */
 export const KUBERNETES_SAFETY_CHECKS = [
@@ -33,7 +33,7 @@ export interface KubernetesSafetyCheck {
 
 /** The protocol, in words for a model. One text for every place that teaches it. */
 export const KUBERNETES_SAFETY_PROTOCOL =
-  "Kubernetes safety check: with the same kubeconfig and context the Kubernetes MCP server uses, run kubectl auth can-i for create pods, delete pods, create pods with --subresource=exec and get secrets. Print no output and no names. Report each as a check with the ids k8s_can_create_pods, k8s_can_delete_pods, k8s_can_exec and k8s_can_read_secrets: status ok when the answer is no, failed when it is yes, warning or not_checked when the command could not run. The commands read access rules and change nothing. The result says what the identity could do, not what a model will do: a session that is not listened has no guard, so never call it read-only.";
+  "Kubernetes safety check: with the same kubeconfig and context the Kubernetes MCP server uses, run kubectl auth can-i for create pods, delete pods, create pods with --subresource=exec and get secrets. Print no output and no names. Report each as a check with the ids k8s_can_create_pods, k8s_can_delete_pods, k8s_can_exec and k8s_can_read_secrets: status ok when the answer is no, failed when it is yes, warning or not_checked when the command could not run. The commands read access rules and change nothing. The result says what the identity could do, not what a model will do: a session that tellagen-mcp-server listen did not start has no guard on its commands, so never call it read-only.";
 
 export type KubernetesSafetyVerdict = "read_only" | "can_change" | "not_checked";
 
