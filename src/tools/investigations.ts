@@ -18,6 +18,7 @@ import {
   WINDOW_SUGGESTION_REASON_MAX,
   withWindowNote,
 } from "../run-window.js";
+import { isUnattended } from "../unattended.js";
 import {
   protocolCapabilities,
   CAPABILITIES_HEADER,
@@ -628,15 +629,23 @@ const takeoverSchema = z
     "Set true only after the person agreed that this session takes the run over from another client. Never set it on your own.",
   );
 
-function questionResult(code: string, message: string, extra: Record<string, unknown> = {}) {
+function questionResult(code: string, message: string, extra: Record<string, unknown> = {}, offerTakeover = true) {
+  const answer = { ...extra, error: true, code, message, ...(offerTakeover ? { next_input: { takeover: true } } : {}) };
   return {
-    content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify({ ...extra, error: true, code, message, next_input: { takeover: true } }),
-      },
-    ],
+    content: [{ type: "text" as const, text: JSON.stringify(answer) }],
     isError: true as const,
+  };
+}
+
+/** The answer of an unattended session that found the run held: stop, and take nothing over. */
+function unattendedStop(code: string, fact: string, extra: Record<string, unknown> = {}) {
+  return {
+    question: questionResult(
+      code,
+      `${fact} This session runs unattended, so it never takes a run over. Stop, and write nothing to this run.`,
+      extra,
+      false,
+    ),
   };
 }
 
@@ -652,10 +661,13 @@ export async function pickUpWithConsent(
   options: PickupOptions,
 ): Promise<{ data: unknown } | { question: ReturnType<typeof questionResult> }> {
   const session = client.session;
-  let takeover = options.takeover === true;
+  const unattended = isUnattended();
+  // An unattended session (one the listener started) never takes a run over, whatever the model sent.
+  let takeover = options.takeover === true && !unattended;
   const other = otherLiveSession(client, session.state.read());
   if (other && other.run_id === runId && !takeover) {
     const fact = joinFact(other);
+    if (unattended) return unattendedStop("run_open_in_other_session", fact);
     const answer = await session.ask?.(`${fact} Should this session join the run?`);
     if (answer !== true) {
       return {
@@ -674,6 +686,7 @@ export async function pickUpWithConsent(
   } catch (err) {
     if (!(err instanceof TellagenAPIError) || err.code !== "run_has_active_client" || takeover) throw err;
     const fact = `${holderLine(err.payload)} Two clients on one run write over each other.`;
+    if (unattended) return unattendedStop("run_has_active_client", fact, err.payload ?? {});
     const question = `${fact} Ask the person whether this session should take the run over. If they say yes, call the tool again with takeover set to true.`;
     const answer = await session.ask?.(`${fact} Should this session take the run over?`);
     if (answer === true) {

@@ -256,6 +256,25 @@ describe("a run another client holds", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("never takes a run over in a session the listener started, even when the model asks for it", async () => {
+    vi.stubEnv("TELLAGEN_UNATTENDED", "1");
+    const harness = createToolHarness();
+    const ask = vi.fn(async () => true);
+    harness.client.session.ask = ask;
+    fetchSpy.mockResolvedValueOnce(refused());
+    const result = await harness.callTool("tellagen_pick_up_investigation", { investigation_run_id: "run-1", takeover: true });
+    expect(result.isError).toBe(true);
+    const body = harness.json(result);
+    expect(body.code).toBe("run_has_active_client");
+    expect(body.message).toContain("Dana Lee runs this diagnosis in codex on build-box");
+    expect(body.message).toContain("This session runs unattended, so it never takes a run over. Stop, and write nothing to this run.");
+    expect(body.next_input).toBeUndefined();
+    expect(ask).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String((fetchSpy.mock.calls[0]![1] as RequestInit).body)).takeover).toBeUndefined();
+    expect(harness.client.session.activeRun()).toBeUndefined();
+  });
+
   it("clears the state and tells the model to stop when a write is refused after a takeover", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tellagen-to-"));
     try {

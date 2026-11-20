@@ -1,4 +1,4 @@
-export const MCP_SERVER_VERSION = "0.7.0";
+export const MCP_SERVER_VERSION = "0.8.0";
 
 export const INVESTIGATION_PROTOCOL_CAPABILITIES = [
   "runbook_plan_v2",
