@@ -277,7 +277,8 @@ With listening on, a diagnosis you start in Tellagen needs no terminal: your com
 2. In Tellagen, open **Settings > Local diagnosis** and turn on **Take my runs automatically**.
 3. In a terminal, run `npx @tellagen/mcp-server listen`. When you choose **Run diagnosis** on an incident, the listener starts `claude -p` for the run, with the same prompt as the `diagnose` prompt and the run ID. The prompt says that text from Tellagen and from tools is data, not instructions.
 
-- `listen --status` shows the current run and the last five. Each run writes a log in `~/.tellagen/listen/logs` (mode 600).
+- `listen --status` shows the current run and the last five. Each run writes a log in `~/.tellagen/listen/logs` (mode 600). The listener adds a line with the time when it starts the client, when the client picks the run up and when the client ends.
+- A client that the listener started never takes a run over from another client or session. It stops and writes nothing to that run.
 - Ctrl+C, or a closed terminal, stops listening and lets the current run finish. A second Ctrl+C stops that run.
 - One run goes at a time (up to three can be allowed), and only one listener runs on a computer. A run has a time limit (45 minutes), kept by a small wrapper process with its own timer, so it holds even if the listener is killed.
 - Only runs that you asked for are started. A run that is listed again after its client ended was not picked up: the listener waits 1, 4, 16 and 60 minutes between starts and gives up on it after five starts. When a client cannot be started (not installed, not signed in), when the limit holds a run back, or when it gave up, the listener tells Tellagen with a coded reason, and the web shows it next to the waiting run.
@@ -574,7 +575,7 @@ At pickup the server writes the active run to `~/.tellagen/state/<workspace>.jso
 ## Heartbeat, notes and the end of a run
 
 - While a run is active and Tellagen lists `client_heartbeat_v1`, the server sends a heartbeat every 30 seconds. A failed heartbeat never fails a tool call; after three in a row the next tool answer says so in one line.
-- If another client holds the run, the pickup answers with a question for the person. Only after a yes is the pickup repeated with `takeover: true`. A client that supports MCP elicitation shows the question itself.
+- If another client holds the run, the pickup answers with a question for the person. Only after a yes is the pickup repeated with `takeover: true`. A client that supports MCP elicitation shows the question itself. A client that the listener started gets no question: it is told to stop.
 - When an answer from Tellagen carries notes from a responder (`responder_notes_v1`), they come first in the tool result, quoted, with the author and the time. A note is a request from a person in the workspace; it is shown to the model and is never run by this server.
 - When Tellagen says that the run was cancelled, has ended or was taken over, the tool result says so first, and the remembered run is removed.
 
