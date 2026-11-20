@@ -2,12 +2,15 @@
 
 All notable changes to `@tellagen/mcp-server` are in this file. The newest version is first. Each heading is `## <version> - <date>`; the release workflow copies the section of the tagged version into the GitHub release.
 
-## Unreleased
+## 0.8.0 - 2026-11-20
+
+### Added
+
+- Each run log of the listener has lines with the time: when the listener started the client, when the client picked the run up (read from the state file of the workspace) and when the client ended. The log then shows how long the client took to start. The reason for a client that ended with an error never quotes these lines.
 
 ### Changed
 
 - A session that the listener started never takes a run over. The listener starts the client with `TELLAGEN_UNATTENDED=1`, and the Tellagen MCP server of that client refuses `takeover` on `tellagen_pick_up_investigation` and `tellagen_resume`: when another client or session holds the run, the answer tells the model to stop and has no `next_input`. The rules of an unattended run also say "Never set takeover."
-- Each run log of the listener has lines with the time: when the listener started the client, when the client picked the run up (read from the state file of the workspace) and when the client ended. The log then shows how long the client took to start. The reason for a client that ended with an error never quotes these lines.
 
 ## 0.7.0 - 2026-11-19
 
