@@ -24,7 +24,8 @@ describe("the changelog", () => {
   it("gives the release workflow the section of a version, with or without the v", () => {
     const section = changelogSection(changelog, `v${MCP_SERVER_VERSION}`);
     expect(section).toBe(changelogSection(changelog, MCP_SERVER_VERSION));
-    expect(section).toContain("### Added");
+    // The section keeps its subheadings. A release that only changes text has no "Added".
+    expect(section).toMatch(/^### (Added|Changed|Fixed|Removed)$/m);
     expect(section).not.toContain("## 0.4.3");
     expect(section.startsWith("##")).toBe(true);
     expect(section.startsWith("## ")).toBe(false);

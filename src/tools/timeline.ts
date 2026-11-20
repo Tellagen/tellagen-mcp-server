@@ -344,7 +344,7 @@ export function registerTimelineTools(
     "tellagen_post_timeline_event",
     {
       description:
-        "Create a timeline event on an incident for timestamped RCA facts such as deploys, mitigations, customer impact, and verification milestones. Title and body are required. When you have numbers, build a figure with tellagen_build_figure (placement timeline_block) and pass it in blocks.",
+        "Create a timeline event on an incident for a fact with a time, such as a deploy, a mitigation, customer impact or a verification. Title and body are required. When you have numbers, build a figure with tellagen_build_figure (placement timeline_block) and pass it in blocks. Returns the created event. To put an existing finding on the timeline, use tellagen_promote_finding.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
         ...timelineMutationSchema,
