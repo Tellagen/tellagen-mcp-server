@@ -1,4 +1,4 @@
-export const MCP_SERVER_VERSION = "0.8.1";
+export const MCP_SERVER_VERSION = "0.9.0";
 
 export const INVESTIGATION_PROTOCOL_CAPABILITIES = [
   "runbook_plan_v2",
@@ -16,6 +16,9 @@ export const INVESTIGATION_PROTOCOL_CAPABILITIES = [
   "investigation_window_v1",
   "question_checks_v1",
   "run_requests_v1",
+  "diagnosis_verdict_v1",
+  "fix_options_v1",
+  "code_locations_v1",
 ] as const;
 
 /** The server capability of Tellagen: requests on a finished run, delivered to the client. */

@@ -55,6 +55,16 @@ export const ACTION_ANSWER_CAPABILITY = "action_answer_v1";
 /** result_summary.alert_verdict: the verdict on the alert behind the incident, and its proof checklist. */
 export const ALERT_VERDICT_CAPABILITY = "alert_verdict_v1";
 /**
+ * The verdict belongs to a run of any incident, not only an alert, and may be
+ * expected_behavior with an owner. The server lists it in a workspace where the
+ * feature is on; the client advertises it at pickup.
+ */
+export const DIAGNOSIS_VERDICT_CAPABILITY = "diagnosis_verdict_v1";
+/** result_summary.fix_options: the ways to fix it, as alternatives a person picks from. */
+export const FIX_OPTIONS_CAPABILITY = "fix_options_v1";
+/** context.code_locations at pickup: where the code of the ticket lives. */
+export const CODE_LOCATIONS_CAPABILITY = "code_locations_v1";
+/**
  * The capability of a Tellagen that takes additions to a finished run and the
  * reason, retryable and detail of a coverage entry (both ship together).
  */
@@ -167,9 +177,25 @@ export async function supportsActionAnswer(client: TellagenClient, runId: string
   return supportsCapability(client, runId, ACTION_ANSWER_CAPABILITY);
 }
 
-/** Whether the backend takes result_summary.alert_verdict. Listed only for a run whose incident came from an alert. */
+/**
+ * Whether the backend takes result_summary.alert_verdict: for a run on an
+ * alert (alert_verdict_v1) or for a run of any incident (diagnosis_verdict_v1).
+ */
 export async function supportsAlertVerdict(client: TellagenClient, runId: string): Promise<boolean> {
-  return supportsCapability(client, runId, ALERT_VERDICT_CAPABILITY);
+  return (
+    (await supportsCapability(client, runId, ALERT_VERDICT_CAPABILITY)) ||
+    (await supportsCapability(client, runId, DIAGNOSIS_VERDICT_CAPABILITY))
+  );
+}
+
+/** Whether the backend takes a verdict on any run, the verdict expected_behavior and an owner. */
+export async function supportsDiagnosisVerdict(client: TellagenClient, runId: string): Promise<boolean> {
+  return supportsCapability(client, runId, DIAGNOSIS_VERDICT_CAPABILITY);
+}
+
+/** Whether the backend takes result_summary.fix_options. */
+export async function supportsFixOptions(client: TellagenClient, runId: string): Promise<boolean> {
+  return supportsCapability(client, runId, FIX_OPTIONS_CAPABILITY);
 }
 
 /** Whether the backend takes additions to a finished run and coverage reasons. */
@@ -691,7 +717,8 @@ export const resultChangeShape = {
     ),
 };
 
-export const ALERT_VERDICTS = ["real_problem", "already_handled", "false_alarm", "not_sure"] as const;
+export const ALERT_VERDICTS = ["real_problem", "already_handled", "false_alarm", "expected_behavior", "not_sure"] as const;
+export const VERDICT_OWNERS = ["ours", "third_party"] as const;
 export const ALERT_VERDICT_REASONS = [
   "customer_impact",
   "internal_only",
@@ -700,6 +727,8 @@ export const ALERT_VERDICT_REASONS = [
   "rule_wrong",
   "data_wrong",
   "rule_needs_tuning",
+  "works_as_designed",
+  "third_party_behavior",
 ] as const;
 export const ALERT_PROOF_IDS = [
   "alert_value_read",
@@ -720,13 +749,21 @@ export const ALERT_PROOF_IDS = [
  */
 export const alertVerdictSchema = z
   .object({
-    verdict: z.enum(ALERT_VERDICTS).describe("real_problem, already_handled, false_alarm or not_sure. Send not_sure when you cannot tell."),
+    verdict: z
+      .enum(ALERT_VERDICTS)
+      .describe(
+        "real_problem, already_handled, false_alarm, expected_behavior or not_sure. Send not_sure when you cannot tell. expected_behavior says nothing is broken: the system does what it was built to do, or a third party does (needs diagnosis_verdict_v1).",
+      ),
     reason: z
       .enum(ALERT_VERDICT_REASONS)
       .optional()
       .describe(
-        "One reason that fits the verdict: customer_impact or internal_only (real_problem); known_incident or declared_window (already_handled); rule_wrong, data_wrong or rule_needs_tuning (false_alarm). Leave it out for not_sure.",
+        "One reason that fits the verdict: customer_impact or internal_only (real_problem); known_incident or declared_window (already_handled); rule_wrong, data_wrong or rule_needs_tuning (false_alarm); works_as_designed or third_party_behavior (expected_behavior). Leave it out for not_sure.",
       ),
+    owner: z
+      .enum(VERDICT_OWNERS)
+      .optional()
+      .describe("Whose behavior or fix it is: ours or third_party. On any verdict. Needs diagnosis_verdict_v1."),
     onset: z
       .object({
         state: z.enum(["new", "standing", "cleared"]),
@@ -773,7 +810,7 @@ export const alertVerdictSchema = z
       .describe("For already_handled with declared_window: the findings that show the declared window"),
   })
   .describe(
-    "The verdict on the alert behind the incident, with its proof. Only when this Tellagen lists alert_verdict_v1. Judge the alert first; the server shows Not sure instead of a claim without proof.",
+    "The verdict of the diagnosis, with its proof. Sent when this Tellagen lists diagnosis_verdict_v1 (a run of any incident) or alert_verdict_v1 (a run on an alert). Judge the alert first when there is one; the server shows Not sure instead of a claim without proof, and holds a verdict that says nothing is broken until the evidence is there.",
   );
 
 export const resultStructureShape = {
@@ -1203,6 +1240,12 @@ export function unsupportedNotice(
   if (capability === ACTION_ANSWER_CAPABILITY) {
     return `This Tellagen backend does not advertise ${capability}, so ${shown}${more} were not sent and the rest went through. Update Tellagen to show the answer line and the figure of an action.`;
   }
+  if (capability === DIAGNOSIS_VERDICT_CAPABILITY) {
+    return `This Tellagen does not list ${capability} for this run, so ${shown}${more} was not sent and the rest went through. Say in the headline or a finding what the diagnosis found and who owns the fix.`;
+  }
+  if (capability === FIX_OPTIONS_CAPABILITY) {
+    return `This Tellagen does not list ${capability} for this run, so the fix options were not sent and the rest went through. Put the best way to fix it in a recommended action.`;
+  }
   if (capability === ALERT_VERDICT_CAPABILITY) {
     return `This Tellagen does not list ${capability} for this run (the Tellagen is older, the feature is off for this workspace, or the run is not on an alert), so the alert verdict was not sent and the rest went through. Say in the headline or a finding whether the alert was real.`;
   }
@@ -1264,6 +1307,21 @@ const WARNING_ADVICE: Record<string, string> = {
   verdict_without_change_mind: "send would_change_mind with one observable thing and, when you can, a check on a query of this run",
   verdict_real_without_impact_check: "check customer impact and cite a finding for impact_checked before you call the alert a real problem",
   verdict_dropped: "this run takes no verdict: leave alert_verdict out",
+  verdict_held: "the verdict says nothing is broken but the evidence is not enough to show it as settled: read held_items in the answer and add the missing proof (a confirming finding with a link or command, a ruled out entry, customer impact verified as none, confidence of 80 or more) or keep the verdict held",
+  server_owned_field_ignored: "do not send tone, eyebrow, outcome_state or headline: Tellagen works them out from the verdict and the diagnosis state",
+  source_gap_as_question: "a source you could not read is a coverage entry with a reason, not a gap finding: record it in coverage and keep a gap finding only for a question a person can answer",
+  coverage_checked_without_proof: "a checked coverage entry needs a step, a finding or a trace step of this run behind it: cite step_ids or finding_ids, or record the source as a gap",
+  code_not_read: "read the files of context.code_locations (a local checkout or your GitHub tools) and record the source code in coverage as checked, or as a gap with a reason",
+  fix_option_unread_file: "read the file in this run and name it in read_refs before you recommend a change to it; Tellagen shows an unread file as not checked against your code",
+  fix_option_without_verify: "give each option a verify.text that says what the person should see when it worked",
+  fix_option_diff_too_large: "a diff is for a change of 6 changed lines or fewer: name the file and the owner instead",
+  fix_option_multiple_recommended: "recommend at most one option",
+  needs_fix_without_option: "a real problem needs at least one offered option that is a permanent fix or a mitigation",
+  leave_as_is_with_exposure: "do not recommend leave_as_is while the verdict is a real problem or customer impact is not verified as none",
+  hand_off_without_target: "a hand-off option names a team (hand_off.team_id) or a vendor (vendor.key)",
+  fix_option_dropped: "an option was removed: check the limits, the enum values, the title, the reason for a state that is not offered and that it names at most one valid target",
+  fix_option_recommends_when_not_sure: "when the verdict is not_sure, recommend nothing",
+  change_step_without_runbook: "never write a deploy, rollback, restart, scale, flag or purge step yourself: a verify command is read-only, and a rollback names only its target unless a runbook step of a person is shown at pickup",
   cause_without_runtime_evidence: "a cause that rests only on code or documents needs a runtime source (metrics, logs, a CI run or a deployment) or it is shown as a leading hypothesis",
   empty_result_link_dropped: "a link to a query that returned nothing is dropped: say in the claim that nothing was found, or cite a query that returned data",
   step_names_fix_not_cause: "a step names the fix, not the cause: state what broke and why",

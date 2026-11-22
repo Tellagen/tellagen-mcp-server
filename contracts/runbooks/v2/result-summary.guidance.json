@@ -1,6 +1,6 @@
 {
   "title": "Investigation result: the words a responder reads",
-  "description": "How to write the text a responder reads in the result of an investigation run: the headline claim (conclusion.summary, stored as the verdict), the answer line, the blocking question and every claim, summary, action and explanation. The server accepts any text. It adds the advice warnings headline_too_long, question_not_a_question, text_too_long, filler_phrase and raw_id_in_text (and coverage_not_needed_without_reason) to the completion response and to the run's quality_warnings, and never rejects the result for them. A dry run (completion_repairs_v1) lists each text warning as a repair with advice true: ready stays true, because the run would complete as it is. They apply whether or not the client advertised diagnosis_structure_v1.",
+  "description": "How to write the text a responder reads in the result of an investigation run: the headline claim (conclusion.summary, stored as the verdict), the answer line, the blocking question and every claim, summary, action and explanation. The server accepts any text. It adds the advice warnings headline_too_long, question_not_a_question, source_gap_as_question, text_too_long, filler_phrase and raw_id_in_text (and coverage_not_needed_without_reason, coverage_checked_without_proof for a coverage entry in state checked that no step, finding or trace step of the run backs, and server_owned_field_ignored for a conclusion.tone, conclusion.eyebrow, outcome_state or headline that Tellagen works out itself) to the completion response and to the run's quality_warnings, and never rejects the result for them. A dry run (completion_repairs_v1) lists each text warning, and source_gap_as_question, as a repair with advice true: ready stays true, because the run would complete as it is. They apply whether or not the client advertised diagnosis_structure_v1.",
   "x-limits": {
     "headline_max_words": 15,
     "answer_max_words": 15,
@@ -22,11 +22,13 @@
     "Keep every sentence short. The limits in words are: answer 15, claim of a causal step 20, claim of a finding 20, evidence summary of a finding 60 (three sentences at most), action title 12, action summary 20, ruled-out explanation 30, coverage summary or reason 20, unknown label 12, customer impact label 15. A text over its limit completes with the warning text_too_long, which names the path, the count and the limit; the page folds it behind Show more.",
     "Do not repeat a rule of this protocol in your text. The page shows who decides.",
     "The phrases in x-banned-phrase-openers are filler only at the start of a sentence: a sentence that opens with Based on the is flagged, a fact that says the threshold is based on the p99 latency is not.",
+    "A source you could not read is a coverage entry in state gap or not_configured, not a gap finding. Say why in reason (wrong_account, not_connected, auth_expired, error or no_source), whether reading it again can help in retryable (true by default, false for no_source) and, if you want, one sentence of at most 200 characters in detail. A gap finding is for a question a person can answer. If an open gap finding is for a source that coverage lists as not read, completion answers with source_gap_as_question and keeps the result. A gap finding whose claim ends with a question mark is a real question and needs no coverage entry, so gap_without_coverage skips it.",
     "A finding states a fact. Do not write in the first person; a source you did not read is a coverage entry, not a sentence.",
     "Do not put a raw id in a sentence: a number of 9 digits or more, such as a run or job number, or a hex string of 12 characters or more. Put the id in links and name the thing in words. A short commit id of 7 characters or a pull request number such as #421 is fine. A long number followed by a unit word, such as 107374182400 bytes, is a measurement and is fine. The warning is raw_id_in_text.",
     "When the run's question asks what to do, write result_summary.answer: one plain sentence of at most 15 words that answers it directly. Leave it out when the run had no question beyond the default. When an action changes a file, add a diff figure of the exact lines to the action (recommended_actions[].figure). Both need the server capability action_answer_v1.",
     "A source you skipped on purpose is a coverage entry in state not_needed with a reason of at most 20 words (coverage_not_needed_v1). It is not checked, and it is not a gap. Never send checked for a source nobody read.",
-    "In a compare figure, never put a limit or a budget in before. Give the row its own limit instead (figure_limits_v1): the row then reads after against limit and needs no before."
+    "In a compare figure, never put a limit or a budget in before. Give the row its own limit instead (figure_limits_v1): the row then reads after against limit and needs no before.",
+    "Four evidence rules are checked when a run on an alert completes, but only in a workspace where the release flag alert_verdicts is on (a run that did not come from an alert, and a workspace with the flag off, get none of them), whatever the client advertised, and each only advises: cause_without_runtime_evidence (every source of the chain is code or documents, so the diagnosis shows as a hypothesis: read a runtime source that shows the cause happening), empty_result_link_dropped (a query that returned no rows, by its stored result or its summary, is not a link to cite: the links of its evidence are removed, except for a step or finding that says nothing was found), step_names_fix_not_cause (a claim that names a missing filter or expected behavior describes a fix, not a cause) and false_alarm_without_rule (see alert-verdict.guidance.json)."
   ],
   "x-examples": {
     "headline": {
@@ -36,6 +38,10 @@
     "blocking_question": {
       "good": "Did the 14:02 deploy of the billing service lower the retry limit?",
       "bad": "Whether the retry limit was lowered by the 14:02 deploy of the billing service could not be established from the available data and needs to be confirmed by someone with access to the deploy history."
+    },
+    "source_not_read": {
+      "good": "coverage: {\"source\": \"Slack\", \"state\": \"gap\", \"reason\": \"wrong_account\", \"retryable\": true, \"detail\": \"The token reads workspace Acme Dev, not Acme Prod.\"}",
+      "bad": "A gap finding with the claim: Slack could not be read, so the thread of the 14:02 alert is unknown."
     },
     "answer": {
       "good": "Keep the P1 alert for master. Stop paging for pull requests.",

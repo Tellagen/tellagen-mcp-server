@@ -50,6 +50,7 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   { name: "tellagen_post_finding", toolset: "diagnosis", effect: "add" },
   { name: "tellagen_update_finding", toolset: "diagnosis", effect: "change" },
   { name: "tellagen_build_figure", toolset: "diagnosis", effect: "read" },
+  { name: "tellagen_build_fix_option", toolset: "diagnosis", effect: "read" },
   { name: "tellagen_build_source_link", toolset: "diagnosis", effect: "read" },
   { name: "tellagen_get_context_attachment", toolset: "diagnosis", effect: "read" },
   { name: "tellagen_get_investigation_coverage", toolset: "diagnosis", effect: "read" },

@@ -2,6 +2,20 @@
 
 All notable changes to `@tellagen/mcp-server` are in this file. The newest version is first. Each heading is `## <version> - <date>`; the release workflow copies the section of the tagged version into the GitHub release.
 
+## 0.9.0 - 2026-11-22
+
+### Added
+
+- A verdict for every diagnosis (`diagnosis_verdict_v1`). `result_summary.alert_verdict` now fits a run of any incident, not only an alert. The new verdict `expected_behavior` (reasons `works_as_designed` and `third_party_behavior`) says nothing is broken, and `owner` (`ours` or `third_party`) says whose behavior or fix it is. The server decides whether a verdict that says nothing is broken is clear or held and lists what is missing; the guide and the completion warnings (`verdict_held`, `server_owned_field_ignored`) say what to add. The field is sent only when the pickup lists `diagnosis_verdict_v1` or `alert_verdict_v1`; `expected_behavior` and `owner` need `diagnosis_verdict_v1`. Without it the field is left out and `mcp_notice` says so.
+- Fix options (`fix_options_v1`). `result_summary.fix_options` lists up to 5 ways to fix the problem as alternatives a person picks from. The new tool `tellagen_build_fix_option` checks one option and returns it in the right shape: the kind, where the change is, one target (a vendor, a team or a rollback), the files that were read, a diff of at most 6 changed lines, and a read-only way to check that it worked. It never takes a label, a web address or an action type, because Tellagen works out what each button does. It refuses a state that needs a reason and has none, a second recommended option, and a verify command that changes a system. Fix options are sent only when the pickup lists `fix_options_v1`. The new guide `resource://tellagen/guide/fixes` teaches the rules: read the file before you recommend a change to it, keep the change small, keep the tempting wrong option as not recommended, and never invent a rollback method.
+- Code locations (`code_locations_v1`). When the pickup has `request.context.code_locations`, the server matches each repository to a local checkout by its git remote (the working directory, then the folders in `TELLAGEN_CODE_CHECKOUTS`), else to `gh` read-only, and adds `mcp_code_locations` to the pickup answer with how each one is read. It runs only `git remote` and `gh --version`, never sends a path or an address to Tellagen, and `TELLAGEN_CODE_CHECKOUTS=off` turns it off. The pickup reports the source `code` as found when this computer has a checkout. The guide says to read the code before asking a person, and to record the read in coverage with the source `code`, or a gap with a reason.
+- The completion tool explains the new warnings: `verdict_held`, `server_owned_field_ignored`, `source_gap_as_question`, `coverage_checked_without_proof`, `code_not_read` and the ten fix option warnings.
+
+### Changed
+
+- `tellagen_update_incident` no longer offers the status, the severity or the severity mode, and never sends them, or the customer impact or the close fields. A person decides those in Tellagen. When Tellagen answers `incident_change_requires_person`, the answer says in plain words that it is a person's decision and not to try another way.
+- The vendored contract bundle is raised to the version that holds the verdict, fix options and code locations guidance.
+
 ## 0.8.1 - 2026-11-20
 
 ### Changed

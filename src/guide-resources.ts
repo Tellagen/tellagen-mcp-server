@@ -43,6 +43,16 @@ export const GUIDE_RESOURCES: readonly GuideResource[] = [
     readWhen: "before you complete the run",
   },
   {
+    name: "guide-fixes",
+    uri: "resource://tellagen/guide/fixes",
+    title: "Tellagen Fix Option Rules",
+    description:
+      "How to lead with how to fix it: build fix options with tellagen_build_fix_option, read the file before you recommend a change, keep the change small, keep the tempting wrong option as not recommended, never invent a rollback method, and read our own code from a local checkout.",
+    headings: ["## How to fix it"],
+    when: "always",
+    readWhen: "before you recommend a fix, and when the pickup has code_locations",
+  },
+  {
     name: "guide-runbook-checks",
     uri: "resource://tellagen/guide/runbook-checks",
     title: "Tellagen Runbook Check Rules",

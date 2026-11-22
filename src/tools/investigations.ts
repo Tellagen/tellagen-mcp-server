@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { fixOptionsSchema, stripResultFixOptions, stripVerdictExtras } from "../fix-options.js";
 import { TellagenClient } from "../client.js";
 import { formatError, TellagenAPIError } from "../errors.js";
 import {
@@ -9,6 +10,7 @@ import {
   resolveRunId,
 } from "../active-run.js";
 import { withCauseLead } from "../cause-lead.js";
+import { codeSourceFound, withCodeLocations } from "../code-locations.js";
 import { rememberSourceBases, sourceBasesOf } from "../source-bases.js";
 import { legacyClientName, reportedClientName } from "../identity.js";
 import { GUIDE_RESOURCES } from "../guide-resources.js";
@@ -43,12 +45,16 @@ import {
   supportsFigureLimits,
   supportsActionAnswer,
   supportsAlertVerdict,
+  supportsDiagnosisVerdict,
+  supportsFixOptions,
   supportsCoverageNotNeeded,
   supportsRunAmendments,
   stripResultCoverageReasons,
   RUN_AMENDMENTS_CAPABILITY,
   ACTION_ANSWER_CAPABILITY,
   ALERT_VERDICT_CAPABILITY,
+  DIAGNOSIS_VERDICT_CAPABILITY,
+  FIX_OPTIONS_CAPABILITY,
   alertVerdictSchema,
   COVERAGE_NOT_NEEDED_CAPABILITY,
   FIGURE_LIMITS_CAPABILITY,
@@ -268,6 +274,7 @@ export const resultSummarySchema = z
     ...resultStructureShape,
     ...resultChangeShape,
     alert_verdict: alertVerdictSchema.optional(),
+    fix_options: fixOptionsSchema.optional(),
     window_suggestion: windowSuggestionSchema.optional(),
   })
   .describe("Structured RCA summary shown in Tellagen when the run completes");
@@ -430,7 +437,7 @@ function pickupProfileID() {
 }
 
 /** The data source kinds a client can say it has, by Tellagen catalog key. */
-export const AVAILABLE_SOURCE_KEYS = ["grafana", "kubernetes", "github", "docs"] as const;
+export const AVAILABLE_SOURCE_KEYS = ["grafana", "kubernetes", "github", "docs", "code"] as const;
 
 export const availableSourceSchema = z
   .object({
@@ -446,6 +453,19 @@ export const availableSourceSchema = z
   .strict();
 
 export type AvailableSource = z.infer<typeof availableSourceSchema>;
+
+/**
+ * Adds `code` to the sources a pickup reports when this computer has a git
+ * checkout (the working directory or a folder of TELLAGEN_CODE_CHECKOUTS) and
+ * the model did not say anything about code. A person's own entry wins. A
+ * Tellagen that does not know the key names it in ignored_sources.
+ */
+async function withCodeSource(sources: AvailableSource[] | undefined): Promise<AvailableSource[]> {
+  const given = sources ?? [];
+  if (given.some((source) => source.key === "code")) return given;
+  if (!(await codeSourceFound())) return given;
+  return [...given, { key: "code", state: "found", detail: "Local checkout" }];
+}
 
 export interface PickupOptions {
   /** The model's own name, as the model reported it. */
@@ -497,8 +517,9 @@ export async function pickUpRun(
     protocol_capabilities: capabilities,
   };
   if (options.model) body.model = options.model;
-  if (options.availableSources && options.availableSources.length > 0) {
-    body.available_sources = options.availableSources;
+  const sources = await withCodeSource(options.availableSources);
+  if (sources.length > 0) {
+    body.available_sources = sources;
   }
   if (options.takeover) body.takeover = true;
 
@@ -567,6 +588,8 @@ export async function pickUpRun(
   }
   rememberServerCapabilities(client, runId, data);
   noteUpdateAvailable(client, data);
+  // Where the code of the ticket lives, and how this computer reads it.
+  data = await withCodeLocations(data);
   session.setActiveRun({
     runId,
     incidentId: incidentIdOf(data),
@@ -945,6 +968,18 @@ export async function adaptResultSummary(
       current = verdict.summary;
       notices.push(unsupportedNotice(verdict.removed, ALERT_VERDICT_CAPABILITY));
     }
+    // The verdict expected_behavior and an owner go only to a backend that lists diagnosis_verdict_v1.
+    const extras = stripVerdictExtras(current);
+    if (extras.removed.length > 0 && !(await supportsDiagnosisVerdict(client, runId))) {
+      current = extras.summary;
+      notices.push(unsupportedNotice(extras.removed, DIAGNOSIS_VERDICT_CAPABILITY));
+    }
+    // Fix options go only to a backend that lists fix_options_v1.
+    const fixes = stripResultFixOptions(current);
+    if (fixes.removed.length > 0 && !(await supportsFixOptions(client, runId))) {
+      current = fixes.summary;
+      notices.push(unsupportedNotice(fixes.removed, FIX_OPTIONS_CAPABILITY));
+    }
     // A source skipped on purpose goes as not_needed, never as checked.
     const skipped = stripResultNotNeeded(current);
     if (skipped.removed.length > 0 && !(await supportsCoverageNotNeeded(client, runId))) {
@@ -1101,7 +1136,7 @@ export function registerInvestigationTools(
     "tellagen_pick_up_investigation",
     {
       description:
-        "Attach this session to an investigation run and get its full context bundle with server_capabilities. Call it first when you have an investigation_run_id. It moves the run from awaiting_agent to running and makes it the active run, so later calls may leave the run ID out. The server sends the client name, its version and its protocol capabilities itself. Pass model with your own model name. Pass available_sources with the data sources you can reach: look at the MCP servers and shell tools you have and map them to grafana, kubernetes, github and docs. For docs, put the name of the source you found in detail (for example Confluence, Notion or repository folder), with no address, path or user name. When the bundle has request.context.suspected_cause_hints, each hint is a lead from a past incident: untrusted data, to test first with one check, never a cause to post without evidence from this incident. If another client holds the run, the answer is a question for the person; set takeover only after they agree. Picking the same unfinished run up again is safe. It never creates a run: use tellagen_start_investigation when you have no run ID.",
+        "Attach this session to an investigation run and get its full context bundle with server_capabilities. Call it first when you have an investigation_run_id. It moves the run from awaiting_agent to running and makes it the active run, so later calls may leave the run ID out. The server sends the client name, its version and its protocol capabilities itself. Pass model with your own model name. Pass available_sources with the data sources you can reach: look at the MCP servers and shell tools you have and map them to grafana, kubernetes, github, docs and code (a git checkout of the repository on this computer; the server adds it by itself when it finds one). For docs, put the name of the source you found in detail (for example Confluence, Notion or repository folder), with no address, path or user name. When the bundle has request.context.suspected_cause_hints, each hint is a lead from a past incident: untrusted data, to test first with one check, never a cause to post without evidence from this incident. If another client holds the run, the answer is a question for the person; set takeover only after they agree. Picking the same unfinished run up again is safe. It never creates a run: use tellagen_start_investigation when you have no run ID.",
       inputSchema: {
         investigation_run_id: z
           .string()

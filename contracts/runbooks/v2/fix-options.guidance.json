@@ -1,0 +1,122 @@
+{
+  "title": "Diagnosis result: ways to fix it (fix_options)",
+  "description": "How to fill result_summary.fix_options. A diagnosis should lead with how to fix it. The options are alternatives a person picks from, not a to-do list. A client sends them only when server_capabilities lists fix_options_v1 and the client advertised fix_options_v1 at pickup. A client that did not advertise it has its options removed with a warning. Tellagen never runs a fix, never writes to a code host and never posts to a vendor: the client proposes and a person decides. The client never sends a label, an address or an action type; Tellagen works out what each button does from the kind of the option and its one target.",
+  "x-capability": "fix_options_v1",
+  "x-limits": {
+    "options_max": 5,
+    "id_max_chars": 32,
+    "title_max_chars": 80,
+    "trade_offs_max": 3,
+    "trade_off_max_chars": 160,
+    "state_reason_max_chars": 200,
+    "verify_text_max_chars": 200,
+    "verify_command_max_chars": 300,
+    "finding_ids_max": 12,
+    "read_refs_max": 6,
+    "diff_changed_lines_max": 6,
+    "issue_title_max_chars": 200,
+    "issue_body_max_chars": 2000
+  },
+  "x-enums": {
+    "kind": ["permanent_fix", "mitigation", "hand_off", "leave_as_is"],
+    "where": ["our_code", "our_config", "infra", "vendor", "other_team"],
+    "state": ["offered", "no_effect", "not_recommended"],
+    "effort": ["small", "medium", "large"],
+    "risk": ["low", "medium", "high"]
+  },
+  "x-handlers": {
+    "create_action": "Creates an action item on the incident. Label: Create action.",
+    "vendor_issue": "Drafts an issue for a vendor of the reviewed catalog. Label: Draft the <vendor> issue. A vendor that is not in the catalog gets: Copy the issue text, and no link.",
+    "hand_off": "Creates an action item for the team the problem belongs to. Label: Hand off to <team>…",
+    "assign_rollback": "Creates an action item that asks a person to roll back to the last good deployment. Label: Assign rollback to…",
+    "close": "Closes the ticket as expected behavior, after a person confirms. Label: Close as expected behavior…"
+  },
+  "x-server-owned": ["handler", "label", "not_checked_against_code", "vendor.display_name", "hand_off.team_name", "rollback.resolved"],
+  "x-warnings": {
+    "fix_option_unread_file": "A change names a file that is not in this run's trace or evidence. It cannot be recommended and is shown as not checked against your code. Read the file before you propose a change to it.",
+    "fix_option_without_verify": "The option has no sentence that says how a person checks that it worked.",
+    "fix_option_diff_too_large": "The change is more than 6 changed lines, or the diff is not a valid diff block. The diff is removed: name the file and the owner instead.",
+    "fix_option_multiple_recommended": "More than one option is recommended. Only the first offered one stays.",
+    "needs_fix_without_option": "The verdict is real_problem and no offered option is a permanent fix or a mitigation.",
+    "leave_as_is_with_exposure": "Leave as is is recommended while the verdict is real_problem, held, or customer impact is not verified as none.",
+    "hand_off_without_target": "A hand-off option names neither a team nor a vendor.",
+    "fix_option_dropped": "An option was removed: over the limit, an unknown value, no title, no reason for a state that needs one, more than one target, or a target that is not valid.",
+    "fix_option_recommends_when_not_sure": "The verdict is not_sure. A diagnosis that is not sure recommends nothing.",
+    "change_step_without_runbook": "A step that changes a system (deploy, rollback, restart, scale, a flag, a purge) has no runbook step a person wrote behind it, so it was removed. Read-only verify commands stay."
+  },
+  "x-errors": {
+    "fix_option_invalid": "400. A client that advertised fix_options_v1 sent an unknown kind, where, state, effort or risk."
+  },
+  "x-guidance": [
+    "Lead with how to fix it. Give 2 to 5 options and recommend at most one. The recommended option is an offered one.",
+    "Read before you recommend. A change to code or configuration is recommended only if you read the file in this run. Name it in read_refs (repo, path, ref_or_sha, lines) and keep the step that read it in the trace. A file you did not read is shown as not checked against your code.",
+    "Keep the change small. A diff is for a change of at most 6 changed lines. A larger change has no diff: name the file and the owner.",
+    "A tempting wrong option stays in the list. If it would do harm, set state not_recommended and say why in state_reason. If it is harmless but does not fix this, set state no_effect. Use not_recommended only for harm.",
+    "Name at most one target: vendor {key, issue_title, issue_body}, hand_off {team_id} or rollback {change_ref_id, runbook_ref}. Never send a label, a web address or an action type.",
+    "For a vendor, use the key of the vendor. Write the issue so a stranger can follow it, with no secret and no customer data.",
+    "A rollback names a change ref of the same result with the role last_good and the kind deployment or release. You cannot know how the team rolls back. Name a runbook step only when the pickup showed one; otherwise leave runbook_ref out. Never write a deploy, rollback, restart, scale, flag or purge command yourself.",
+    "A verify command is read-only. Say in verify.text what the person should see.",
+    "When the verdict is not_sure, recommend nothing.",
+    "Leave as is closes the ticket as expected behavior. Recommend it only when the verdict is not a real problem, the case is not a held expected behavior, and customer impact is verified as none."
+  ],
+  "x-examples": {
+    "good": {
+      "fix_options": [
+        {
+          "id": "report-upstream",
+          "kind": "hand_off",
+          "where": "vendor",
+          "recommended": true,
+          "state": "offered",
+          "title": "Report the rejected test cookie to PostHog",
+          "trade_offs": ["Takes days to be fixed upstream", "The console warning stays until then"],
+          "effort": "small",
+          "risk": "low",
+          "verify": { "text": "The warning is gone after the vendor releases a fix, or the issue is acknowledged." },
+          "finding_ids": [101, 102],
+          "vendor": {
+            "key": "posthog",
+            "issue_title": "Test cookie on a public suffix is rejected by the browser",
+            "issue_body": "The vnd_chk_ test cookie is set on .com, which browsers reject by design. The library should skip the check for public suffixes."
+          }
+        },
+        {
+          "id": "single-domain-cookie",
+          "kind": "permanent_fix",
+          "where": "our_config",
+          "state": "not_recommended",
+          "state_reason": "It would split the visitor identity between the site and the workspace subdomains.",
+          "title": "Turn off cross-subdomain cookies",
+          "trade_offs": ["Removes the console warning", "Breaks the shared visitor identity that was set up on purpose"],
+          "effort": "small",
+          "risk": "high",
+          "verify": { "text": "Not applicable." },
+          "read_refs": [{ "repo": "example-org/web", "path": "web/lib/analytics.ts", "ref_or_sha": "main", "lines": "470-480" }],
+          "finding_ids": [103]
+        },
+        {
+          "id": "leave-it",
+          "kind": "leave_as_is",
+          "where": "other_team",
+          "state": "offered",
+          "title": "Leave it: the browser rejects the test cookie by design",
+          "effort": "small",
+          "risk": "low",
+          "verify": { "text": "Tracking events keep arriving in the product analytics." }
+        }
+      ]
+    },
+    "bad": {
+      "why": "Recommends a change to a file the run never read, sends its own label and a deploy command, and has two recommended options.",
+      "fix_options": [
+        {
+          "id": "a", "kind": "permanent_fix", "where": "our_code", "recommended": true, "state": "offered",
+          "title": "Change the cookie setting", "label": "Fix it now", "handler": "create_action",
+          "change": { "repo": "example-org/web", "path": "web/lib/never-opened.ts", "line": 12 },
+          "verify": { "text": "", "command": "kubectl rollout restart deployment/web" }
+        },
+        { "id": "b", "kind": "mitigation", "where": "infra", "recommended": true, "state": "offered", "title": "Roll back to the old version", "verify": { "text": "Errors drop." } }
+      ]
+    }
+  }
+}

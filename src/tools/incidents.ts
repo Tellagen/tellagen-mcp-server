@@ -3,6 +3,18 @@ import { z } from "zod";
 import { TellagenClient } from "../client.js";
 import { formatError } from "../errors.js";
 
+/** Fields of an incident that only a person changes. The update tool neither offers nor sends them. */
+const PERSON_ONLY_INCIDENT_FIELDS = new Set([
+  "status",
+  "severity",
+  "severity_mode",
+  "customer_impact_status",
+  "close_reason",
+  "close_comment",
+  "related_incident_id",
+  "reopen_comment",
+]);
+
 export function registerIncidentTools(
   server: McpServer,
   client: TellagenClient,
@@ -211,7 +223,7 @@ export function registerIncidentTools(
     "tellagen_update_incident",
     {
       description:
-        "Change fields of an existing incident: display title, service, regions, severity, status, owning team, impact summary, links and key timestamps. Send only the fields to change. Returns the updated incident. It cannot delete an incident or record a root cause.",
+        "Change fields of an existing incident: display title, service, regions, owning team, impact summary, links and key timestamps. Send only the fields to change. Returns the updated incident. It never changes the status, the severity or the customer impact, and never closes or reopens an incident: a person decides those in Tellagen, and a diagnosis key that tries is refused with incident_change_requires_person. Tell the person what you found and let them decide. It cannot delete an incident or record a root cause.",
       inputSchema: {
         incident_id: z.number().int().positive().describe("Incident ID"),
         title: z
@@ -223,11 +235,9 @@ export function registerIncidentTools(
           .describe("Editable incident display title"),
         service: z.string().optional(),
         regions: z.array(z.string()).optional(),
-        severity: z.string().optional(),
         slack_channel_id: z.string().optional(),
         meet_url: z.string().url().optional(),
         doc_url: z.string().url().optional(),
-        status: z.string().optional(),
         issue_type: z.string().optional(),
         team_id: z
           .number()
@@ -236,7 +246,6 @@ export function registerIncidentTools(
           .nullable()
           .optional()
           .describe("Owning team ID, or null to remove the assignment"),
-        severity_mode: z.string().optional(),
         impact_summary: z.string().optional(),
         impact_started_at: z
           .string()
@@ -264,7 +273,8 @@ export function registerIncidentTools(
       try {
         const body: Record<string, unknown> = {};
         for (const [key, value] of Object.entries(params)) {
-          if (value !== undefined) {
+          // The status, the severity and the customer impact are a person's decision.
+          if (value !== undefined && !PERSON_ONLY_INCIDENT_FIELDS.has(key)) {
             body[key] = value;
           }
         }
