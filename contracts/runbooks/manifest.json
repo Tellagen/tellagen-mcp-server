@@ -1,17 +1,27 @@
 {
-  "contract_version": "2026-11-17.1",
-  "bundle_sha256": "f0c6dbed0bd3e716de808f5cf42553def829864a0c26cb40f3c85cae7ec3fd3e",
+  "contract_version": "2026-11-21.1",
+  "bundle_sha256": "38947ada2406249094e61152b169be4f7aa2025cd5587e43fe4ab97549777668",
   "bundle_digest_algorithm": "sha256(sorted(path + NUL + file_sha256 + LF))",
   "files": [
+    {
+      "path": "v2/alert-verdict.guidance.json",
+      "sha256": "3c7bbf302e75b93ca6b1fa04c4a6cf10079365d2822652dd33481fdb4040d95c",
+      "bytes": 13955
+    },
     {
       "path": "v2/cause-lead.guidance.json",
       "sha256": "0ad3548b1b2f43605ad76f7f5c4b742d1ab399788618c0fb7806b7ad7b7dfb2c",
       "bytes": 2641
     },
     {
+      "path": "v2/channel-note.guidance.json",
+      "sha256": "d3ae9cb5f29c2fb767ee3dfaa4d7d29632ff23997b8b00d666c1a605ad5f9e8b",
+      "bytes": 1792
+    },
+    {
       "path": "v2/client-protocol.json",
-      "sha256": "280e08fe0455bfec03a466328a1a02f54d6988921b940b627b5bab256070d7bd",
-      "bytes": 28149
+      "sha256": "886bb00ccdf4302fb1b8e504e9b3eafdc8ca6cb7598f7fd4e06f7372dcdf1911",
+      "bytes": 40508
     },
     {
       "path": "v2/client-writes.guidance.json",
@@ -19,9 +29,19 @@
       "bytes": 7796
     },
     {
+      "path": "v2/code-locations.guidance.json",
+      "sha256": "22082ac392a2e1c5003ded8edf4229c958794d39f25830ab16ac115bc8f5a075",
+      "bytes": 2366
+    },
+    {
       "path": "v2/compiled-plan.schema.json",
       "sha256": "6526c68439fef418de0f04099a0119dd6673550bb9e2f302dc84bf2df6bd0fe5",
       "bytes": 1246
+    },
+    {
+      "path": "v2/fix-options.guidance.json",
+      "sha256": "fe6d288de188092efcf5930658fa0363ac30658c4c865186172af59063891dbb",
+      "bytes": 8502
     },
     {
       "path": "v2/fixtures/filesystem-pressure.json",
@@ -60,8 +80,8 @@
     },
     {
       "path": "v2/result-summary.guidance.json",
-      "sha256": "3d0f2a7d1b451efdfad41f42d946107e41c4b1ea1d6ba520932adcf500d9d854",
-      "bytes": 6087
+      "sha256": "49fdf4bd645f2f5ac43ea083c9a9100506b0ea8523bb7055b1ae286393d3edba",
+      "bytes": 8263
     },
     {
       "path": "v2/runbook-definition.schema.json",

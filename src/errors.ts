@@ -62,10 +62,20 @@ export function fieldErrorHint(err: TellagenAPIError): string | undefined {
   return undefined;
 }
 
+/**
+ * Tellagen refuses a diagnosis key that closes, reopens or changes the
+ * severity, the status or the customer impact of an incident. Say what to do
+ * instead, in plain words, so the model does not try another way.
+ */
+function personOnlyHint(err: TellagenAPIError): string | undefined {
+  if (err.code !== "incident_change_requires_person") return undefined;
+  return "Closing, reopening and changing the status, the severity or the customer impact of an incident is a person's decision in Tellagen. Do not retry it, and do not look for another way to make the change. Tell the person what you found and what you would change, and let them do it.";
+}
+
 /** Format an API error into a user-friendly MCP tool error response. */
 export function formatError(err: unknown): string {
   if (err instanceof TellagenAPIError) {
-    const hint = fieldErrorHint(err);
+    const hint = fieldErrorHint(err) ?? personOnlyHint(err);
     return JSON.stringify({
       ...(err.payload ?? {}),
       error: true,

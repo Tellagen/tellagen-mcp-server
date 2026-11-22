@@ -137,7 +137,7 @@ The server asks Tellagen once, right after the MCP handshake, whether the key wo
 
 ## Tools
 
-The server offers 54 tools, all with the prefix `tellagen_`, in five toolsets. A tool that reads never changes anything. A person, not an API key, accepts or rejects a root cause in Tellagen: no tool can do it.
+The server offers 55 tools, all with the prefix `tellagen_`, in five toolsets. A tool that reads never changes anything. A person, not an API key, accepts or rejects a root cause in Tellagen: no tool can do it.
 
 ### Toolsets
 
@@ -175,6 +175,7 @@ Run a diagnosis from pickup to completion. On by default.
 | `tellagen_post_finding` | adds | Post one finding with its evidence refs, screenshots and links |
 | `tellagen_update_finding` | changes | Dismiss a finding or restore it to draft |
 | `tellagen_build_figure` | reads | Turn numbers from a tool result into a figure that Tellagen draws, and check it against the limits |
+| `tellagen_build_fix_option` | reads | Check one way to fix the problem and return it in the shape `result_summary.fix_options` takes |
 | `tellagen_build_source_link` | reads | Build the link or the copyable command for an evidence ref (Grafana, GitHub, Kubernetes) |
 | `tellagen_get_context_attachment` | reads | Read one screenshot that a responder attached to a run |
 | `tellagen_get_investigation_coverage` | reads | Check which runbook checks and evidence are still missing before you complete |
@@ -194,7 +195,7 @@ Read and edit incidents, services and impact, search, start a run, and read the 
 | `tellagen_get_incident` | reads | Read one incident (severity, status, services, timestamps, manager) |
 | `tellagen_get_incident_timeline` | reads | Read the timeline of an incident |
 | `tellagen_create_incident` | adds | Create an incident when the user asks for one |
-| `tellagen_update_incident` | changes | Change fields of an incident (title, status, severity, team, impact summary, links, timestamps) |
+| `tellagen_update_incident` | changes | Change fields of an incident (title, team, impact summary, links, timestamps). Never the status, the severity or the customer impact: a person decides those |
 | `tellagen_search` | reads | Search incidents, timeline events, issues and services when you do not know an ID |
 | `tellagen_list_services` | reads | List the services in the catalog |
 | `tellagen_get_service` | reads | Read one service |
@@ -451,6 +452,9 @@ At pickup the MCP server advertises, in `protocol_capabilities`, the runbook v2 
 | `diagnosis_changes_v1` | `change_refs`, and the `ci_run`, `deployment` and `release` link kinds | enables the warning `regression_source_missing` |
 | `investigation_window_v1` | (nothing extra) it reads `request.context.window` and puts it at the top of the pickup answer as `mcp_window`; it sends `window_suggestion` with a result when the signal lies outside the window | the pickup carries the window of the run; completion checks the suggestion and warns with `evidence_outside_window` |
 | `question_checks_v1` | `checks` (one to three `{source, question}` yes or no checks) on a gap finding | a person answers each check with yes, no or not sure; a blocking gap with no checks gets the warning `blocking_gap_without_checks` |
+| `diagnosis_verdict_v1` | `result_summary.alert_verdict` on a run of any incident, the verdict `expected_behavior`, and an `owner` | the verdict is shown for every diagnosis; a verdict that says nothing is broken is held until the evidence is there |
+| `fix_options_v1` | `result_summary.fix_options`, built with `tellagen_build_fix_option` | the Diagnosis tab leads with how to fix it; a change to a file the run did not read is shown as not checked against your code |
+| `code_locations_v1` | (nothing extra) it matches `request.context.code_locations` to a local checkout and adds `mcp_code_locations` to the pickup answer | the pickup names the repositories of the ticket; a run that does not read them gets `code_not_read` |
 | `run_images_v1` | (nothing extra) it reads screenshots with `tellagen_get_context_attachment` | the web says the client reads images; without it the responder is told the agent gets each caption and a link |
 
 A server-only capability, `log_lines_v1`, means Tellagen takes a `log_lines` figure. `tellagen_build_figure` builds one from the result of a Loki query (see Figures) only when the run lists it, and refuses with a clear message otherwise. The timeline tools and `tellagen_complete_investigation` leave a `log_lines` block or step figure out for a run that does not list it, and the tool result carries an `mcp_notice`. Likewise `question_checks_v1` is listed by Tellagen at pickup: without it `checks` are left off a gap finding and the result says so.
@@ -459,7 +463,7 @@ One more capability is the server's alone: Tellagen lists `diff_lines_v1` in `se
 
 Likewise Tellagen lists `figure_extras_v1` when a `stats` figure may carry a `title` and more than four items, and a `run_history` figure may carry `runs_not_shown`. Without it the MCP cuts a stats figure to its first four items and drops the title and `runs_not_shown`, and the tool result carries an `mcp_notice`; `tellagen_build_figure` says so in `notes`. `tellagen_build_figure` takes the `run_id` for this check, and the timeline tools and `tellagen_complete_investigation` apply it to the figures they send.
 
-Tellagen lists `alert_verdict_v1` only for a run whose incident came from an alert. Then `tellagen_complete_investigation` takes `result_summary.alert_verdict`: `verdict` (`real_problem`, `already_handled`, `false_alarm`, `not_sure`), `reason`, `onset`, `would_change_mind` and a `proof` checklist of `{id, done, finding_ids}`. The server checks the proof and may show Not sure instead of the claim; it answers with the `verdict_*` warnings and never rejects the result for a weak verdict. Without the capability (an older Tellagen, the feature off for the workspace, or a run that is not on an alert) the MCP leaves `alert_verdict` out and the tool result carries an `mcp_notice`. The guide teaches the method (judge the alert first) and the evidence rules.
+Tellagen lists `diagnosis_verdict_v1` for a run of any incident in a workspace where verdicts are on, and `alert_verdict_v1` only for a run whose incident came from an alert. With either, `tellagen_complete_investigation` takes `result_summary.alert_verdict`: `verdict` (`real_problem`, `already_handled`, `false_alarm`, `expected_behavior`, `not_sure`), `reason`, `owner`, `onset`, `would_change_mind` and a `proof` checklist of `{id, done, finding_ids}`. The server checks the proof and may show Not sure instead of the claim; it answers with the `verdict_*` warnings and never rejects the result for a weak verdict. Without the capability (an older Tellagen, the feature off for the workspace, or a run that is not on an alert) the MCP leaves `alert_verdict` out and the tool result carries an `mcp_notice`. The guide teaches the method (judge the alert first) and the evidence rules.
 
 The fields behind a capability go **only** to a run whose response lists it in `server_capabilities`. Against an older Tellagen they are removed before the request leaves, the call still succeeds, and the tool result carries an `mcp_notice` naming what was not sent. A run this process did not pick up is checked once through `GET /api/v1/investigations/{id}/context`.
 
@@ -707,6 +711,7 @@ npm run lint    # tsc --noEmit
 | `TELLAGEN_STATE_DIR` | No | Folder of the remembered-run file. Defaults to `~/.tellagen/state` |
 | `TELLAGEN_MCP_CLIENT` | No | Deprecated. `codex` or `claude`; used only when the client sends no name in the handshake, and for an older Tellagen workspace |
 | `TELLAGEN_MCP_PROFILE_ID` | No | Stable opaque profile ID used to scope local MCP access observations |
+| `TELLAGEN_CODE_CHECKOUTS` | No | Folders with git checkouts (each a checkout, or a folder of checkouts), separated by `:`. The server matches `code_locations` of a ticket to them by git remote, besides the working directory. `off` stops it from looking at git checkouts |
 | `GRAFANA_URL` | No | Grafana address, for `tellagen_probe_datasource` and `tellagen_build_source_link`. Used when Tellagen sends no Grafana address with the pickup, or several and none is picked; the Tellagen datasource `base_url` comes after it. The probe sends the service account token only to this address |
 
 ## Requests on a finished run

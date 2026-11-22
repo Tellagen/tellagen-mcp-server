@@ -152,6 +152,7 @@ describe("the pickup answer names the resources of the run", () => {
     expect(plain.mcp_resources.map((r: { uri: string }) => r.uri)).toEqual([
       "resource://tellagen/guide/findings",
       "resource://tellagen/guide/completion",
+      "resource://tellagen/guide/fixes",
     ]);
     expect(plain.mcp_resources[0].read_when).toContain("first finding");
 

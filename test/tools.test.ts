@@ -713,6 +713,9 @@ describe("Tool integration via client", () => {
           "investigation_window_v1",
           "question_checks_v1",
           "run_requests_v1",
+          "diagnosis_verdict_v1",
+          "fix_options_v1",
+          "code_locations_v1",
         ],
       });
     });
@@ -2400,8 +2403,6 @@ describe("Tool integration via client", () => {
       const result = await harness.callTool("tellagen_update_incident", {
         incident_id: 42,
         title: "Checkout recovered; monitoring latency",
-        status: "monitoring",
-        severity: "sev2",
         issue_type: "incident",
         team_id: 7,
         impact_summary: "Checkout latency degraded for EU users",
@@ -2421,8 +2422,6 @@ describe("Tool integration via client", () => {
           method: "PATCH",
           body: JSON.stringify({
             title: "Checkout recovered; monitoring latency",
-            status: "monitoring",
-            severity: "sev2",
             issue_type: "incident",
             team_id: 7,
             impact_summary: "Checkout latency degraded for EU users",
@@ -2430,6 +2429,49 @@ describe("Tool integration via client", () => {
           }),
         }),
       );
+    });
+  });
+
+  describe("tellagen_update_incident and the decisions of a person", () => {
+    it("does not offer the status, the severity, the customer impact or the close fields", () => {
+      const harness = createToolHarness();
+      const keys = Object.keys(harness.getTool("tellagen_update_incident").config.inputSchema ?? {});
+      for (const field of ["status", "severity", "severity_mode", "customer_impact_status", "close_reason", "close_comment", "reopen_comment", "related_incident_id"]) {
+        expect(keys, field).not.toContain(field);
+      }
+      expect(keys).toEqual(expect.arrayContaining(["incident_id", "title", "team_id", "impact_summary", "recovered_at"]));
+    });
+
+    it("never sends a person-only field, even when a client passes one", async () => {
+      const harness = createToolHarness();
+      fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ incident: { id: 42 } }), { status: 200 }));
+      await harness.callTool("tellagen_update_incident", {
+        incident_id: 42,
+        title: "Checkout latency",
+        status: "resolved",
+        severity: "sev1",
+        severity_mode: "manual",
+        customer_impact_status: "none",
+        close_reason: "fixed",
+      });
+      const body = JSON.parse(String((fetchSpy.mock.calls[0]![1] as RequestInit).body));
+      expect(body).toEqual({ title: "Checkout latency" });
+    });
+
+    it("says in plain words that a person decides when Tellagen answers incident_change_requires_person", async () => {
+      const harness = createToolHarness();
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ error: { code: "incident_change_requires_person", message: "A person changes this." } }),
+          { status: 403 },
+        ),
+      );
+      const result = await harness.callTool("tellagen_update_incident", { incident_id: 42, title: "x" });
+      expect(result.isError).toBe(true);
+      const answer = JSON.parse(result.content[0].text);
+      expect(answer.code).toBe("incident_change_requires_person");
+      expect(answer.hint).toContain("a person's decision");
+      expect(answer.hint).toContain("Do not retry");
     });
   });
 

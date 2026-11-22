@@ -60,6 +60,7 @@ describe("toolsets", () => {
       "tellagen_post_finding",
       "tellagen_update_finding",
       "tellagen_build_figure",
+      "tellagen_build_fix_option",
       "tellagen_build_source_link",
       "tellagen_get_context_attachment",
       "tellagen_get_investigation_coverage",

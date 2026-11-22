@@ -26,6 +26,7 @@ import { registerDatasourceTools } from "./datasources.js";
 import { registerDiagnosticTools } from "./diagnostics.js";
 import { registerPostmortemRunbookTools } from "./postmortem-runbooks.js";
 import { registerFigureTools } from "./figures.js";
+import { registerFixOptionTools } from "./fix-options.js";
 import { registerSourceLinkTools } from "./source-links.js";
 import { registerAttachmentTools } from "./attachments.js";
 import { registerResumeTools } from "./resume.js";
@@ -97,6 +98,7 @@ export function registerAllTools(
   registerDiagnosticTools(collector, client);
   registerPostmortemRunbookTools(collector, client);
   registerFigureTools(collector, client);
+  registerFixOptionTools(collector);
   registerSourceLinkTools(collector, client);
   registerAttachmentTools(collector, client);
   registerResumeTools(collector, client);
