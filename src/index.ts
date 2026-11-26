@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { dropUnexpandedEnv, unexpandedEnvLine } from "./env.js";
 import { MCP_SERVER_VERSION } from "./version.js";
 
 /**
@@ -34,6 +35,9 @@ async function serve(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // Before anything reads the settings: the server, a hook and a command all
+  // treat an unfilled placeholder as a variable that is not set.
+  const ignored = unexpandedEnvLine(dropUnexpandedEnv());
   const command = process.argv[2];
   if (command && COMMANDS.has(command)) {
     if (command === "--version" || command === "-v") {
@@ -52,6 +56,9 @@ async function main(): Promise<void> {
     process.exitCode = await runCli(command, process.argv.slice(3));
     return;
   }
+  // Standard output belongs to the protocol and to a hook's answer, so the
+  // note goes to standard error, and only when the server itself starts.
+  if (ignored) process.stderr.write(ignored);
   await serve();
 }
 
