@@ -2,6 +2,16 @@
 
 All notable changes to `@tellagen/mcp-server` are in this file. The newest version is first. Each heading is `## <version> - <date>`; the release workflow copies the section of the tagged version into the GitHub release.
 
+## 0.9.1 - Unreleased
+
+### Fixed
+
+- A client that does not fill in `${TELLAGEN_API_URL:-}` or `${TELLAGEN_API_KEY:-}` in the env block of the server (the plugin's `.mcp.json` passes both) handed that text over as the value. The server took it for an address, and every call failed on it instead of offering the sign-in. A `TELLAGEN_` variable that holds such a placeholder now counts as not set, for the server, the hooks and the commands, and the server says so on standard error.
+
+### Changed
+
+- The guide no longer opens with "Read all of it". The server instructions and the pickup answer already name the part to read at each step, so the first lines now say that.
+
 ## 0.9.0 - 2026-11-22
 
 ### Added

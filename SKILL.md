@@ -2,7 +2,7 @@
 
 You have access to the Tellagen MCP server. This guide teaches you how to use it — alone and combined with other MCP servers — to investigate and manage incidents.
 
-This guide is long. Read all of it. If your client shows a preview and saves the text to a file, read that file.
+This is the whole guide. You do not need to read all of it first: the server instructions and the pickup answer name the part to read at each step (`resource://tellagen/guide/...`), so read that part when you reach the step. If your client shows a preview and saves the text to a file, read that file.
 
 ## Before you complete a run
 
