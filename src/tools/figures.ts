@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { activeRunId } from "../active-run.js";
 import type { TellagenClient } from "../client.js";
-import { runWindowOf, supportsDiffLines, supportsFigureExtras, supportsFigureLimits, supportsLogLines } from "../diagnosis-structure.js";
+import { runWindowOf, supportsDiffLines, supportsFigureExtras, supportsFigureLimits, supportsLogLines, supportsStatSparklines } from "../diagnosis-structure.js";
 import { buildFigure, figureToolInputSchema, withoutFigureExtrasInBlock, withoutFigureLimitsInBlock } from "../figures.js";
 
 export const FIGURE_GUIDE_URI = "resource://tellagen/figure-guide";
@@ -25,12 +25,15 @@ Use tellagen_build_figure to make one. It reshapes the numbers you already read 
 5. Say where the data came from. A trend carries its query in source. For other figures, cite the tool result in the step's evidence refs.
 6. A tone is a meaning, not emphasis: good for healthy or recovered, warn for needs attention, bad for failing, neutral for a plain fact.
 7. The limits below are enforced. A figure over a limit is rejected with the field named. Shorten the data yourself. Do not expect it to be trimmed.
+8. A title is a name of what the figure shows, not a sentence and not a conclusion: "p95 latency by route", not "Latency doubled after the deploy." Use 10 words or fewer and no full stop.
+9. The step claim says the conclusion. Never repeat it in the figure: not in the title, not in a label and not in a caption.
+10. Send the threshold when there is one: the SLO, the alert line or the limit. The figure marks what is over it.
 
 ## Pick the widget by the question
 
 | The question | Widget | Step figure | Timeline block | Limits |
 | --- | --- | --- | --- | --- |
-| What are the few numbers that matter? | stats | yes | yes | 1 to 8 items (4 or fewer is best), title 80, label 48, value 32, caption 64 |
+| What are the few numbers that matter? | stats | yes | yes | 1 to 8 items (4 or fewer is best), title 80, label 48, value 32, caption 64, a sparkline of 4 to 60 values |
 | Did it get better, and is it inside the line? | compare | yes | yes | 1 to 8 rows, 3 details per row |
 | When did it start, and what happened around then? | trend | yes | yes | 2 to 500 points, 3 marks |
 | Which items rank highest? | table | no | yes | 1 to 6 columns, 1 to 12 rows, cell 64 |
@@ -83,11 +86,23 @@ If the values are already on an even grid, send series with start and step_secon
 
 ### stats: the few numbers that matter
 
-Aim for four or fewer. Each has a short label, a value, a caption that says what it is measured on, and a tone. The first four are tiles in one row, so put the total first and give a tone only to the exception. Items five to eight are drawn as plain rows under the tiles. When this Tellagen lists figure_extras_v1 in server_capabilities you may also send a title (up to 80 characters) to name the tiles, for example "Tests of the run", and up to eight items. Pass run_id to tellagen_build_figure for this check. Without figure_extras_v1 the builder drops the title and every item after the fourth, and says so in notes, because an older Tellagen rejects them and drops the whole figure.
+Aim for four or fewer. Each has a short label that names what the number measures, a value, a caption and a tone. A stats caption is one short fact, for example "SLO 1%" or "master, Oct 30". It never says how to read the figure. The first four are tiles in one row, so put the total first and give a tone only to the exception. Items five to eight are drawn as plain rows under the tiles. When this Tellagen lists figure_extras_v1 in server_capabilities you may also send a title (up to 80 characters) to name the tiles, for example "Tests of the run", and up to eight items. Pass run_id to tellagen_build_figure for this check. Without figure_extras_v1 the builder drops the title and every item after the fourth, and says so in notes, because an older Tellagen rejects them and drops the whole figure.
 
     { "type": "stats", "items": [ { "label": "Failed e2e tests", "value": "1 of 121", "caption": "master, Oct 30", "tone": "bad" } ] }
 
-A tile caption says what the number is measured on. The name of the source, such as "node --test summary", belongs in a source chip (the step's evidence refs), not in a caption.
+The name of the source, such as "node --test summary", belongs in a source chip (the step's evidence refs), not in a caption.
+
+A value that is the latest point of a range query can carry a sparkline, so the reader sees how it got there.
+
+1. Send the samples of that range query as points on the item, with t and v as for a trend. Do not send them for a value from an instant query: one sample is not a history.
+2. When the pickup lists stat_sparklines_v1 in server_capabilities, the builder turns them into spark: the samples in time order, at most 60 values at an even step from the first to the last, and window_seconds, the time they span. Pass run_id to tellagen_build_figure for this check.
+3. Fewer than 4 usable samples give no sparkline, and notes says so. A sample with no usable time or value (null, an empty string, NaN) is skipped, and notes says how many. A sparkline shows the samples side by side, not equal time, so a skipped sample leaves no gap in it.
+4. Without stat_sparklines_v1 the builder leaves the sparkline out and says so in notes, because an older Tellagen rejects the field and drops the whole figure.
+5. Never write the values of a spark yourself. They come from the samples you send.
+
+    { "type": "stats", "title": "Checkout errors", "items": [ { "label": "5xx share", "value": "8.1%", "caption": "SLO 1%", "tone": "bad",
+        "points": [ { "t": "2026-11-02T14:00:00Z", "v": "0.24" }, { "t": "2026-11-02T14:01:00Z", "v": "0.27" },
+                    { "t": "2026-11-02T14:02:00Z", "v": "3.9" }, { "t": "2026-11-02T14:03:00Z", "v": "8.1" } ] } ] }
 
 ### table: a ranked list
 
@@ -218,13 +233,21 @@ const isLogLines = (figure: unknown): boolean =>
 const usesFigureExtras = (figure: unknown): boolean =>
   withoutFigureExtrasInBlock(figure).what.length > 0;
 
+/** A stats figure that asks for a sparkline: an item with points, or with a ready spark. */
+const usesStatSparklines = (figure: unknown): boolean => {
+  if (typeof figure !== "object" || figure === null) return false;
+  const { type, items } = figure as { type?: unknown; items?: unknown };
+  if (type !== "stats" || !Array.isArray(items)) return false;
+  return items.some((item) => typeof item === "object" && item !== null && ("points" in item || "spark" in item));
+};
+
 export function registerFigureTools(server: McpServer, client: TellagenClient): void {
   server.registerTool(
     "tellagen_build_figure",
     {
       title: "Build a figure",
       description:
-        "Turn numbers you already read from a tool result into a figure (a typed widget) that Tellagen draws, and check it against Tellagen's limits before you send it. Widgets: stats (headline numbers: aim for 4, up to 8 with figure_extras_v1, and an optional title), compare (before and after per host, route or job, with an SLO line), trend (a series over time with up to 3 marks), table (a ranked list, up to 12 rows), checks (pass or fail per check, up to 12), changes (a value that moved from one thing to another), range_overlap (2 to 4 ranges that meet), histogram (bucket counts before and after), run_history (CI or deploy runs with the regression and fix marks), diff (the changed lines of a code change), log_lines (the log lines of a Loki result that prove a claim, or the proof that there are none). For a time series send raw samples as points and the deploy, alert or rollback times as events: the tool puts them on an even grid of at most 500 points and works out the mark positions. For a histogram send Prometheus cumulative le buckets as buckets; for a run history send the GitHub Actions run list as github_runs; for a diff send the patch of one file: a change of 12 or fewer changed lines is sent whole with each removed line next to the line that replaced it, a longer one needs select_hunks (at most 3 hunks). Pass run_id so unchanged lines and line numbers are added only when this Tellagen lists diff_lines_v1, a stats title, more than 4 stats and runs_not_shown only when it lists figure_extras_v1, and the limit of a compare row only when it lists figure_limits_v1 (a row with a limit needs no before; never put a limit in before). It has no data of its own and never invents a value, so send only numbers from a tool result you can cite. placement step_figure is for a causal step (any type except table and changes, one per step). placement timeline_block is for a timeline event (any type). Read resource://tellagen/figure-guide to choose the widget and to see how to plot data on it.",
+        "Turn numbers you already read from a tool result into a figure (a typed widget) that Tellagen draws, and check it against Tellagen's limits before you send it. Widgets: stats (headline numbers: aim for 4, up to 8 with figure_extras_v1, and an optional title), compare (before and after per host, route or job, with an SLO line), trend (a series over time with up to 3 marks), table (a ranked list, up to 12 rows), checks (pass or fail per check, up to 12), changes (a value that moved from one thing to another), range_overlap (2 to 4 ranges that meet), histogram (bucket counts before and after), run_history (CI or deploy runs with the regression and fix marks), diff (the changed lines of a code change), log_lines (the log lines of a Loki result that prove a claim, or the proof that there are none). For a time series send raw samples as points and the deploy, alert or rollback times as events: the tool puts them on an even grid of at most 500 points and works out the mark positions. For a histogram send Prometheus cumulative le buckets as buckets; for a run history send the GitHub Actions run list as github_runs; for a diff send the patch of one file: a change of 12 or fewer changed lines is sent whole with each removed line next to the line that replaced it, a longer one needs select_hunks (at most 3 hunks). A stats item may carry points, the samples of the range query its value came from: they become the sparkline of the tile (at most 60 values, oldest first), only when this Tellagen lists stat_sparklines_v1. A title is a name of what the figure shows, never a sentence. Pass run_id so unchanged lines and line numbers are added only when this Tellagen lists diff_lines_v1, a stats title, more than 4 stats and runs_not_shown only when it lists figure_extras_v1, a sparkline only when it lists stat_sparklines_v1, and the limit of a compare row only when it lists figure_limits_v1 (a row with a limit needs no before; never put a limit in before). It has no data of its own and never invents a value, so send only numbers from a tool result you can cite. placement step_figure is for a causal step (any type except table and changes, one per step). placement timeline_block is for a timeline event (any type). Read resource://tellagen/figure-guide to choose the widget and to see how to plot data on it.",
       inputSchema: {
         placement: z
           .enum(["step_figure", "timeline_block"])
@@ -237,7 +260,7 @@ export function registerFigureTools(server: McpServer, client: TellagenClient): 
           .string()
           .min(1)
           .optional()
-          .describe("The investigation run you are working on. For a diff, a stats, a run_history or a log_lines figure, Tellagen is asked which features it lists in server_capabilities (diff_lines_v1: unchanged lines and line numbers; figure_extras_v1: a stats title, more than 4 stats, runs_not_shown; figure_limits_v1: a limit on a compare row; log_lines_v1: log_lines) and, for log_lines, what the run window is. Without it the latest pickup of this process decides."),
+          .describe("The investigation run you are working on. For a diff, a stats, a run_history or a log_lines figure, Tellagen is asked which features it lists in server_capabilities (diff_lines_v1: unchanged lines and line numbers; figure_extras_v1: a stats title, more than 4 stats, runs_not_shown; stat_sparklines_v1: the sparkline of a stats item; figure_limits_v1: a limit on a compare row; log_lines_v1: log_lines) and, for log_lines, what the run window is. Without it the latest pickup of this process decides."),
       },
     },
     async ({ run_id: givenRunId, ...input }) => {
@@ -245,10 +268,11 @@ export function registerFigureTools(server: McpServer, client: TellagenClient): 
       const diffLines = isDiff(input.figure) ? await supportsDiffLines(client, run_id) : false;
       const figureExtras = usesFigureExtras(input.figure) ? await supportsFigureExtras(client, run_id) : false;
       const figureLimits = usesFigureLimits(input.figure) ? await supportsFigureLimits(client, run_id) : false;
+      const statSparklines = usesStatSparklines(input.figure) ? await supportsStatSparklines(client, run_id) : false;
       const isLogs = isLogLines(input.figure);
       const logLines = isLogs ? await supportsLogLines(client, run_id) : false;
       const window = isLogs ? await runWindowOf(client, run_id) : undefined;
-      const result = buildFigure(input, { diffLines, figureExtras, figureLimits, logLines, window });
+      const result = buildFigure(input, { diffLines, figureExtras, figureLimits, statSparklines, logLines, window });
       if (!result.ok) {
         return {
           content: [

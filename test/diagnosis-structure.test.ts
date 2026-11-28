@@ -49,11 +49,17 @@ describe("step figure schema", () => {
     expect(ok([compareFigure]).success).toBe(false);
   });
 
-  it("rejects stats with 0 or 5 items, long text and unknown tones", () => {
+  it("rejects stats with 0 or 9 items, long text and unknown tones", () => {
     expect(ok({ type: "stats", items: [] }).success).toBe(false);
+    // Five to eight items and a title are the figure extras: the tool cuts them for a Tellagen
+    // that does not list figure_extras_v1, so the input check must let them in.
     expect(
-      ok({ type: "stats", items: Array(5).fill({ label: "a", value: "1" }) }).success,
+      ok({ type: "stats", title: "Tests of the run", items: Array(8).fill({ label: "a", value: "1" }) }).success,
+    ).toBe(true);
+    expect(
+      ok({ type: "stats", items: Array(9).fill({ label: "a", value: "1" }) }).success,
     ).toBe(false);
+    expect(ok({ type: "stats", title: "x".repeat(81), items: [{ label: "a", value: "1" }] }).success).toBe(false);
     expect(ok({ type: "stats", items: [{ label: "a", value: "x".repeat(33) }] }).success).toBe(false);
     expect(ok({ type: "stats", items: [{ label: "a", value: "1", tone: "loud" }] }).success).toBe(false);
     expect(ok({ type: "stats", items: [{ label: "a", value: "1", extra: true }] }).success).toBe(false);

@@ -2,14 +2,25 @@
 
 All notable changes to `@tellagen/mcp-server` are in this file. The newest version is first. Each heading is `## <version> - <date>`; the release workflow copies the section of the tagged version into the GitHub release.
 
-## 0.9.1 - Unreleased
+## 0.10.0 - Unreleased
+
+### Added
+
+- A sparkline on a key figure (`stat_sparklines_v1`). A `stats` item in `tellagen_build_figure` takes `points`, the samples of the range query its value came from. The builder turns them into `spark`: the samples in time order, at most 60 values at an even step from the first to the last, and `window_seconds`, the time they span. Every value is a sample that was sent. Fewer than 4 usable samples give no sparkline. The sparkline is sent only when the pickup lists `stat_sparklines_v1`; otherwise the builder leaves it out and says so in `notes`, and the timeline tools and `tellagen_complete_investigation` leave it out with an `mcp_notice`.
+- The plain status of a diagnosis (`plain_status_v1`). `result_summary.current_state` answers "Still happening?" with a state (`ongoing`, `stopped` or `unknown`) and one or two short sentences, and a `ruled_out` entry may say what it does not exclude in `still_possible`. The MCP advertises the capability at pickup. If the pickup lists it, the MCP sends both fields, on a completion and on an addition to a finished run. If the pickup does not list it, the MCP leaves both fields out and `mcp_notice` says so.
+- The same alert again (`alert_repeat_v1`). When an alert fires again and something changed, Tellagen can start the run with the earlier answer of that alert as a lead: a hint of kind `alert_repeat` with `what_changed` (for example "Now on build-1; before only on build-2.") and `source_run_id`. The MCP now keeps both, cleaned and marked as untrusted data like the other texts of a lead, and the pickup answer tells the model to test what changed first and to say whether the earlier cause still holds. The MCP advertises the capability at pickup. If the pickup lists it and carries such a hint, `tellagen_complete_investigation` and `tellagen_amend_investigation` send `result_summary.repeat_check` (`holds` yes, no or unsure, and `checked`, one sentence of what was checked), with `run_id` filled from the hint. Otherwise the MCP leaves the field out and `mcp_notice` says so, so an older Tellagen gets the same request as before. The completion tool explains the warnings `repeat_check_dropped` and `repeat_check_without_proof`.
+- The figure guide teaches four rules: a title is a name of what the figure shows, the step claim says the conclusion and the figure never repeats it, a stats caption is one short fact such as "SLO 1%", and a threshold is sent when there is one.
+- The skill guide and the completion guide teach the plain writing rules: one fact in each sentence, a time as HH:MM UTC, no raw id in a sentence, a headline that matches the stored values, a blocking question that names its host, and a first action that names where.
 
 ### Fixed
 
+- `tellagen_complete_investigation` now takes a `stats` step figure with a `title` and with five to eight items, as `tellagen_build_figure` returns it for a Tellagen that lists `figure_extras_v1`. The input check refused both.
+- `tellagen_build_figure` skips a sample whose value is an empty string, in a trend and in a sparkline. It read such a sample as 0.
 - A client that does not fill in `${TELLAGEN_API_URL:-}` or `${TELLAGEN_API_KEY:-}` in the env block of the server (the plugin's `.mcp.json` passes both) handed that text over as the value. The server took it for an address, and every call failed on it instead of offering the sign-in. A `TELLAGEN_` variable that holds such a placeholder now counts as not set, for the server, the hooks and the commands, and the server says so on standard error.
 
 ### Changed
 
+- A lead keeps its `verdict` (`expected_behavior`, `false_alarm` or `already_handled`) for every kind of hint, also `past_verdict`. Before, the MCP dropped it, so the model did not see what a person called the past incident. Any other value is still dropped.
 - The guide no longer opens with "Read all of it". The server instructions and the pickup answer already name the part to read at each step, so the first lines now say that.
 
 ## 0.9.0 - 2026-11-22

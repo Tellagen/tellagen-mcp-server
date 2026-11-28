@@ -2,6 +2,7 @@
   "format": 1,
   "about": "What this server sends to Tellagen and relies on, for the diagnosis path. A test keeps this file equal to the source, and a second test compares it with the protocol file that Tellagen publishes in the contract bundle (contracts/runbooks/v2/client-protocol.json) once the pinned bundle has one. A name that Tellagen no longer knows turns the second test red and names the route and the field.",
   "protocol_capabilities_sent": [
+    "alert_repeat_v1",
     "cause_lead_v1",
     "code_locations_v1",
     "completion_coverage_v2",
@@ -13,6 +14,7 @@
     "gap_findings_v2",
     "guidance_default_v1",
     "investigation_window_v1",
+    "plain_status_v1",
     "question_checks_v1",
     "responder_notes_v1",
     "run_images_v1",
@@ -23,6 +25,7 @@
   ],
   "server_capabilities_used": [
     "action_answer_v1",
+    "alert_repeat_v1",
     "alert_verdict_v1",
     "client_heartbeat_v1",
     "code_locations_v1",
@@ -36,24 +39,31 @@
     "figure_limits_v1",
     "fix_options_v1",
     "log_lines_v1",
+    "plain_status_v1",
     "question_checks_v1",
     "recorded_steps_v1",
     "run_amendments_v1",
     "run_images_v1",
-    "run_requests_v1"
+    "run_requests_v1",
+    "stat_sparklines_v1"
   ],
   "server_capabilities_since": {
+    "alert_repeat_v1": "2026-11-28.1",
     "alert_verdict_v1": "2026-11-18.2",
     "code_locations_v1": "2026-11-21.1",
     "diagnosis_verdict_v1": "2026-11-21.1",
     "fix_options_v1": "2026-11-21.1",
+    "plain_status_v1": "2026-11-25.1",
     "run_amendments_v1": "2026-11-18.1",
-    "run_requests_v1": "2026-11-18.1"
+    "run_requests_v1": "2026-11-18.1",
+    "stat_sparklines_v1": "2026-11-25.1"
   },
   "protocol_capabilities_since": {
+    "alert_repeat_v1": "2026-11-28.1",
     "code_locations_v1": "2026-11-21.1",
     "diagnosis_verdict_v1": "2026-11-21.1",
     "fix_options_v1": "2026-11-21.1",
+    "plain_status_v1": "2026-11-25.1",
     "run_requests_v1": "2026-11-18.1"
   },
   "client_headers_sent": [
@@ -122,8 +132,8 @@
     {
       "method": "PATCH",
       "path": "/api/v1/investigations/{id}",
-      "request_fields": ["status", "failure_reason", "mitigation_state", "dry_run", "result_summary", "result_summary.answer", "result_summary.alert_verdict", "result_summary.fix_options"],
-      "fields_since": {"result_summary.alert_verdict": "2026-11-18.2", "result_summary.fix_options": "2026-11-21.1"},
+      "request_fields": ["status", "failure_reason", "mitigation_state", "dry_run", "result_summary", "result_summary.answer", "result_summary.alert_verdict", "result_summary.fix_options", "result_summary.current_state", "result_summary.repeat_check"],
+      "fields_since": {"result_summary.alert_verdict": "2026-11-18.2", "result_summary.fix_options": "2026-11-21.1", "result_summary.current_state": "2026-11-25.1", "result_summary.repeat_check": "2026-11-28.1"},
       "response_fields": ["dry_run", "ready", "repairs", "repairs.advice", "warnings", "coverage"],
       "error_codes": []
     },
@@ -204,7 +214,8 @@
       "method": "POST",
       "path": "/api/v1/investigation-runs/{id}/amendments",
       "since_bundle": "2026-11-18.1",
-      "request_fields": ["reason", "findings", "findings.finding_type", "findings.role", "findings.claim", "findings.evidence_summary", "findings.evidence_refs", "findings.confidence", "findings.confidence_reason", "findings.screenshots", "findings.checks", "coverage", "coverage.id", "coverage.source", "coverage.state", "coverage.summary", "coverage.links", "coverage.step_ids", "coverage.integration_id", "coverage.finding_ids", "coverage.reason", "coverage.retryable", "coverage.detail", "result_summary", "request_id"],
+      "request_fields": ["reason", "findings", "findings.finding_type", "findings.role", "findings.claim", "findings.evidence_summary", "findings.evidence_refs", "findings.confidence", "findings.confidence_reason", "findings.screenshots", "findings.checks", "coverage", "coverage.id", "coverage.source", "coverage.state", "coverage.summary", "coverage.links", "coverage.step_ids", "coverage.integration_id", "coverage.finding_ids", "coverage.reason", "coverage.retryable", "coverage.detail", "result_summary", "result_summary.current_state", "result_summary.repeat_check", "request_id"],
+      "fields_since": {"result_summary.current_state": "2026-11-25.1", "result_summary.repeat_check": "2026-11-28.1"},
       "response_fields": ["run", "run.amend_until", "amendment", "amendment.version", "findings", "warnings"],
       "error_codes": ["run_not_amendable", "run_amendment_conflict", "run_amendment_limit", "run_taken_over", "investigation_run_ended", "run_request_not_available"]
     },

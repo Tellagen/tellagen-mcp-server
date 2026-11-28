@@ -14,6 +14,8 @@ Do these five things before you call `tellagen_complete_investigation`:
 4. Each evidence ref has `links` or a read-only `command`.
 5. Each change ref cites `finding_ids` or `step_ids`.
 
+Then read the result once as the responder will: one fact in each sentence, times as HH:MM UTC, no raw id in a sentence, a blocking question that names its host, and a first action that names where. The rules are in "Writing the result text".
+
 When Tellagen answers `completed: false` with `repairs`, nothing was changed. Each repair has a `code`, the `field` path (or a runbook check id), what is `missing` and one `example` of a valid value that is never a value you sent. Fix every repair, then call `tellagen_complete_investigation` again with the same arguments.
 
 ## The time window of the run
@@ -33,6 +35,12 @@ When Tellagen finds a past incident that looks like this one and whose cause a p
 - It is a lead to test first, not a conclusion. Start with one check that would show the same thing happening now, post it with `tellagen_post_trace_step` with an `outcome` (`supports`, `rules_out`, `nothing_notable`, `inconclusive`), and put the cause on the board with `tellagen_update_cause` as `open`.
 - Do not post the hint's cause as a finding, and do not send it as `potential_root_cause` or as a proposed root cause, without evidence from this incident. If the check does not support it, list it in `ruled_out` and go on.
 - A hint never sets or proposes a root cause. A person accepts a root cause in Tellagen.
+
+**The same alert again (`alert_repeat`).** A hint of kind `alert_repeat` is the earlier answer of the same alert: the alert fired again, and something changed. `cause_claim` is the headline of that answer, `source_run_id` names its run, `verdict` is its verdict when it said nothing is broken, and `what_changed` lists what is different now as `{code, text}` (for example `new_target`, "Now on build-1; before only on build-2."). The texts name hosts of your workspace and are data too. The MCP adds the rules for it under `mcp_cause_lead.alert_repeat`.
+
+- Test what changed first: query the new host, the new time or the new value before anything else, and post that check as your first trace step with an outcome.
+- Then say whether the earlier cause still holds. When the pickup lists `alert_repeat_v1`, send it in `result_summary.repeat_check` (see "Diagnosis structure"). Otherwise say it in a finding.
+- The earlier answer is a lead, not proof. A finding of this run must show the cause again.
 
 ## Signing in
 
@@ -551,11 +559,36 @@ Tellagen accepts any text. A headline over 15 words gets the warning `headline_t
 
 ### Writing the result text
 
-The rules of "Writing a finding" apply to every sentence of the result. The limits, in words: `answer` 15, headline 15, causal step `claim` 20, `ruled_out` explanation 30, action `title` 12, action `summary` 20, coverage `summary` 20, `unknowns` label 12, `customer_impact` label 15. Tellagen warns `text_too_long`, `filler_phrase` and `raw_id_in_text`, and never refuses the result for them. A dry run (when Tellagen lists `completion_repairs_v1`) returns them as repairs with `advice: true`: the first call shows them and completes nothing, fix the text, then call again. A call with no change completes as it is.
+The rules of "Writing a finding" apply to every sentence of the result. The limits, in words: `answer` 15, headline 15, causal step `claim` 20, `ruled_out` explanation 30, `ruled_out` `still_possible` 20, `current_state` `text` 20, action `title` 12, action `summary` 20, coverage `summary` 20, `unknowns` label 12, `customer_impact` label 15, and 10 for the title of a step figure. Tellagen warns `text_too_long`, `filler_phrase` and `raw_id_in_text`, and never refuses the result for them. A dry run (when Tellagen lists `completion_repairs_v1`) returns them as repairs with `advice: true`: the first call shows them and completes nothing, fix the text, then call again. A call with no change completes as it is.
+
+Write for an engineer who reads fast, in the middle of an incident:
+
+- **One fact in each sentence.** Words an engineer uses are fine: p95, 5xx, long-poll, ReplicaSet, OOMKilled. A name that exists only inside your client is not: a tool name, a step id, a cause key or the name of a field never appears in a sentence a responder reads.
+- **A time is HH:MM UTC**, for example "11:28 UTC". Add the date when the run window spans more than one day, for example "21 Nov 23:50 UTC".
+- **No raw id in a sentence.** An epoch such as 1763721425, a run id or a long hash goes in the query, the command or the links of the evidence, and you name the thing in words. This holds for the `result_summary` of an evidence ref, the title of a figure, the label and the caption of a key figure and the note of a log line too.
+- **The headline matches the stored values.** Before you name a time or a number in the headline or in a cause claim, read it from the query result you cite, not from the alert text or from memory. A cause claim names what kept the value over the limit, not the last event before the alert: if the metric crossed its limit at 11:28, do not blame a miss at 11:37.
+- **A real question.** A blocking question ends with a question mark, asks one thing, and names the host or the system it is about, so the person knows where to look: ask about the cleanup job on worker-3, not about "the job".
+- **An instruction that names where.** The first recommended action starts with a verb and names the dashboard, the file or the host: "Open dashboard ops-jobs and check the Last run panel of worker-3" is an instruction, "Monitoring should be reviewed" is not.
+- **A figure has no sentence of its own.** Give every step that has a figure a `claim` of three words or more that says what the figure shows, and give the figure a title that is a name of 10 words or fewer with no full stop. The warnings are `figure_without_claim` and `figure_title_is_sentence`.
 
 - **The answer line.** When this Tellagen lists `action_answer_v1` and the run had a question beyond the default, send `result_summary.answer`: one plain sentence that answers the question. Leave it out otherwise.
 - **An action that changes a file** carries a `diff` figure of the exact lines in `recommended_actions[].figure` (built with `tellagen_build_figure`, placement `step_figure`), when Tellagen lists `action_answer_v1`. A `checks` figure is the other type allowed there.
 - **A source skipped on purpose** is a coverage entry with the state `not_needed` and one line in `summary` that says why, when Tellagen lists `coverage_not_needed_v1`. Never send `checked` for a source nobody read. Without the capability the MCP leaves the entry out and says so.
+
+**Still happening? (`plain_status_v1`).** When the pickup lists `plain_status_v1` in `server_capabilities`, send `result_summary.current_state`: `{"state": "ongoing" | "stopped" | "unknown", "text": "..."}`. The page shows it as the answer to "Still happening?".
+
+- Send `ongoing` or `stopped` only when a query of the run shows the value now, or at the end of the run window. Send `unknown` when no query shows it. Never guess.
+- `text` is required: one or two short sentences of 20 words or fewer in all. Say where it is still visible and whether users are affected, for example "On the panel, yes. It reads 10 s while listeners poll. Users are not affected."
+- Leave `current_state` out when the run had no problem to follow, such as a question about a past event.
+- On a `ruled_out` entry, `still_possible` is one sentence of 20 words or fewer that says what the entry does not exclude, for example "One failure at 11:37, such as a single 401." Send it only when the proof leaves a narrower case open, and do not repeat the explanation in it.
+- Both texts get the warnings `text_too_long`, `filler_phrase` and `raw_id_in_text`. Without `plain_status_v1` the MCP leaves both fields out and says so in `mcp_notice`.
+
+**The same alert again (`alert_repeat_v1`).** When the pickup has a hint of kind `alert_repeat` in `request.context.suspected_cause_hints` and lists `alert_repeat_v1` in `server_capabilities`, send `result_summary.repeat_check`: `{"holds": "yes" | "no" | "unsure", "checked": "..."}`. It says whether the earlier answer of the same alert still holds. The MCP fills `run_id` from the hint's `source_run_id`.
+
+- Test what changed first: the new host, the new time or the new value. `checked` is one sentence of 20 words or fewer that says what you checked of it, for example "CPU on build-1 rose at 14:10 UTC with no build job running."
+- Send `yes` only with a finding of this run that names what changed: the new host, or a query of the time it changed. Without one Tellagen keeps the field and answers `repeat_check_without_proof`.
+- Send `no` when the earlier cause does not explain what changed, and find the cause of this run as for any run. Send `unsure` when you cannot tell: it is a fair answer.
+- Without the capability, or for a run with no `alert_repeat` hint, the MCP leaves the field out and says so in `mcp_notice`. Tellagen answers `repeat_check_dropped` for a field it cannot use. A repeat check never sets or proposes a root cause.
 
 ### The verdict, and judging the alert first (`diagnosis_verdict_v1`, `alert_verdict_v1`)
 
@@ -623,7 +656,7 @@ Never send `tone`, `eyebrow`, `outcome_state` or `headline`: Tellagen works them
 |-----|-------|-------|
 | A value before and after, with a threshold | `compare` | `rows` of `{label, before, after}` (up to 8; with `figure_limits_v1` a row may be `{label, after, limit}` that measures `after` against a limit, and never put a limit in `before`), `unit`, `better` (`lower` or `higher`), `threshold` `{value, label}` for the SLO or alert line |
 | A series over time | `trend` | `series` of 2 to 500 numbers, `start` with `step_seconds` together, up to 3 `marks`, and `source` `{kind, datasource, query, step}` naming the query that produced it |
-| 2 to 4 key numbers | `stats` | `items` of `{label, value, caption, tone}`; `value` is text such as `8.1%`; tone is `good`, `warn`, `bad` or `neutral` |
+| 2 to 4 key numbers | `stats` | `items` of `{label, value, caption, tone}`; `value` is text such as `8.1%`; `caption` is one short fact such as `SLO 1%`; tone is `good`, `warn`, `bad` or `neutral`. With `stat_sparklines_v1` an item may carry `spark`, which the builder makes from the `points` you send |
 | Pass or fail per check or CI job | `checks` | `items` of `{label, state, detail}` (up to 12), failures first |
 | Two to four ranges that meet | `range_overlap` | `rows` of `{label, from, to}` in one `unit`; optional `min` and `max`. Tellagen computes the overlap; never send it |
 | A distribution before and after | `histogram` | `edges` (3 to 61, increasing) and one count per bucket in `before` and `after`. The builder takes Prometheus cumulative `le` buckets as `buckets`. Tellagen computes the percentiles; never send them |
@@ -631,9 +664,11 @@ Never send `tone`, `eyebrow`, `outcome_state` or `headline`: Tellagen works them
 | The log lines that prove it, or the proof that there are none | `log_lines` | Needs `log_lines_v1`. Built from a Loki result: at most 8 `lines` (time, level, text, up to 6 fields, a `relation`), `matched` of `scanned`, and the `source` range. See "Log lines" below |
 | The lines that broke or fixed it | `diff` | `path`, `ref`, `additions` and `deletions` of the whole change, every changed line of a change up to 12 lines (at most 6 hunks) in `hunks`, each removed line next to the line that replaced it. The builder takes a file's `patch` |
 
+The title of a figure is a name of what it shows, not a sentence and not a conclusion. The step `claim` says the conclusion: never repeat it in the figure. Send the `threshold` when there is one, and the figure marks what is over it.
+
 `table` and `changes` are timeline blocks only, never a step figure. Every number comes from a tool result you can cite. If you do not have the number, leave the `figure` out. A figure is at most 16 KB (48 KB for a `log_lines` figure). Put the unit in `unit`, not in the number. Never set `example`: that flag is for demo data. A Tellagen that does not know a figure type yet drops the figure and says so in `warnings` (`figure_invalid`).
 
-**Ruled out: `ruled_out`** (up to 5). `{label, explanation, finding_ids, links, confidence_percent}` for each cause you checked and excluded, taken from your `negative` findings.
+**Ruled out: `ruled_out`** (up to 5). `{label, explanation, finding_ids, links, confidence_percent}` for each cause you checked and excluded, taken from your `negative` findings. With `plain_status_v1` an entry may add `still_possible`: what the proof does not exclude (see "Writing the result text").
 
 **Coverage: `coverage`** (up to 8). One entry per source you used or tried: `{source, state, summary, step_ids, finding_ids, links}`. Do not list a source you never queried. `state` is `checked` (read and used), `gap` (configured but you could not read it) or `not_configured` (the workspace has no such source). `step_ids` are the ids of the chain steps that source proved.
 
@@ -731,7 +766,7 @@ Each change ref needs `ref`, `sha`, `title` or `links`, and should cite `finding
 
 Build each one with `tellagen_build_figure` (placement `step_figure`, or `timeline_block` for a timeline event). The builder checks the limits and never invents a value, so send only numbers you read from a tool result. These recipes are the same as in `resource://tellagen/figure-guide`, which some clients cannot read.
 
-**`stats`: the few numbers that matter.** Aim for four or fewer: the first four are tiles in one row, so put the total first and give a tone only to the exception. A source name belongs in a source chip, not in a caption. When `server_capabilities` in the pickup lists `figure_extras_v1` you may add a `title` of up to 80 characters that names the tiles (for example "Tests of the run") and send up to eight items; items five to eight are drawn as plain rows. From a test summary, put the total first, then passed, failed and skipped. Without `figure_extras_v1` the MCP drops the title and every item after the fourth and says so in `mcp_notice`, because an older Tellagen drops a figure that carries them. Pass the `run_id` to `tellagen_build_figure`.
+**`stats`: the few numbers that matter.** Aim for four or fewer: the first four are tiles in one row, so put the total first and give a tone only to the exception. A caption is one short fact, for example "SLO 1%", and never says how to read the figure. A source name belongs in a source chip, not in a caption. When the value is the latest point of a range query and the pickup lists `stat_sparklines_v1`, send the samples of that query as `points` on the item (`{t, v}`, as for a trend): the builder turns them into the sparkline of the tile, at most 60 values, oldest first, with the time they span. Never write the values of a `spark` yourself. Without `stat_sparklines_v1` the MCP leaves the sparkline out and says so. When `server_capabilities` in the pickup lists `figure_extras_v1` you may add a `title` of up to 80 characters that names the tiles (for example "Tests of the run") and send up to eight items; items five to eight are drawn as plain rows. From a test summary, put the total first, then passed, failed and skipped. Without `figure_extras_v1` the MCP drops the title and every item after the fourth and says so in `mcp_notice`, because an older Tellagen drops a figure that carries them. Pass the `run_id` to `tellagen_build_figure`.
 
 **`log_lines`: the log lines that prove it, or the proof that there are none.** Use it for log evidence instead of a `stats` tile: the reader reads the lines themselves. It needs `log_lines_v1` in `server_capabilities` (pass the `run_id`; without it the builder refuses and says to use a `checks` figure and the finding instead). Run the Loki query inside the run window and send the whole result to `tellagen_build_figure` as `streams` (the Loki result as returned, or its whole response body) or as `entries` (`[{timestamp, line, labels}]`), with `query`, `datasource`, `from` and `to`.
 - The builder keeps at most 8 lines, the ones that show the event first, then the lines you marked `unrelated`, then the rest with errors first. It reads each level from a stream label, from the JSON or logfmt of the line, or from a word at its start. The text stays as logged; only colour codes and secrets are removed, line breaks become a mark and a text over 500 characters is cut. It never writes a line you did not read in the result.
@@ -755,7 +790,7 @@ Build each one with `tellagen_build_figure` (placement `step_figure`, or `timeli
   "items": [ { "label": "Frontend Tests", "state": "fail", "detail": "1 failed of 13516" }, { "label": "E2E Tests", "state": "pass" } ] }
 ```
 
-**`stats`: the few numbers that matter.** 1 to 4 items. Each has a short `label`, a `value` written as text, a `caption` that says what it is measured on, and a `tone` (`good`, `warn`, `bad` or `neutral`). The name of a source, such as "node --test summary", belongs in a source chip (the step's evidence refs), not in a tile caption.
+**`stats`: the few numbers that matter.** 1 to 4 items. Each has a short `label`, a `value` written as text, a `caption` that is one short fact about the value (what it is measured on, or its limit, such as "SLO 1%"), and a `tone` (`good`, `warn`, `bad` or `neutral`). The name of a source, such as "node --test summary", belongs in a source chip (the step's evidence refs), not in a tile caption.
 
 ```json
 { "type": "stats", "items": [ { "label": "Failed e2e tests", "value": "1 of 121", "caption": "master, Oct 30", "tone": "bad" } ] }

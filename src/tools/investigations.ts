@@ -38,6 +38,8 @@ import {
   stripResultChanges,
   stripResultDiffLines,
   stripResultFigureExtras,
+  stripResultPlainStatus,
+  stripResultStatSparklines,
   stripResultFigureLimits,
   stripResultActionAnswer,
   stripResultAlertVerdict,
@@ -47,6 +49,8 @@ import {
   supportsAlertVerdict,
   supportsDiagnosisVerdict,
   supportsFixOptions,
+  supportsPlainStatus,
+  supportsStatSparklines,
   supportsCoverageNotNeeded,
   supportsRunAmendments,
   stripResultCoverageReasons,
@@ -55,6 +59,11 @@ import {
   ALERT_VERDICT_CAPABILITY,
   DIAGNOSIS_VERDICT_CAPABILITY,
   FIX_OPTIONS_CAPABILITY,
+  PLAIN_STATUS_CAPABILITY,
+  STAT_SPARKLINES_CAPABILITY,
+  currentStateSchema,
+  repeatCheckSchema,
+  adaptRepeatCheck,
   alertVerdictSchema,
   COVERAGE_NOT_NEEDED_CAPABILITY,
   FIGURE_LIMITS_CAPABILITY,
@@ -273,6 +282,8 @@ export const resultSummarySchema = z
     recommended_actions: z.array(resultRecommendedActionSchema).optional(),
     ...resultStructureShape,
     ...resultChangeShape,
+    current_state: currentStateSchema.optional(),
+    repeat_check: repeatCheckSchema.optional(),
     alert_verdict: alertVerdictSchema.optional(),
     fix_options: fixOptionsSchema.optional(),
     window_suggestion: windowSuggestionSchema.optional(),
@@ -948,6 +959,13 @@ export async function adaptResultSummary(
       current = extras.summary;
       notices.push(unsupportedNotice(extras.removed, FIGURE_EXTRAS_CAPABILITY));
     }
+    // The sparkline of a stats item goes only to a backend that advertises
+    // stat_sparklines_v1; an older one rejects it and drops the whole figure.
+    const sparks = stripResultStatSparklines(current);
+    if (sparks.removed.length > 0 && !(await supportsStatSparklines(client, runId))) {
+      current = sparks.summary;
+      notices.push(unsupportedNotice(sparks.removed, STAT_SPARKLINES_CAPABILITY));
+    }
   }
   if (result_summary !== undefined) {
     // A compare row limit goes only to a backend that advertises figure_limits_v1.
@@ -980,6 +998,16 @@ export async function adaptResultSummary(
       current = fixes.summary;
       notices.push(unsupportedNotice(fixes.removed, FIX_OPTIONS_CAPABILITY));
     }
+    // current_state and still_possible go only to a backend that lists plain_status_v1.
+    const plain = stripResultPlainStatus(current);
+    if (plain.removed.length > 0 && !(await supportsPlainStatus(client, runId))) {
+      current = plain.summary;
+      notices.push(unsupportedNotice(plain.removed, PLAIN_STATUS_CAPABILITY));
+    }
+    // repeat_check goes only to a run with an alert_repeat hint whose Tellagen lists alert_repeat_v1.
+    const repeat = await adaptRepeatCheck(client, runId, current);
+    current = repeat.summary;
+    if (repeat.notice) notices.push(repeat.notice);
     // A source skipped on purpose goes as not_needed, never as checked.
     const skipped = stripResultNotNeeded(current);
     if (skipped.removed.length > 0 && !(await supportsCoverageNotNeeded(client, runId))) {

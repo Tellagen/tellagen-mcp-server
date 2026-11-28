@@ -12,6 +12,8 @@ import {
   supportsFigureLimits,
   FIGURE_LIMITS_CAPABILITY,
   supportsLogLines,
+  STAT_SPARKLINES_CAPABILITY,
+  supportsStatSparklines,
   unsupportedNotice,
 } from "../diagnosis-structure.js";
 import {
@@ -20,6 +22,7 @@ import {
   withoutDiffLineDetailInBlock,
   withoutFigureExtrasInBlock,
   withoutFigureLimitsInBlock,
+  withoutStatSparklinesInBlock,
 } from "../figures.js";
 
 const timelineMutationSchema = {
@@ -121,8 +124,9 @@ function postmortemImportBody(input: {
 /**
  * The blocks of a timeline event as the backend takes them. A diff block loses
  * its unchanged lines and line numbers unless the backend advertises
- * diff_lines_v1, and a stats or run_history block loses its figure extras
- * unless it advertises figure_extras_v1, because an older one rejects them and
+ * diff_lines_v1, a stats or run_history block loses its figure extras unless
+ * it advertises figure_extras_v1, and a stats block loses its sparklines unless
+ * it advertises stat_sparklines_v1, because an older one rejects them and
  * drops the block.
  */
 async function blocksForBackend<T extends { blocks?: unknown[] }>(
@@ -164,6 +168,17 @@ async function blocksForBackend<T extends { blocks?: unknown[] }>(
   if (extrasRemoved.length > 0 && !(await supportsFigureExtras(client))) {
     blocks = noExtras;
     notices.push(unsupportedNotice(extrasRemoved, FIGURE_EXTRAS_CAPABILITY));
+  }
+
+  const sparksRemoved: string[] = [];
+  const noSparks = blocks.map((block, index) => {
+    const result = withoutStatSparklinesInBlock(block);
+    if (result.what.length > 0) sparksRemoved.push(`blocks[${index}]`);
+    return result.block;
+  });
+  if (sparksRemoved.length > 0 && !(await supportsStatSparklines(client))) {
+    blocks = noSparks;
+    notices.push(unsupportedNotice(sparksRemoved, STAT_SPARKLINES_CAPABILITY));
   }
 
   const limitsRemoved: string[] = [];
