@@ -652,7 +652,7 @@ export const repeatCheckSchema = z
       .describe("One plain sentence of 20 words or fewer: what this run checked of the thing that changed."),
   })
   .describe(
-    "Only for a run whose pickup has a hint of kind alert_repeat and lists alert_repeat_v1: does the earlier answer of the same alert still hold. The server fills run_id from the hint.",
+    "Only for a run whose pickup has a hint of kind alert_repeat and lists alert_repeat_v1: does the earlier answer of the same alert still hold. This MCP fills run_id from the hint.",
   );
 
 export const COVERAGE_REASONS = ["wrong_account", "not_connected", "auth_expired", "error", "no_source"] as const;
@@ -1492,6 +1492,10 @@ const WARNING_ADVICE: Record<string, string> = {
     "send repeat_check only for a run whose pickup has an alert_repeat hint and lists alert_repeat_v1, with holds yes, no or unsure and a checked sentence",
   repeat_check_without_proof:
     "holds yes needs a finding of this run that names what changed (the new host, or a query of the time it changed): post it, or send holds unsure",
+  figure_without_claim:
+    "give every step that has a figure a claim of three words or more that says what the figure shows",
+  figure_title_is_sentence:
+    "make the figure title a name of 10 words or fewer with no full stop, and put the sentence in the step claim",
   headline_too_long:
     "write the headline claim (conclusion.sentence) in 15 words or fewer, with one cause, and keep the detail in findings",
   question_not_a_question:

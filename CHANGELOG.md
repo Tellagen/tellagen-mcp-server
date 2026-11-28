@@ -20,6 +20,7 @@ All notable changes to `@tellagen/mcp-server` are in this file. The newest versi
 
 ### Changed
 
+- A lead keeps its `verdict` (`expected_behavior`, `false_alarm` or `already_handled`) for every kind of hint, also `past_verdict`. Before, the MCP dropped it, so the model did not see what a person called the past incident. Any other value is still dropped.
 - The guide no longer opens with "Read all of it". The server instructions and the pickup answer already name the part to read at each step, so the first lines now say that.
 
 ## 0.9.0 - 2026-11-22

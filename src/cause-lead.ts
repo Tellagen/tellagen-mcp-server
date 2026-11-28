@@ -51,11 +51,19 @@ export const ALERT_REPEAT_RULES = [
   "Then say whether the earlier cause still holds: yes only with a finding of this run that names what changed, no when it does not explain what changed (then find the cause of this run as for any run), unsure when you cannot tell.",
 ];
 
-/** How to send the answer to "does the earlier cause still hold", for this Tellagen. */
-export function repeatCheckRule(listed: boolean): string {
-  return listed
-    ? "Send the answer with tellagen_complete_investigation as result_summary.repeat_check: holds (yes, no or unsure) and checked, one sentence of 20 words or fewer on what you checked of the thing that changed. The server fills run_id from the hint."
-    : "This Tellagen does not list alert_repeat_v1 for this run, so it does not take result_summary.repeat_check. Say in a finding whether the earlier cause still holds.";
+/**
+ * How to send the answer to "does the earlier cause still hold", for this
+ * Tellagen: whether it lists alert_repeat_v1, and whether the hint names its
+ * source run (repeat_check goes out only with both).
+ */
+export function repeatCheckRule(listed: boolean, hasSourceRun = true): string {
+  if (!listed) {
+    return "This Tellagen does not list alert_repeat_v1 for this run, so it does not take result_summary.repeat_check. Say in a finding whether the earlier cause still holds.";
+  }
+  if (!hasSourceRun) {
+    return "This hint names no source run, so this MCP does not send result_summary.repeat_check. Say in a finding whether the earlier cause still holds.";
+  }
+  return "Send the answer with tellagen_complete_investigation as result_summary.repeat_check: holds (yes, no or unsure) and checked, one sentence of 20 words or fewer on what you checked of the thing that changed. This MCP fills run_id from the hint.";
 }
 
 function clean(value: unknown): string | undefined {
@@ -237,7 +245,7 @@ export function markLeadsInText(text: string): string {
 function leadBlock(field: string, hints: readonly unknown[], listed: boolean) {
   const block: Record<string, unknown> = { untrusted_data: true, field, rules: CAUSE_LEAD_RULES };
   if (hints.some((hint) => isRecord(hint) && hint.kind === ALERT_REPEAT_KIND)) {
-    block.alert_repeat = { rules: [...ALERT_REPEAT_RULES, repeatCheckRule(listed && repeatSource(hints) !== undefined)] };
+    block.alert_repeat = { rules: [...ALERT_REPEAT_RULES, repeatCheckRule(listed, repeatSource(hints) !== undefined)] };
   }
   return block;
 }

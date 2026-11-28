@@ -79,11 +79,18 @@ describe("a hint of kind alert_repeat", () => {
     for (const rule of ALERT_REPEAT_RULES) expect(rules).toContain(rule);
     expect(rules).toContain("Test what changed first");
     expect(rules).toContain("result_summary.repeat_check");
+    expect(rules).toContain("This MCP fills run_id from the hint");
     expect(listed.request.context.suspected_cause_hints[0].what_changed).toEqual(repeatHint.what_changed);
 
     const older = withCauseLead(bundle(["cause_lead_v1"], [repeatHint])) as any;
     expect(older.mcp_cause_lead.alert_repeat.rules.join(" ")).toContain("Say in a finding whether the earlier cause still holds");
     expect(older.mcp_cause_lead.alert_repeat.rules.join(" ")).not.toContain("Send the answer with tellagen_complete_investigation");
+
+    // A Tellagen that lists the capability, with a hint that names no valid source run.
+    const noSource = withCauseLead(bundle(["cause_lead_v1", "alert_repeat_v1"], [{ ...repeatHint, source_run_id: "not an id" }])) as any;
+    const noSourceRules = noSource.mcp_cause_lead.alert_repeat.rules.join(" ");
+    expect(noSourceRules).toContain("names no source run");
+    expect(noSourceRules).not.toContain("does not list alert_repeat_v1");
 
     const plain = withCauseLead(bundle(["cause_lead_v1", "alert_repeat_v1"], [similarHint])) as any;
     expect(plain.mcp_cause_lead).not.toHaveProperty("alert_repeat");
@@ -106,10 +113,10 @@ describe("repeat_check in the result", () => {
     expect(parsed.repeat_check).toEqual(check);
   });
 
-  it("has advice for both warnings", () => {
-    const line = summarizeWarnings([{ code: "repeat_check_dropped" }, { code: "repeat_check_without_proof" }]) ?? "";
-    expect(line).toMatch(/1 repeat_check_dropped \(/);
-    expect(line).toMatch(/1 repeat_check_without_proof \(/);
+  it("has advice for both warnings, and for the figure warnings the guide names", () => {
+    const codes = ["repeat_check_dropped", "repeat_check_without_proof", "figure_without_claim", "figure_title_is_sentence"];
+    const line = summarizeWarnings(codes.map((code) => ({ code }))) ?? "";
+    for (const code of codes) expect(line).toMatch(new RegExp(`1 ${code} \\(`));
   });
 });
 

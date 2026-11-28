@@ -90,6 +90,26 @@ describe("what the senders do with the plain status", () => {
     expect(harness.json(result).mcp_notice).toBeUndefined();
   });
 
+  it("sends a Tellagen that does not list it exactly the body of a result without the fields", async () => {
+    const bodyFor = async (result: unknown) => {
+      fetchSpy.mockReset();
+      const harness = createToolHarness();
+      fetchSpy
+        .mockResolvedValueOnce(pickup(["diagnosis_structure_v1"]))
+        .mockResolvedValueOnce(jsonResponse({ run: { id: "run-1" } }));
+      await harness.callTool("tellagen_pick_up_investigation", { investigation_run_id: "run-1" });
+      await harness.callTool("tellagen_complete_investigation", { run_id: "run-1", status: "completed", result_summary: result });
+      return sent(1);
+    };
+    const withFields = await bodyFor(summary());
+    const { current_state: _state, ...rest } = summary();
+    const today = await bodyFor({
+      ...rest,
+      ruled_out: rest.ruled_out.map(({ still_possible: _still, ...entry }: Record<string, unknown>) => entry),
+    });
+    expect(withFields).toEqual(today);
+  });
+
   it("leaves both fields out, with a notice, for a Tellagen that does not list it", async () => {
     const harness = createToolHarness();
     fetchSpy
