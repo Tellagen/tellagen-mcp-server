@@ -96,6 +96,13 @@ export const FIGURE_EXTRAS_CAPABILITY = "figure_extras_v1";
 export const FIGURE_LIMITS_CAPABILITY = "figure_limits_v1";
 /** The server takes a log_lines figure. */
 export const LOG_LINES_CAPABILITY = "log_lines_v1";
+/** The server takes a `spark` (a sparkline) on a stats item. */
+export const STAT_SPARKLINES_CAPABILITY = "stat_sparklines_v1";
+/** A sparkline holds this many values, oldest first, and may say how much time they span. */
+export const MIN_STATS_SPARK_VALUES = 4;
+export const MAX_STATS_SPARK_VALUES = 60;
+const MIN_STATS_SPARK_WINDOW_SECONDS = 60;
+const MAX_STATS_SPARK_WINDOW_SECONDS = 2_592_000;
 
 const number = z.number().finite().min(-MAX_ABS).max(MAX_ABS);
 const positive = z.number().finite().gt(0).max(MAX_ABS);
@@ -108,27 +115,47 @@ const thresholdSchema = z
   })
   .strict();
 
+/** The sparkline of a stats item as Tellagen takes it. */
+export const statsSparkSchema = z
+  .object({
+    values: z
+      .array(number)
+      .min(MIN_STATS_SPARK_VALUES)
+      .max(MAX_STATS_SPARK_VALUES)
+      .describe("4 to 60 values of the same query as the value, oldest first"),
+    window_seconds: z
+      .number()
+      .int()
+      .min(MIN_STATS_SPARK_WINDOW_SECONDS)
+      .max(MAX_STATS_SPARK_WINDOW_SECONDS)
+      .optional()
+      .describe("The time the values span, from the first to the last, in whole seconds"),
+  })
+  .strict();
+
+const statsItemBase = z
+  .object({
+    label: text(1, 48),
+    value: text(1, 32).describe("The value as measured, with no unit inside a number you also chart"),
+    caption: z.string().max(64).optional().describe("One short fact about the value, for example SLO 1%. Never how to read the figure."),
+    tone: z
+      .enum(["good", "warn", "bad", "neutral"])
+      .optional()
+      .describe("A meaning: good healthy or recovered, warn needs attention, bad failing. Never emphasis."),
+    spark: statsSparkSchema
+      .optional()
+      .describe("The sparkline of the value. Send points to tellagen_build_figure and let it make this. Only when the server lists stat_sparklines_v1."),
+  })
+  .strict();
+
+const STATS_ITEMS_NOTE =
+  "One to eight numbers; aim for four or fewer. The first four are tiles (the total first, colour only on the exception), the rest plain rows. More than four only when the server lists figure_extras_v1.";
+
 const statsBase = z
   .object({
     type: z.literal("stats"),
     title: blockText(80).optional().describe("A name for the tiles, for example Tests of the run. Only when the server lists figure_extras_v1."),
-    items: z
-      .array(
-        z
-          .object({
-            label: text(1, 48),
-            value: text(1, 32).describe("The value as measured, with no unit inside a number you also chart"),
-            caption: z.string().max(64).optional().describe("What the value is measured on"),
-            tone: z
-              .enum(["good", "warn", "bad", "neutral"])
-              .optional()
-              .describe("A meaning: good healthy or recovered, warn needs attention, bad failing. Never emphasis."),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(MAX_STATS_ITEMS)
-      .describe("One to eight numbers; aim for four or fewer. The first four are tiles (the total first, colour only on the exception), the rest plain rows. More than four only when the server lists figure_extras_v1."),
+    items: z.array(statsItemBase).min(1).max(MAX_STATS_ITEMS).describe(STATS_ITEMS_NOTE),
   })
   .strict();
 
@@ -738,6 +765,39 @@ export const timelineBlockSchema = z.discriminatedUnion("type", [
  */
 export const timelineBlockRefSchema = z.object({ type: z.enum(TIMELINE_BLOCK_TYPES) }).passthrough();
 
+/** One raw sample of a range query, as a trend and a stats sparkline take it. */
+const samplePoint = z
+  .object({
+    t: z
+      .union([z.string(), z.number()])
+      .describe("ISO 8601 time, or Unix time in seconds or milliseconds"),
+    v: z
+      .union([z.number(), z.string()])
+      .nullable()
+      .describe("The value. A numeric string such as a Prometheus value is accepted; null, NaN and gaps are skipped."),
+  })
+  .strict();
+
+/** Stats with the extra input the builder understands: the samples behind a value. */
+const statsInput = statsBase.extend({
+  items: z
+    .array(
+      statsItemBase.extend({
+        points: z
+          .array(samplePoint)
+          .min(1)
+          .max(5000)
+          .optional()
+          .describe(
+            "The samples of the range query the value came from. The builder turns them into the sparkline of the tile (spark): at most 60 values, oldest first, with the time they span. Only when the server lists stat_sparklines_v1; otherwise they are left out. Send points or spark, not both.",
+          ),
+      }),
+    )
+    .min(1)
+    .max(MAX_STATS_ITEMS)
+    .describe(STATS_ITEMS_NOTE),
+});
+
 /** A trend with the extra inputs the builder understands. */
 const trendInput = z
   .object({
@@ -753,19 +813,7 @@ const trendInput = z
     start: z.string().datetime().optional(),
     step_seconds: z.number().int().min(1).max(86400).optional(),
     points: z
-      .array(
-        z
-          .object({
-            t: z
-              .union([z.string(), z.number()])
-              .describe("ISO 8601 time, or Unix time in seconds or milliseconds"),
-            v: z
-              .union([z.number(), z.string()])
-              .nullable()
-              .describe("The value. A numeric string such as a Prometheus value is accepted; null, NaN and gaps are skipped."),
-          })
-          .strict(),
-      )
+      .array(samplePoint)
       .min(2)
       .max(5000)
       .optional()
@@ -994,7 +1042,7 @@ const logLinesInput = z
 
 /** What tellagen_build_figure accepts. */
 export const figureInputSchema = z.discriminatedUnion("type", [
-  statsBase,
+  statsInput,
   compareBase,
   trendInput,
   tableInput,
@@ -1019,7 +1067,7 @@ export const GUIDE_ONLY_FIGURE_TYPES = ["range_overlap", "histogram", "run_histo
  * in full with figureInputSchema and names each bad field.
  */
 export const figureToolInputSchema = z.discriminatedUnion("type", [
-  statsBase,
+  statsInput,
   compareBase,
   trendInput,
   tableInput,
@@ -1112,6 +1160,8 @@ const toSeconds = (t: string | number): number | null => {
 
 const toValue = (v: number | string | null): number | null => {
   if (v === null) return null;
+  // Number("") is 0: a blank string is a sample with no value, not a zero.
+  if (typeof v === "string" && v.trim() === "") return null;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : null;
 };
@@ -1244,6 +1294,52 @@ function buildTrend(input: TrendInput): { block: Record<string, unknown>; notes:
 }
 
 type Built = { block: Record<string, unknown>; notes: string[] } | { issues: string[] };
+
+type StatsInput = z.infer<typeof statsInput>;
+
+/**
+ * Stats with a sparkline for each item that came with points: the samples in
+ * time order, brought down to at most 60 at an even step from the first to the
+ * last, and the time they span. Every value of the sparkline is a sample that
+ * was sent: nothing is averaged or made up.
+ */
+function buildStats(input: StatsInput): Built {
+  const notes: string[] = [];
+  const issues: string[] = [];
+  const items = input.items.map((item, index) => {
+    const { points, ...rest } = item;
+    if (points === undefined) return rest;
+    if (rest.spark !== undefined) {
+      issues.push(`items.${index}.points: send points or spark, not both`);
+      return rest;
+    }
+    const raw = points
+      .map((p) => ({ t: toSeconds(p.t), v: toValue(p.v) }))
+      .filter((p): p is { t: number; v: number } => p.t !== null && p.v !== null)
+      .sort((a, b) => a.t - b.t);
+    const skipped = points.length - raw.length;
+    if (skipped > 0 && raw.length >= MIN_STATS_SPARK_VALUES) {
+      notes.push(
+        `${skipped} sample${skipped === 1 ? "" : "s"} of "${item.label}" had no usable time or value and ${skipped === 1 ? "was" : "were"} skipped. The sparkline shows the other samples side by side, so it does not show the gap. Say so in the step if it matters.`,
+      );
+    }
+    if (raw.length < MIN_STATS_SPARK_VALUES) {
+      notes.push(`"${item.label}" has ${raw.length} usable sample${raw.length === 1 ? "" : "s"}, and a sparkline needs at least ${MIN_STATS_SPARK_VALUES}, so the tile has none.`);
+      return rest;
+    }
+    let kept = raw;
+    if (raw.length > MAX_STATS_SPARK_VALUES) {
+      kept = Array.from({ length: MAX_STATS_SPARK_VALUES }, (_, i) => raw[Math.round((i * (raw.length - 1)) / (MAX_STATS_SPARK_VALUES - 1))]!);
+      notes.push(`The sparkline of "${item.label}" shows ${MAX_STATS_SPARK_VALUES} of its ${raw.length} samples, at an even step from the first to the last.`);
+    }
+    const span = Math.round(kept[kept.length - 1]!.t - kept[0]!.t);
+    const spark: Record<string, unknown> = { values: kept.map((p) => roundSig(p.v, 4)) };
+    if (span >= MIN_STATS_SPARK_WINDOW_SECONDS && span <= MAX_STATS_SPARK_WINDOW_SECONDS) spark.window_seconds = span;
+    return { ...rest, spark };
+  });
+  if (issues.length > 0) return { issues };
+  return { block: { ...input, items }, notes };
+}
 
 const toMeasured = (v: number | string): number | null => {
   const n = typeof v === "number" ? v : Number(v.trim());
@@ -1471,6 +1567,8 @@ type DiffInput = z.infer<typeof diffInput>;
 export type FigureOptions = {
   /** The server lists figure_extras_v1: a stats title, more than 4 stats and runs_not_shown. */
   figureExtras?: boolean;
+  /** The server lists stat_sparklines_v1: a stats item may carry a spark. */
+  statSparklines?: boolean;
   /** The server lists figure_limits_v1: a compare row may carry a limit. */
   figureLimits?: boolean;
   /** The server lists diff_lines_v1: a diff may carry unchanged lines and line numbers. */
@@ -1663,6 +1761,25 @@ export function withoutFigureExtrasInBlock(block: unknown): { block: unknown; wh
 }
 
 /**
+ * A stats block as a server without stat_sparklines_v1 takes it: no `spark` on
+ * an item. Any other block is returned as it is. `what` says what was left out.
+ */
+export function withoutStatSparklinesInBlock(block: unknown): { block: unknown; what: string[] } {
+  if (typeof block !== "object" || block === null || Array.isArray(block)) return { block, what: [] };
+  const record = block as Record<string, unknown>;
+  if (record.type !== "stats" || !Array.isArray(record.items)) return { block, what: [] };
+  let count = 0;
+  const items = record.items.map((item) => {
+    if (typeof item !== "object" || item === null || !("spark" in item)) return item;
+    count += 1;
+    const { spark: _spark, ...rest } = item as Record<string, unknown>;
+    return rest;
+  });
+  if (count === 0) return { block, what: [] };
+  return { block: { ...record, items }, what: [count === 1 ? "the sparkline of 1 number" : `the sparklines of ${count} numbers`] };
+}
+
+/**
  * A compare block as a server without figure_limits_v1 takes it: no `limit`
  * on a row. A row that had only a limit has no before then, so `unusable` is
  * true and the figure cannot be sent. Any other block is returned as it is.
@@ -1699,8 +1816,11 @@ const describe = (block: Record<string, unknown>): string => {
     }
     case "compare":
       return `compare with ${(block.rows as unknown[]).length} row${(block.rows as unknown[]).length === 1 ? "" : "s"}`;
-    case "stats":
-      return `stats with ${(block.items as unknown[]).length} number${(block.items as unknown[]).length === 1 ? "" : "s"}`;
+    case "stats": {
+      const items = block.items as Array<Record<string, unknown>>;
+      const sparks = items.filter((item) => item.spark !== undefined).length;
+      return `stats with ${items.length} number${items.length === 1 ? "" : "s"}${sparks > 0 ? `, ${sparks} with a sparkline` : ""}`;
+    }
     case "table":
       return `table of ${(block.rows as unknown[]).length} rows by ${(block.columns as unknown[]).length} columns`;
     case "checks":
@@ -1779,6 +1899,9 @@ export function buildFigure(input: BuildFigureInput, options: FigureOptions = {}
   if (figure.type === "trend") {
     const failed = take(buildTrend(figure));
     if (failed) return failed;
+  } else if (figure.type === "stats") {
+    const failed = take(buildStats(figure));
+    if (failed) return failed;
   } else if (figure.type === "histogram") {
     const failed = take(buildHistogram(figure));
     if (failed) return failed;
@@ -1813,6 +1936,14 @@ export function buildFigure(input: BuildFigureInput, options: FigureOptions = {}
     if (stripped.what.length > 0) {
       block = stripped.block as Record<string, unknown>;
       notes.push(`Left out ${stripped.what.join(" and ")}: this Tellagen does not list ${FIGURE_EXTRAS_CAPABILITY} in server_capabilities.`);
+    }
+  }
+
+  if (options.statSparklines !== true) {
+    const stripped = withoutStatSparklinesInBlock(block);
+    if (stripped.what.length > 0) {
+      block = stripped.block as Record<string, unknown>;
+      notes.push(`Left out ${stripped.what.join(" and ")}: this Tellagen does not list ${STAT_SPARKLINES_CAPABILITY} in server_capabilities.`);
     }
   }
 

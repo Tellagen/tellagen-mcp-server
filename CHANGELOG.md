@@ -2,6 +2,20 @@
 
 All notable changes to `@tellagen/mcp-server` are in this file. The newest version is first. Each heading is `## <version> - <date>`; the release workflow copies the section of the tagged version into the GitHub release.
 
+## 0.10.0 - 2026-11-25
+
+### Added
+
+- A sparkline on a key figure (`stat_sparklines_v1`). A `stats` item in `tellagen_build_figure` takes `points`, the samples of the range query its value came from. The builder turns them into `spark`: the samples in time order, at most 60 values at an even step from the first to the last, and `window_seconds`, the time they span. Every value is a sample that was sent. Fewer than 4 usable samples give no sparkline. The sparkline is sent only when the pickup lists `stat_sparklines_v1`; otherwise the builder leaves it out and says so in `notes`, and the timeline tools and `tellagen_complete_investigation` leave it out with an `mcp_notice`.
+- The plain status of a diagnosis (`plain_status_v1`). `result_summary.current_state` answers "Still happening?" with a state (`ongoing`, `stopped` or `unknown`) and one or two short sentences, and a `ruled_out` entry may say what it does not exclude in `still_possible`. The MCP advertises the capability at pickup. If the pickup lists it, the MCP sends both fields, on a completion and on an addition to a finished run. If the pickup does not list it, the MCP leaves both fields out and `mcp_notice` says so.
+- The figure guide teaches four rules: a title is a name of what the figure shows, the step claim says the conclusion and the figure never repeats it, a stats caption is one short fact such as "SLO 1%", and a threshold is sent when there is one.
+- The skill guide and the completion guide teach the plain writing rules: one fact in each sentence, a time as HH:MM UTC, no raw id in a sentence, a headline that matches the stored values, a blocking question that names its host, and a first action that names where.
+
+### Fixed
+
+- `tellagen_complete_investigation` now takes a `stats` step figure with a `title` and with five to eight items, as `tellagen_build_figure` returns it for a Tellagen that lists `figure_extras_v1`. The input check refused both.
+- `tellagen_build_figure` skips a sample whose value is an empty string, in a trend and in a sparkline. It read such a sample as 0.
+
 ## 0.9.0 - 2026-11-22
 
 ### Added

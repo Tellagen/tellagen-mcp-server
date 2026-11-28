@@ -25,14 +25,18 @@ import {
   isLogLinesBlock,
   logLinesBlockSchema,
   maxStepFigureBytes,
+  MAX_STATS_ITEMS,
   MAX_STEP_FIGURE_BYTES,
   FIGURE_EXTRAS_CAPABILITY,
   FIGURE_LIMITS_CAPABILITY,
   rangeOverlapBlockSchema,
   runHistoryBlockSchema,
+  STAT_SPARKLINES_CAPABILITY,
+  statsSparkSchema,
   withoutDiffLineDetailInBlock,
   withoutFigureExtrasInBlock,
   withoutFigureLimitsInBlock,
+  withoutStatSparklinesInBlock,
 } from "./figures.js";
 
 import { knownRunWindow, rememberRunWindow, type RunWindow } from "./run-window.js";
@@ -49,7 +53,13 @@ export const RUN_IMAGES_CAPABILITY = "run_images_v1";
 export const DIFF_LINES_CAPABILITY = "diff_lines_v1";
 /** The server takes a log_lines figure. */
 export const LOG_LINES_CAPABILITY = "log_lines_v1";
-export { FIGURE_EXTRAS_CAPABILITY, FIGURE_LIMITS_CAPABILITY };
+export { FIGURE_EXTRAS_CAPABILITY, FIGURE_LIMITS_CAPABILITY, STAT_SPARKLINES_CAPABILITY };
+/**
+ * result_summary.current_state ("Still happening?") and ruled_out[].still_possible.
+ * A server and a client capability: the server keeps the two fields only for a
+ * client that advertised it at pickup.
+ */
+export const PLAIN_STATUS_CAPABILITY = "plain_status_v1";
 /** result_summary.answer and a figure on a recommended action. */
 export const ACTION_ANSWER_CAPABILITY = "action_answer_v1";
 /** result_summary.alert_verdict: the verdict on the alert behind the incident, and its proof checklist. */
@@ -164,6 +174,17 @@ export async function supportsFigureExtras(
 ): Promise<boolean> {
   if (runId !== undefined) return supportsCapability(client, runId, FIGURE_EXTRAS_CAPABILITY);
   return latestCapabilities.get(client)?.has(FIGURE_EXTRAS_CAPABILITY) ?? false;
+}
+
+/** Whether the backend takes a `spark` on a stats item. Decided like supportsDiffLines. */
+export async function supportsStatSparklines(client: TellagenClient, runId?: string): Promise<boolean> {
+  if (runId !== undefined) return supportsCapability(client, runId, STAT_SPARKLINES_CAPABILITY);
+  return latestCapabilities.get(client)?.has(STAT_SPARKLINES_CAPABILITY) ?? false;
+}
+
+/** Whether the backend takes result_summary.current_state and ruled_out[].still_possible. */
+export async function supportsPlainStatus(client: TellagenClient, runId: string): Promise<boolean> {
+  return supportsCapability(client, runId, PLAIN_STATUS_CAPABILITY);
 }
 
 /** Whether the backend takes a `limit` on a compare row. Decided like supportsDiffLines. */
@@ -379,6 +400,9 @@ const statsFigure = z
   .object({
     type: z.literal("stats"),
     ...blockCommon,
+    // A title and more than four items need figure_extras_v1, and a spark needs
+    // stat_sparklines_v1: the tool leaves them out for a Tellagen that lists neither.
+    title: line(0, 80).optional(),
     items: z
       .array(
         z
@@ -387,11 +411,12 @@ const statsFigure = z
             value: line(1, 32),
             caption: line(0, 64).optional(),
             tone: z.enum(["good", "warn", "bad", "neutral"]).optional(),
+            spark: statsSparkSchema.optional(),
           })
           .strict(),
       )
       .min(1)
-      .max(4),
+      .max(MAX_STATS_ITEMS),
   })
   .strict();
 
@@ -579,7 +604,34 @@ export const ruledOutSchema = z.object({
   finding_ids: findingIdsSchema.optional(),
   links: evidenceLinksSchema.optional(),
   confidence_percent: z.number().int().min(0).max(100).optional(),
+  still_possible: z
+    .string()
+    .max(300)
+    .optional()
+    .describe(
+      "Only when the proof leaves a narrower case open: one sentence of 20 words or fewer that says what this entry does not exclude, for example one failure inside a window the query cannot see. Do not repeat the explanation. Only when this Tellagen lists plain_status_v1.",
+    ),
 });
+
+export const CURRENT_STATES = ["ongoing", "stopped", "unknown"] as const;
+
+/** The answer to "Still happening?" (plain_status_v1). */
+export const currentStateSchema = z
+  .object({
+    state: z
+      .enum(CURRENT_STATES)
+      .describe(
+        "ongoing or stopped only when a query of this run shows the value now or at the end of the run window. unknown when no query shows it: never guess.",
+      ),
+    text: z
+      .string()
+      .min(1)
+      .max(300)
+      .describe("One or two short sentences, 20 words or fewer in all: where it is still visible and whether users are affected."),
+  })
+  .describe(
+    "Whether the problem is still happening. Send it when the incident is a problem to follow, and leave it out for a question about a past event. Only when this Tellagen lists plain_status_v1.",
+  );
 
 export const COVERAGE_REASONS = ["wrong_account", "not_connected", "auth_expired", "error", "no_source"] as const;
 
@@ -1085,6 +1137,56 @@ export function stripResultFigureExtras(summary: unknown): {
 }
 
 /**
+ * A result summary whose stats figures carry no sparkline: a backend without
+ * stat_sparklines_v1 rejects the field and drops the whole figure. `removed`
+ * names each figure that was changed.
+ */
+export function stripResultStatSparklines(summary: unknown): {
+  summary: unknown;
+  removed: string[];
+} {
+  const removed: string[] = [];
+  if (!isRecord(summary) || !Array.isArray(summary.causal_paths)) return { summary, removed };
+  const causalPaths = summary.causal_paths.map((path, pathIndex) => {
+    if (!isRecord(path) || !Array.isArray(path.steps)) return path;
+    const steps = path.steps.map((step, stepIndex) => {
+      if (!isRecord(step) || !("figure" in step)) return step;
+      const result = withoutStatSparklinesInBlock(step.figure);
+      if (result.what.length === 0) return step;
+      removed.push(`causal_paths[${pathIndex}].steps[${stepIndex}].figure`);
+      return { ...step, figure: result.block };
+    });
+    return { ...path, steps };
+  });
+  return removed.length > 0 ? { summary: { ...summary, causal_paths: causalPaths }, removed } : { summary, removed };
+}
+
+/**
+ * A result summary without current_state and without still_possible on its
+ * ruled-out entries, for a backend that does not list plain_status_v1: a strict
+ * older Tellagen refuses a field it does not know.
+ */
+export function stripResultPlainStatus(summary: unknown): { summary: unknown; removed: string[] } {
+  const removed: string[] = [];
+  if (!isRecord(summary)) return { summary, removed };
+  const next: Record<string, unknown> = { ...summary };
+  if ("current_state" in next) {
+    delete next.current_state;
+    removed.push("current_state");
+  }
+  if (Array.isArray(next.ruled_out)) {
+    next.ruled_out = next.ruled_out.map((entry, i) => {
+      if (!isRecord(entry) || !("still_possible" in entry)) return entry;
+      removed.push(`ruled_out[${i}].still_possible`);
+      const rest = { ...entry };
+      delete rest.still_possible;
+      return rest;
+    });
+  }
+  return removed.length > 0 ? { summary: next, removed } : { summary, removed };
+}
+
+/**
  * A result summary whose steps carry no log_lines figure: a backend without
  * log_lines_v1 rejects the figure and drops it. `removed` names each figure
  * that was taken out of its step.
@@ -1254,6 +1356,12 @@ export function unsupportedNotice(
   }
   if (capability === RUN_AMENDMENTS_CAPABILITY) {
     return `This Tellagen backend does not advertise ${capability}, so the reason, retryable and detail of ${shown}${more} were not sent and the rest went through. Say why the source was not read in the summary of the entry. Update Tellagen to show the reason.`;
+  }
+  if (capability === STAT_SPARKLINES_CAPABILITY) {
+    return `This Tellagen backend does not advertise ${capability}, so the sparklines of ${shown}${more} were not sent and the rest of the figure went through. Update Tellagen to show them.`;
+  }
+  if (capability === PLAIN_STATUS_CAPABILITY) {
+    return `This Tellagen does not list ${capability} for this run, so ${shown}${more} were not sent and the rest went through. Say in the headline or a finding whether the problem is still happening.`;
   }
   if (capability === FIGURE_EXTRAS_CAPABILITY) {
     return `This Tellagen backend does not advertise ${capability}, so the stats title, the stats after the fourth and runs_not_shown of ${shown}${more} were not sent and the rest of the figure went through. Update Tellagen to show them.`;

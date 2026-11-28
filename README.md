@@ -454,6 +454,7 @@ At pickup the MCP server advertises, in `protocol_capabilities`, the runbook v2 
 | `question_checks_v1` | `checks` (one to three `{source, question}` yes or no checks) on a gap finding | a person answers each check with yes, no or not sure; a blocking gap with no checks gets the warning `blocking_gap_without_checks` |
 | `diagnosis_verdict_v1` | `result_summary.alert_verdict` on a run of any incident, the verdict `expected_behavior`, and an `owner` | the verdict is shown for every diagnosis; a verdict that says nothing is broken is held until the evidence is there |
 | `fix_options_v1` | `result_summary.fix_options`, built with `tellagen_build_fix_option` | the Diagnosis tab leads with how to fix it; a change to a file the run did not read is shown as not checked against your code |
+| `plain_status_v1` | `result_summary.current_state` (`ongoing`, `stopped` or `unknown`, with one or two short sentences) and `still_possible` on a `ruled_out` entry | the Diagnosis tab answers "Still happening?" and says what a ruled-out cause does not exclude; without the capability Tellagen removes both fields |
 | `code_locations_v1` | (nothing extra) it matches `request.context.code_locations` to a local checkout and adds `mcp_code_locations` to the pickup answer | the pickup names the repositories of the ticket; a run that does not read them gets `code_not_read` |
 | `run_images_v1` | (nothing extra) it reads screenshots with `tellagen_get_context_attachment` | the web says the client reads images; without it the responder is told the agent gets each caption and a link |
 
@@ -462,6 +463,8 @@ A server-only capability, `log_lines_v1`, means Tellagen takes a `log_lines` fig
 One more capability is the server's alone: Tellagen lists `diff_lines_v1` in `server_capabilities` when a diff figure may carry unchanged lines (`op: "context"`) and line numbers (`old_no`, `new_no`). The MCP does not advertise it. Without it, a diff goes out with only its `+` and `-` lines and no numbers (an older Tellagen would drop the whole figure), and the tool result carries an `mcp_notice`. `tellagen_build_figure` takes the `run_id` for this check; the timeline tools go by the latest pickup of the process.
 
 Likewise Tellagen lists `figure_extras_v1` when a `stats` figure may carry a `title` and more than four items, and a `run_history` figure may carry `runs_not_shown`. Without it the MCP cuts a stats figure to its first four items and drops the title and `runs_not_shown`, and the tool result carries an `mcp_notice`; `tellagen_build_figure` says so in `notes`. `tellagen_build_figure` takes the `run_id` for this check, and the timeline tools and `tellagen_complete_investigation` apply it to the figures they send.
+
+Tellagen lists `stat_sparklines_v1` when a `stats` item may carry `spark`, the sparkline of its value. The MCP does not advertise it. `tellagen_build_figure` takes the samples of a range query as `points` on a stats item and turns them into `spark` (at most 60 values, oldest first, with `window_seconds`) only for a run that lists the capability; otherwise it leaves the sparkline out and says so in `notes`. The timeline tools and `tellagen_complete_investigation` leave a `spark` out for a Tellagen that does not list it, and the tool result carries an `mcp_notice`.
 
 Tellagen lists `diagnosis_verdict_v1` for a run of any incident in a workspace where verdicts are on, and `alert_verdict_v1` only for a run whose incident came from an alert. With either, `tellagen_complete_investigation` takes `result_summary.alert_verdict`: `verdict` (`real_problem`, `already_handled`, `false_alarm`, `expected_behavior`, `not_sure`), `reason`, `owner`, `onset`, `would_change_mind` and a `proof` checklist of `{id, done, finding_ids}`. The server checks the proof and may show Not sure instead of the claim; it answers with the `verdict_*` warnings and never rejects the result for a weak verdict. Without the capability (an older Tellagen, the feature off for the workspace, or a run that is not on an alert) the MCP leaves `alert_verdict` out and the tool result carries an `mcp_notice`. The guide teaches the method (judge the alert first) and the evidence rules.
 
@@ -498,7 +501,7 @@ Each ref needs one of `ref`, `sha`, `title` or `links`; the MCP refuses an unkno
 
 | Type | Step figure | Timeline block | Limits |
 | --- | --- | --- | --- |
-| `stats` | yes | yes | 1 to 8 items (4 or fewer is best; the first four are tiles), optional `title` up to 80 characters; with `figure_extras_v1` only |
+| `stats` | yes | yes | 1 to 8 items (4 or fewer is best; the first four are tiles), optional `title` up to 80 characters; with `figure_extras_v1` only. An item may take `points` (the samples of a range query), which become its sparkline; with `stat_sparklines_v1` only |
 | `compare` | yes | yes | 1 to 8 rows, 3 details per row |
 | `trend` | yes | yes | 2 to 500 points, 3 marks; raw samples are put on an even grid |
 | `table` | no | yes | 1 to 6 columns, 1 to 12 rows |
