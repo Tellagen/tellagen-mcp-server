@@ -39,6 +39,7 @@ import {
   withoutStatSparklinesInBlock,
 } from "./figures.js";
 
+import { ALERT_REPEAT_CAPABILITY, rememberRepeatLead, repeatLeadOf } from "./cause-lead.js";
 import { knownRunWindow, rememberRunWindow, type RunWindow } from "./run-window.js";
 import { rememberSourceBases } from "./source-bases.js";
 import { RECORDED_STEPS_CAPABILITY } from "./trace-record.js";
@@ -122,6 +123,7 @@ export function rememberServerCapabilities(
   capabilityMap(client).set(runId, advertised);
   latestCapabilities.set(client, advertised);
   rememberRunWindow(client, runId, response);
+  rememberRepeatLead(client, runId, response);
 }
 
 /**
@@ -631,6 +633,26 @@ export const currentStateSchema = z
   })
   .describe(
     "Whether the problem is still happening. Send it when the incident is a problem to follow, and leave it out for a question about a past event. Only when this Tellagen lists plain_status_v1.",
+  );
+
+export const REPEAT_CHECK_HOLDS = ["yes", "no", "unsure"] as const;
+
+/** Whether the earlier cause of a known alert still holds (alert_repeat_v1). */
+export const repeatCheckSchema = z
+  .object({
+    holds: z
+      .enum(REPEAT_CHECK_HOLDS)
+      .describe(
+        "yes only when a finding of this run shows the earlier cause again for what changed; no when the earlier cause does not explain what changed; unsure when the run could not tell.",
+      ),
+    checked: z
+      .string()
+      .min(1)
+      .max(300)
+      .describe("One plain sentence of 20 words or fewer: what this run checked of the thing that changed."),
+  })
+  .describe(
+    "Only for a run whose pickup has a hint of kind alert_repeat and lists alert_repeat_v1: does the earlier answer of the same alert still hold. The server fills run_id from the hint.",
   );
 
 export const COVERAGE_REASONS = ["wrong_account", "not_connected", "auth_expired", "error", "no_source"] as const;
@@ -1360,6 +1382,9 @@ export function unsupportedNotice(
   if (capability === STAT_SPARKLINES_CAPABILITY) {
     return `This Tellagen backend does not advertise ${capability}, so the sparklines of ${shown}${more} were not sent and the rest of the figure went through. Update Tellagen to show them.`;
   }
+  if (capability === ALERT_REPEAT_CAPABILITY) {
+    return `This Tellagen does not list ${capability} for this run, so ${shown}${more} was not sent and the rest went through. Say in a finding whether the earlier cause of the alert still holds.`;
+  }
   if (capability === PLAIN_STATUS_CAPABILITY) {
     return `This Tellagen does not list ${capability} for this run, so ${shown}${more} were not sent and the rest went through. Say in the headline or a finding whether the problem is still happening.`;
   }
@@ -1371,6 +1396,35 @@ export function unsupportedNotice(
       ? "change refs and ci_run, deployment and release links"
       : "the diagnosis structure";
   return `This Tellagen backend does not advertise ${capability} for this run, so ${shown}${more} were not sent. Update Tellagen to use ${feature}; the rest of the call went through.`;
+}
+
+/**
+ * The repeat check of a result, ready to send: with run_id filled from the
+ * alert_repeat hint of the run. It is sent only when Tellagen lists
+ * alert_repeat_v1 for the run and the pickup carried such a hint; otherwise it
+ * is left out (a strict older Tellagen refuses a field it does not know) and
+ * the notice says why.
+ */
+export async function adaptRepeatCheck(
+  client: TellagenClient,
+  runId: string,
+  summary: unknown,
+): Promise<{ summary: unknown; notice?: string }> {
+  if (!isRecord(summary) || !("repeat_check" in summary)) return { summary };
+  const { repeat_check: check, ...rest } = summary;
+  if (!(await supportsCapability(client, runId, ALERT_REPEAT_CAPABILITY))) {
+    return { summary: rest, notice: unsupportedNotice(["repeat_check"], ALERT_REPEAT_CAPABILITY) };
+  }
+  const source = repeatLeadOf(client, runId);
+  if (source === undefined) {
+    return {
+      summary: rest,
+      notice:
+        "This run has no hint of kind alert_repeat, so repeat_check was not sent and the rest went through. Send repeat_check only for a run whose pickup carries the earlier answer of the same alert.",
+    };
+  }
+  if (!isRecord(check)) return { summary: rest };
+  return { summary: { ...rest, repeat_check: { run_id: source, holds: check.holds, checked: check.checked } } };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1434,6 +1488,10 @@ const WARNING_ADVICE: Record<string, string> = {
   empty_result_link_dropped: "a link to a query that returned nothing is dropped: say in the claim that nothing was found, or cite a query that returned data",
   step_names_fix_not_cause: "a step names the fix, not the cause: state what broke and why",
   false_alarm_without_rule: "a false alarm needs a finding that shows the alert rule (read the alert rules) and the proof item rule_read",
+  repeat_check_dropped:
+    "send repeat_check only for a run whose pickup has an alert_repeat hint and lists alert_repeat_v1, with holds yes, no or unsure and a checked sentence",
+  repeat_check_without_proof:
+    "holds yes needs a finding of this run that names what changed (the new host, or a query of the time it changed): post it, or send holds unsure",
   headline_too_long:
     "write the headline claim (conclusion.sentence) in 15 words or fewer, with one cause, and keep the detail in findings",
   question_not_a_question:

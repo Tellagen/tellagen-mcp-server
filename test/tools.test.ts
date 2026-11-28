@@ -717,6 +717,7 @@ describe("Tool integration via client", () => {
           "fix_options_v1",
           "code_locations_v1",
           "plain_status_v1",
+          "alert_repeat_v1",
         ],
       });
     });

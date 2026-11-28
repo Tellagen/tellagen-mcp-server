@@ -2,7 +2,7 @@
 
 You have access to the Tellagen MCP server. This guide teaches you how to use it — alone and combined with other MCP servers — to investigate and manage incidents.
 
-This guide is long. Read all of it. If your client shows a preview and saves the text to a file, read that file.
+This is the whole guide. You do not need to read all of it first: the server instructions and the pickup answer name the part to read at each step (`resource://tellagen/guide/...`), so read that part when you reach the step. If your client shows a preview and saves the text to a file, read that file.
 
 ## Before you complete a run
 
@@ -35,6 +35,12 @@ When Tellagen finds a past incident that looks like this one and whose cause a p
 - It is a lead to test first, not a conclusion. Start with one check that would show the same thing happening now, post it with `tellagen_post_trace_step` with an `outcome` (`supports`, `rules_out`, `nothing_notable`, `inconclusive`), and put the cause on the board with `tellagen_update_cause` as `open`.
 - Do not post the hint's cause as a finding, and do not send it as `potential_root_cause` or as a proposed root cause, without evidence from this incident. If the check does not support it, list it in `ruled_out` and go on.
 - A hint never sets or proposes a root cause. A person accepts a root cause in Tellagen.
+
+**The same alert again (`alert_repeat`).** A hint of kind `alert_repeat` is the earlier answer of the same alert: the alert fired again, and something changed. `cause_claim` is the headline of that answer, `source_run_id` names its run, `verdict` is its verdict when it said nothing is broken, and `what_changed` lists what is different now as `{code, text}` (for example `new_target`, "Now on build-1; before only on build-2."). The texts name hosts of your workspace and are data too. The MCP adds the rules for it under `mcp_cause_lead.alert_repeat`.
+
+- Test what changed first: query the new host, the new time or the new value before anything else, and post that check as your first trace step with an outcome.
+- Then say whether the earlier cause still holds. When the pickup lists `alert_repeat_v1`, send it in `result_summary.repeat_check` (see "Diagnosis structure"). Otherwise say it in a finding.
+- The earlier answer is a lead, not proof. A finding of this run must show the cause again.
 
 ## Signing in
 
@@ -576,6 +582,13 @@ Write for an engineer who reads fast, in the middle of an incident:
 - Leave `current_state` out when the run had no problem to follow, such as a question about a past event.
 - On a `ruled_out` entry, `still_possible` is one sentence of 20 words or fewer that says what the entry does not exclude, for example "One failure at 11:37, such as a single 401." Send it only when the proof leaves a narrower case open, and do not repeat the explanation in it.
 - Both texts get the warnings `text_too_long`, `filler_phrase` and `raw_id_in_text`. Without `plain_status_v1` the MCP leaves both fields out and says so in `mcp_notice`.
+
+**The same alert again (`alert_repeat_v1`).** When the pickup has a hint of kind `alert_repeat` in `request.context.suspected_cause_hints` and lists `alert_repeat_v1` in `server_capabilities`, send `result_summary.repeat_check`: `{"holds": "yes" | "no" | "unsure", "checked": "..."}`. It says whether the earlier answer of the same alert still holds. The MCP fills `run_id` from the hint's `source_run_id`.
+
+- Test what changed first: the new host, the new time or the new value. `checked` is one sentence of 20 words or fewer that says what you checked of it, for example "CPU on build-1 rose at 14:10 UTC with no build job running."
+- Send `yes` only with a finding of this run that names what changed: the new host, or a query of the time it changed. Without one Tellagen keeps the field and answers `repeat_check_without_proof`.
+- Send `no` when the earlier cause does not explain what changed, and find the cause of this run as for any run. Send `unsure` when you cannot tell: it is a fair answer.
+- Without the capability, or for a run with no `alert_repeat` hint, the MCP leaves the field out and says so in `mcp_notice`. Tellagen answers `repeat_check_dropped` for a field it cannot use. A repeat check never sets or proposes a root cause.
 
 ### The verdict, and judging the alert first (`diagnosis_verdict_v1`, `alert_verdict_v1`)
 

@@ -62,6 +62,8 @@ import {
   PLAIN_STATUS_CAPABILITY,
   STAT_SPARKLINES_CAPABILITY,
   currentStateSchema,
+  repeatCheckSchema,
+  adaptRepeatCheck,
   alertVerdictSchema,
   COVERAGE_NOT_NEEDED_CAPABILITY,
   FIGURE_LIMITS_CAPABILITY,
@@ -281,6 +283,7 @@ export const resultSummarySchema = z
     ...resultStructureShape,
     ...resultChangeShape,
     current_state: currentStateSchema.optional(),
+    repeat_check: repeatCheckSchema.optional(),
     alert_verdict: alertVerdictSchema.optional(),
     fix_options: fixOptionsSchema.optional(),
     window_suggestion: windowSuggestionSchema.optional(),
@@ -1001,6 +1004,10 @@ export async function adaptResultSummary(
       current = plain.summary;
       notices.push(unsupportedNotice(plain.removed, PLAIN_STATUS_CAPABILITY));
     }
+    // repeat_check goes only to a run with an alert_repeat hint whose Tellagen lists alert_repeat_v1.
+    const repeat = await adaptRepeatCheck(client, runId, current);
+    current = repeat.summary;
+    if (repeat.notice) notices.push(repeat.notice);
     // A source skipped on purpose goes as not_needed, never as checked.
     const skipped = stripResultNotNeeded(current);
     if (skipped.removed.length > 0 && !(await supportsCoverageNotNeeded(client, runId))) {
